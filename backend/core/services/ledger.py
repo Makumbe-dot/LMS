@@ -177,6 +177,24 @@ def _lines_for(txn: Transaction) -> list[tuple[str, Decimal, Decimal, str]]:
             (CODES["fee_income"], ZERO, amount, "Charge income"),
         ]
 
+    if txn.txn_type == TxnType.CAPITALISATION:
+        # Rescheduling rolls overdue interest, penalties and charges into a new
+        # principal. The receivable grows by exactly what the other three shed.
+        #
+        # Capitalised interest IS recognised here, which is the one deliberate
+        # exception to "interest is recognised when collected": once capitalised
+        # it stops being interest and becomes principal the borrower owes, and
+        # leaving it unrecognised would put an asset on 1100 with nothing on the
+        # other side.
+        lines = [(CODES["loans_receivable"], principal, ZERO, "Capitalised into a new principal")]
+        if interest > 0:
+            lines.append((CODES["interest_income"], ZERO, interest, "Overdue interest capitalised"))
+        if penalty > 0:
+            lines.append((CODES["penalties_receivable"], ZERO, penalty, "Penalties capitalised"))
+        if charge > 0:
+            lines.append((CODES["charges_receivable"], ZERO, charge, "Charges capitalised"))
+        return lines
+
     if txn.txn_type == TxnType.CHARGE_ADDED:
         # Added to the loan balance: a receivable now, cash when the borrower pays.
         return [

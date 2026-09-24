@@ -51,15 +51,23 @@ def open_account(borrower: Borrower, product: SavingsProduct, user: User,
 
 def _post(account: SavingsAccount, user: User, kind: str, amount: Decimal,
           txn_date: date | None, method: str | None, reference: str | None,
-          narration: str | None, signed: Decimal) -> SavingsTransaction:
-    """Write one movement and the resulting balance, atomically."""
+          narration: str | None, signed: Decimal,
+          reversal_of: SavingsTransaction | None = None) -> SavingsTransaction:
+    """Write one movement and the resulting balance, atomically.
+
+    `reversal_of` must be set AT CREATION, not afterwards: the ledger hook fires
+    on post_save, and it works out which legs to mirror by looking at what the
+    reversal points back to. Assigning it on a later save() left every savings
+    reversal with no journal entry at all, and account 2000 overstating the
+    savings book by the reversed amount.
+    """
     amount = q(Decimal(amount))
     account.balance = q((account.balance or ZERO) + signed)
     account.save(update_fields=["balance"])
     return SavingsTransaction.objects.create(
         account=account, txn_type=kind, txn_date=txn_date or date.today(), amount=amount,
         balance_after=account.balance, method=method, reference=reference,
-        narration=narration, posted_by=user,
+        narration=narration, posted_by=user, reversal_of=reversal_of,
     )
 
 
@@ -113,11 +121,8 @@ def reverse(account: SavingsAccount, stxn: SavingsTransaction, user: User,
 
     stxn.reversed = True
     stxn.save(update_fields=["reversed"])
-    reversal = _post(account, user, SavingsTxnType.REVERSAL, stxn.amount, date.today(),
-                     stxn.method, stxn.reference, narration, signed)
-    reversal.reversal_of = stxn
-    reversal.save(update_fields=["reversal_of"])
-    return reversal
+    return _post(account, user, SavingsTxnType.REVERSAL, stxn.amount, date.today(),
+                 stxn.method, stxn.reference, narration, signed, reversal_of=stxn)
 
 
 @db_transaction.atomic

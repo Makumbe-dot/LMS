@@ -523,10 +523,15 @@ def reschedule(loan: Loan, user: User, new_term: int, new_rate: Decimal | None,
         raise BusinessRuleError("Only active loans can be rescheduled")
     refresh_balances(loan)
     today = date.today()
-    overdue_interest = sum(
-        (i.interest_due - i.interest_paid for i in sched(loan) if i.due_date < today), ZERO)
-    new_principal = q(loan.principal_outstanding + overdue_interest
-                      + loan.penalties_outstanding + loan.charges_outstanding)
+    overdue_interest = q(sum(
+        (i.interest_due - i.interest_paid for i in sched(loan) if i.due_date < today), ZERO))
+    # Snapshot what is being rolled up, so the capitalisation can be posted. The
+    # loan's own columns are about to be overwritten.
+    penalties_capitalised = q(loan.penalties_outstanding)
+    charges_capitalised = q(loan.charges_outstanding)
+    capitalised = q(overdue_interest + penalties_capitalised + charges_capitalised)
+
+    new_principal = q(loan.principal_outstanding + capitalised)
     rate = new_rate if new_rate is not None else loan.interest_rate_pct
     first = first_due or default_first_due(today, loan.borrower.payday)
     prior_paid = loan.total_paid
@@ -552,8 +557,15 @@ def reschedule(loan: Loan, user: User, new_term: int, new_rate: Decimal | None,
         "maturity_date", "instalment_amount", "total_interest", "principal_outstanding",
         "interest_outstanding", "penalties_outstanding", "charges_outstanding", "total_paid",
     ])
+    # The receivable grows by exactly what the penalty, charge and interest legs
+    # shed. Posting this is what keeps 1100, 1300 and 1400 tied to the loan book
+    # across a reschedule; without it the ledger silently understated the
+    # receivable by the capitalised amount.
     Transaction.objects.create(
-        loan=loan, txn_type=TxnType.FEE, txn_date=today, amount=ZERO, posted_by=user,
+        loan=loan, txn_type=TxnType.CAPITALISATION, txn_date=today, amount=capitalised,
+        principal_component=capitalised, interest_component=overdue_interest,
+        penalty_component=penalties_capitalised, charge_component=charges_capitalised,
+        posted_by=user,
         narration=(f"{narration}: capitalised {new_principal} over {new_term} months at "
                    f"{rate}%/month (previously paid {prior_paid})"),
     )

@@ -96,6 +96,7 @@ class TxnType(models.TextChoices):
     FEE = "fee", "Fee"
     CHARGE = "charge", "Charge collected"
     CHARGE_ADDED = "charge_added", "Charge added to the balance"
+    CAPITALISATION = "capitalisation", "Capitalised on reschedule"
     WAIVER = "waiver", "Waiver"
     WRITE_OFF = "write_off", "Write-off"
     RECOVERY = "recovery", "Recovery after write-off"
