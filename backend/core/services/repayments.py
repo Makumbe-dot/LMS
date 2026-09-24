@@ -1,0 +1,117 @@
+"""Repayment posting with waterfall allocation: penalties -> interest -> principal,
+oldest instalment first. Overpayment is refused outright, so a payment can never
+leave a negative balance."""
+from datetime import date
+from decimal import Decimal
+
+from ..exceptions import BusinessRuleError
+from ..models import Loan, LoanStatus, Transaction, TxnType, User
+from .amortisation import q
+from .loans import refresh_balances, sched
+
+ZERO = Decimal("0")
+
+
+def post_repayment(loan: Loan, user: User, amount: Decimal, txn_date: date | None,
+                   method: str, reference: str | None, narration: str | None) -> Transaction:
+    if loan.status != LoanStatus.ACTIVE:
+        raise BusinessRuleError(
+            f"Loan is {loan.status}; repayments can only be posted to active loans")
+    amount = q(Decimal(amount))
+    txn_date = txn_date or date.today()
+    if amount > loan.total_outstanding:
+        raise BusinessRuleError(
+            f"Amount {amount} exceeds total outstanding {loan.total_outstanding}")
+
+    remaining = amount
+    p_alloc = i_alloc = pen_alloc = ZERO
+    for ins in sched(loan):  # ordered by instalment number
+        if remaining <= 0:
+            break
+        # penalties
+        due = ins.penalty_due - ins.penalty_paid
+        if due > 0:
+            take = min(due, remaining)
+            ins.penalty_paid += take
+            pen_alloc += take
+            remaining -= take
+        # interest
+        due = ins.interest_due - ins.interest_paid
+        if due > 0 and remaining > 0:
+            take = min(due, remaining)
+            ins.interest_paid += take
+            i_alloc += take
+            remaining -= take
+        # principal
+        due = ins.principal_due - ins.principal_paid
+        if due > 0 and remaining > 0:
+            take = min(due, remaining)
+            ins.principal_paid += take
+            p_alloc += take
+            remaining -= take
+        if ins.balance <= 0 and ins.paid_date is None:
+            ins.paid_date = txn_date
+
+    txn = Transaction.objects.create(
+        loan=loan, txn_type=TxnType.REPAYMENT, txn_date=txn_date, amount=amount,
+        principal_component=q(p_alloc), interest_component=q(i_alloc),
+        penalty_component=q(pen_alloc), method=method, reference=reference,
+        narration=narration, posted_by=user,
+    )
+    refresh_balances(loan)
+    return txn
+
+
+def reverse_transaction(loan: Loan, txn: Transaction, user: User, narration: str) -> Transaction:
+    if txn.txn_type != TxnType.REPAYMENT:
+        raise BusinessRuleError("Only repayments can be reversed")
+    if txn.reversed:
+        raise BusinessRuleError("Transaction already reversed")
+    # Un-allocate from the LATEST instalments backwards, mirroring the waterfall in reverse.
+    p, i, pen = txn.principal_component, txn.interest_component, txn.penalty_component
+    for ins in reversed(sched(loan)):
+        take = min(p, ins.principal_paid)
+        ins.principal_paid -= take
+        p -= take
+        take = min(i, ins.interest_paid)
+        ins.interest_paid -= take
+        i -= take
+        take = min(pen, ins.penalty_paid)
+        ins.penalty_paid -= take
+        pen -= take
+        if ins.balance > 0:
+            ins.paid_date = None
+
+    txn.reversed = True
+    txn.save(update_fields=["reversed"])
+    rev = Transaction.objects.create(
+        loan=loan, txn_type=TxnType.REVERSAL, txn_date=date.today(), amount=txn.amount,
+        principal_component=txn.principal_component, interest_component=txn.interest_component,
+        penalty_component=txn.penalty_component, reversal_of=txn, narration=narration,
+        posted_by=user,
+    )
+    if loan.status == LoanStatus.CLOSED:
+        loan.status = LoanStatus.ACTIVE
+        loan.closed_at = None
+    refresh_balances(loan)
+    return rev
+
+
+def waive_penalties(loan: Loan, user: User, amount: Decimal, narration: str) -> Transaction:
+    amount = q(Decimal(amount))
+    if amount > loan.penalties_outstanding:
+        raise BusinessRuleError(
+            f"Waiver {amount} exceeds penalties outstanding {loan.penalties_outstanding}")
+    remaining = amount
+    for ins in sched(loan):
+        due = ins.penalty_due - ins.penalty_paid
+        if due > 0 and remaining > 0:
+            take = min(due, remaining)
+            ins.penalty_due -= take
+            remaining -= take
+    txn = Transaction.objects.create(
+        loan=loan, txn_type=TxnType.WAIVER, txn_date=date.today(), amount=amount,
+        penalty_component=amount, narration=narration, posted_by=user,
+    )
+    refresh_balances(loan)
+    return txn

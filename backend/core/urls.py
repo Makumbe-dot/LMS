@@ -1,0 +1,130 @@
+"""API routes. Paths are accepted with or without a trailing slash so the React
+client and curl behave the same way."""
+from django.urls import re_path
+
+from .views import (
+    auth,
+    borrowers,
+    charges,
+    groups,
+    ledger,
+    loans,
+    org,
+    products,
+    reports,
+    savings,
+)
+
+urlpatterns = [
+    # ---- auth and users
+    re_path(r"^auth/login/?$", auth.login),
+    re_path(r"^auth/me/?$", auth.me),
+    re_path(r"^auth/change-password/?$", auth.change_password),
+    re_path(r"^users/?$", auth.users),
+    re_path(r"^users/(?P<user_id>\d+)/?$", auth.user_detail),
+
+    # ---- organisation
+    re_path(r"^branches/?$", org.branches),
+    re_path(r"^branches/(?P<branch_id>\d+)/?$", org.branch_detail),
+    re_path(r"^settings/?$", org.settings_view),
+    re_path(r"^search/?$", org.search),
+
+    # ---- borrowers
+    re_path(r"^borrowers/?$", borrowers.borrowers),
+    re_path(r"^borrowers/(?P<borrower_id>\d+)/?$", borrowers.borrower_detail),
+    re_path(r"^borrowers/(?P<borrower_id>\d+)/loans/?$", borrowers.borrower_loans),
+    re_path(r"^borrowers/(?P<borrower_id>\d+)/guarantors/?$", borrowers.add_guarantor),
+    re_path(r"^borrowers/(?P<borrower_id>\d+)/guarantors/(?P<guarantor_id>\d+)/?$",
+            borrowers.remove_guarantor),
+    re_path(r"^borrowers/(?P<borrower_id>\d+)/documents/?$", borrowers.documents),
+    re_path(r"^borrowers/(?P<borrower_id>\d+)/documents/(?P<document_id>\d+)/download/?$",
+            borrowers.download_document),
+    re_path(r"^borrowers/(?P<borrower_id>\d+)/documents/(?P<document_id>\d+)/?$",
+            borrowers.delete_document),
+
+    # ---- products and the charges catalogue
+    re_path(r"^products/?$", products.products),
+    re_path(r"^products/(?P<product_id>\d+)/?$", products.product_detail),
+    re_path(r"^products/(?P<product_id>\d+)/charges/?$", charges.product_charges),
+    re_path(r"^charges/?$", charges.charges),
+    re_path(r"^charges/(?P<charge_id>\d+)/?$", charges.charge_detail),
+
+    # ---- joint-liability groups
+    re_path(r"^groups/?$", groups.groups),
+    re_path(r"^groups/performance/?$", groups.performance),
+    re_path(r"^groups/(?P<group_id>\d+)/?$", groups.group_detail),
+    re_path(r"^groups/(?P<group_id>\d+)/standing/?$", groups.standing),
+    re_path(r"^groups/(?P<group_id>\d+)/loans/?$", groups.group_loans),
+    re_path(r"^groups/(?P<group_id>\d+)/members/?$", groups.add_member),
+    re_path(r"^groups/(?P<group_id>\d+)/members/(?P<member_id>\d+)/?$", groups.member_detail),
+
+    # ---- savings
+    re_path(r"^savings/products/?$", savings.products),
+    re_path(r"^savings/products/(?P<product_id>\d+)/?$", savings.product_detail),
+    re_path(r"^savings/portfolio/?$", savings.portfolio),
+    re_path(r"^savings/run-interest/?$", savings.run_interest),
+    re_path(r"^savings/accounts/?$", savings.accounts),
+    re_path(r"^savings/accounts/(?P<account_id>\d+)/?$", savings.account_detail),
+    re_path(r"^savings/accounts/(?P<account_id>\d+)/deposit/?$", savings.deposit),
+    re_path(r"^savings/accounts/(?P<account_id>\d+)/withdraw/?$", savings.withdraw),
+    re_path(r"^savings/accounts/(?P<account_id>\d+)/close/?$", savings.close),
+    re_path(r"^savings/accounts/(?P<account_id>\d+)/transactions/(?P<txn_id>\d+)/reverse/?$",
+            savings.reverse),
+
+    # ---- loans (quote must come before the numeric id routes)
+    re_path(r"^loans/quote/?$", loans.quote),
+    re_path(r"^loans/?$", loans.loans),
+    re_path(r"^loans/(?P<loan_id>\d+)/?$", loans.loan_detail),
+    re_path(r"^loans/(?P<loan_id>\d+)/statement/?$", loans.statement),
+    re_path(r"^loans/(?P<loan_id>\d+)/approve/?$", loans.approve),
+    re_path(r"^loans/(?P<loan_id>\d+)/reject/?$", loans.reject),
+    re_path(r"^loans/(?P<loan_id>\d+)/disburse/?$", loans.disburse),
+    re_path(r"^loans/(?P<loan_id>\d+)/repayments/?$", loans.repayments),
+    re_path(r"^loans/(?P<loan_id>\d+)/transactions/(?P<txn_id>\d+)/reverse/?$", loans.reverse),
+    re_path(r"^loans/(?P<loan_id>\d+)/waive-penalties/?$", loans.waive_penalties),
+    re_path(r"^loans/(?P<loan_id>\d+)/write-off/?$", loans.write_off),
+    re_path(r"^loans/(?P<loan_id>\d+)/reschedule/?$", loans.reschedule),
+    re_path(r"^loans/(?P<loan_id>\d+)/accrue-penalties/?$", loans.accrue_one),
+    re_path(r"^loans/(?P<loan_id>\d+)/settlement-quote/?$", loans.settlement_quote),
+    re_path(r"^loans/(?P<loan_id>\d+)/settle/?$", loans.settle),
+    re_path(r"^loans/(?P<loan_id>\d+)/notes/?$", loans.notes),
+    re_path(r"^loans/(?P<loan_id>\d+)/notes/(?P<note_id>\d+)/?$", loans.note_detail),
+    re_path(r"^loans/(?P<loan_id>\d+)/recovery/?$", loans.recovery),
+    re_path(r"^loans/(?P<loan_id>\d+)/top-up-quote/?$", loans.top_up_quote),
+    re_path(r"^loans/(?P<loan_id>\d+)/top-up/?$", loans.top_up),
+    re_path(r"^loans/(?P<loan_id>\d+)/charges/?$", loans.raise_charge),
+    re_path(r"^loans/(?P<loan_id>\d+)/agreement/?$", loans.agreement),
+    re_path(r"^loans/(?P<loan_id>\d+)/collateral/?$", loans.collateral),
+    re_path(r"^loans/(?P<loan_id>\d+)/collateral/(?P<collateral_id>\d+)/?$",
+            loans.collateral_detail),
+
+    # ---- general ledger
+    re_path(r"^ledger/accounts/?$", ledger.accounts),
+    re_path(r"^ledger/accounts/(?P<account_id>\d+)/?$", ledger.account_detail),
+    re_path(r"^ledger/journal/?$", ledger.journal),
+    re_path(r"^ledger/trial-balance/?$", ledger.trial_balance),
+    re_path(r"^ledger/income-statement/?$", ledger.income_statement),
+    re_path(r"^ledger/rebuild/?$", ledger.rebuild),
+
+    # ---- reports
+    re_path(r"^reports/dashboard/?$", reports.dashboard),
+    re_path(r"^reports/par/?$", reports.par),
+    re_path(r"^reports/collections-due/?$", reports.collections_due),
+    re_path(r"^reports/loan-book/?$", reports.loan_book),
+    re_path(r"^reports/transactions/?$", reports.transactions),
+    re_path(r"^reports/run-penalties/?$", reports.run_penalties),
+    re_path(r"^reports/audit/?$", reports.audit_log),
+    re_path(r"^reports/ecl/?$", reports.ecl),
+    re_path(r"^reports/officer-performance/?$", reports.officer_performance),
+    re_path(r"^reports/product-performance/?$", reports.product_performance),
+    re_path(r"^reports/branch-performance/?$", reports.branch_performance),
+    re_path(r"^reports/payroll/?$", reports.payroll),
+    re_path(r"^reports/employers/?$", reports.employers),
+
+    # ---- messaging and batch posting
+    re_path(r"^notifications/?$", reports.notifications),
+    re_path(r"^notifications/generate/?$", reports.generate_notifications),
+    re_path(r"^notifications/send/?$", reports.send_notifications),
+    re_path(r"^notifications/cancel/?$", reports.cancel_notifications),
+    re_path(r"^imports/repayments/?$", reports.bulk_repayments),
+]

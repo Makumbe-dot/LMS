@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# Secrets and local config
+.env
+backend/.env
+frontend/.env
+frontend/.env.local
+
+# Databases
+*.db
+
+# Django
+backend/staticfiles/
+backend/media/
+
+# Node / React
+node_modules/
+frontend/dist/
+npm-debug.log*

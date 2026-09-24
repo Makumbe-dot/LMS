@@ -1,0 +1,204 @@
+{% load humanize %}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Loan agreement {{ loan.loan_no }}</title>
+<style>
+  :root { --ink: #14181d; --muted: #5a6470; --line: #ccd3db; }
+  * { box-sizing: border-box; }
+  body {
+    font: 12pt/1.5 Georgia, "Times New Roman", serif; color: var(--ink);
+    margin: 0; padding: 32px; background: #f3f5f8;
+  }
+  .sheet {
+    background: #fff; max-width: 820px; margin: 0 auto; padding: 48px 56px;
+    box-shadow: 0 2px 12px rgba(0,0,0,.12);
+  }
+  header { border-bottom: 2px solid var(--ink); padding-bottom: 14px; margin-bottom: 24px; }
+  .org { font-size: 20pt; font-weight: 700; letter-spacing: .5px; }
+  .org-detail { color: var(--muted); font-size: 10pt; }
+  h1 { font-size: 15pt; text-align: center; letter-spacing: 1px; text-transform: uppercase;
+       margin: 28px 0 6px; }
+  .ref { text-align: center; color: var(--muted); font-size: 10pt; margin-bottom: 26px; }
+  h2 { font-size: 12pt; margin: 24px 0 8px; border-bottom: 1px solid var(--line);
+       padding-bottom: 4px; }
+  table { width: 100%; border-collapse: collapse; font-size: 10.5pt; }
+  .terms td { padding: 5px 0; vertical-align: top; }
+  .terms td:first-child { color: var(--muted); width: 42%; }
+  .terms td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+  .schedule th, .schedule td {
+    border: 1px solid var(--line); padding: 5px 7px; text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .schedule th { background: #eef2f6; text-align: right; font-size: 9.5pt; }
+  .schedule th:first-child, .schedule td:first-child,
+  .schedule th:nth-child(2), .schedule td:nth-child(2) { text-align: left; }
+  ol { padding-left: 20px; }
+  ol li { margin-bottom: 7px; font-size: 10.5pt; }
+  .signatures { display: flex; gap: 40px; margin-top: 40px; }
+  .sign { flex: 1; }
+  .sign-line { border-bottom: 1px solid var(--ink); height: 46px; margin-bottom: 6px; }
+  .sign-label { font-size: 10pt; color: var(--muted); }
+  footer { margin-top: 34px; padding-top: 12px; border-top: 1px solid var(--line);
+           color: var(--muted); font-size: 9pt; text-align: center; }
+  .no-print { text-align: center; margin-bottom: 18px; }
+  .no-print button {
+    font: inherit; padding: 8px 18px; border: 1px solid var(--line); border-radius: 6px;
+    background: #fff; cursor: pointer;
+  }
+  @media print {
+    body { background: #fff; padding: 0; }
+    .sheet { box-shadow: none; max-width: none; padding: 0; }
+    .no-print { display: none; }
+    .schedule { page-break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+<div class="no-print"><button onclick="window.print()">Print or save as PDF</button></div>
+
+<div class="sheet">
+  <header>
+    <div class="org">{{ org.name }}</div>
+    <div class="org-detail">
+      {% if org.address %}{{ org.address }}{% endif %}
+      {% if org.phone %} &middot; {{ org.phone }}{% endif %}
+      {% if org.email %} &middot; {{ org.email }}{% endif %}
+    </div>
+  </header>
+
+  <h1>Loan agreement</h1>
+  <div class="ref">
+    Agreement number {{ loan.loan_no }} &middot; issued {{ today|date:"j F Y" }}
+    {% if loan.branch %}&middot; {{ loan.branch.name }}{% endif %}
+  </div>
+
+  <p>
+    This agreement is made between <strong>{{ org.name }}</strong> (&ldquo;the Lender&rdquo;) and
+    <strong>{{ borrower.full_name }}</strong>, national identity number
+    {{ borrower.national_id }}{% if borrower.address %}, of {{ borrower.address }}{% endif %}
+    (&ldquo;the Borrower&rdquo;), on the terms set out below.
+  </p>
+
+  <h2>1. The loan</h2>
+  <table class="terms">
+    <tr><td>Product</td><td>{{ loan.product.name }}</td></tr>
+    <tr><td>Principal advanced</td><td>{{ currency }} {{ loan.principal|floatformat:2|intcomma }}</td></tr>
+    <tr><td>Interest rate</td>
+        <td>{{ loan.interest_rate_pct|floatformat:3 }}% per month, {{ rate_method }}</td></tr>
+    <tr><td>Term</td><td>{{ loan.term_months }} months</td></tr>
+    <tr><td>Monthly instalment</td>
+        <td><strong>{{ currency }} {{ loan.instalment_amount|floatformat:2|intcomma }}</strong></td></tr>
+    <tr><td>Total interest payable</td><td>{{ currency }} {{ loan.total_interest|floatformat:2|intcomma }}</td></tr>
+    <tr><td>Total repayable</td><td>{{ currency }} {{ total_repayable|floatformat:2|intcomma }}</td></tr>
+    <tr><td>Administration fee</td><td>{{ currency }} {{ loan.admin_fee|floatformat:2|intcomma }}</td></tr>
+    <tr><td>Credit life fee</td><td>{{ currency }} {{ loan.insurance_fee|floatformat:2|intcomma }}</td></tr>
+    {% for charge in charges %}
+    <tr><td>{{ charge.name }}</td><td>{{ currency }} {{ charge.amount|floatformat:2|intcomma }}</td></tr>
+    {% endfor %}
+    <tr><td>Net amount paid to the Borrower</td>
+        <td><strong>{{ currency }} {{ net_disbursed|floatformat:2|intcomma }}</strong></td></tr>
+    <tr><td>First instalment due</td><td>{{ loan.first_instalment_date|date:"j F Y"|default:"On disbursement" }}</td></tr>
+    <tr><td>Final instalment due</td><td>{{ loan.maturity_date|date:"j F Y"|default:"-" }}</td></tr>
+  </table>
+
+  <h2>2. Repayment</h2>
+  <ol>
+    <li>
+      The Borrower shall repay {{ currency }}
+      {{ loan.instalment_amount|floatformat:2|intcomma }} on the
+      {{ payday_ordinal }} day of each month until the loan is repaid in full.
+    </li>
+    <li>
+      Payments are applied first to penalties, then to interest, then to principal, oldest
+      instalment first.
+    </li>
+    <li>
+      The Borrower may settle early at any time. On early settlement, interest on instalments not
+      yet due is not charged, and only interest accrued to the settlement date is payable.
+    </li>
+    <li>
+      A late-payment penalty of {{ loan.product.penalty_rate_pct_per_day|floatformat:3 }}% per day
+      applies to any instalment that remains unpaid more than
+      {{ loan.product.grace_days }} day{{ loan.product.grace_days|pluralize }} after its due date.
+    </li>
+  </ol>
+
+  {% if guarantors %}
+  <h2>3. Guarantors</h2>
+  <p>The following persons guarantee the obligations of the Borrower under this agreement:</p>
+  <table class="terms">
+    {% for g in guarantors %}
+    <tr><td>{{ g.full_name }} ({{ g.national_id }})</td><td>{{ g.phone }}</td></tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+
+  {% if collateral %}
+  <h2>{% if guarantors %}4{% else %}3{% endif %}. Security</h2>
+  <p>The following is pledged as security for this loan:</p>
+  <table class="terms">
+    {% for c in collateral %}
+    <tr>
+      <td>{{ c.get_type_display }} &mdash; {{ c.description }}{% if c.reference %} ({{ c.reference }}){% endif %}</td>
+      <td>{{ currency }} {{ c.estimated_value|floatformat:2|intcomma }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+
+  {% if schedule %}
+  <h2>Repayment schedule</h2>
+  <table class="schedule">
+    <thead>
+      <tr>
+        <th>#</th><th>Due date</th><th>Opening</th><th>Principal</th>
+        <th>Interest</th><th>Instalment</th><th>Balance</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in schedule %}
+      <tr>
+        <td>{{ row.number }}</td>
+        <td>{{ row.due_date|date:"Y-m-d" }}</td>
+        <td>{{ row.opening_balance|floatformat:2|intcomma }}</td>
+        <td>{{ row.principal_due|floatformat:2|intcomma }}</td>
+        <td>{{ row.interest_due|floatformat:2|intcomma }}</td>
+        <td>{{ row.instalment|floatformat:2|intcomma }}</td>
+        <td>{{ row.closing_balance|floatformat:2|intcomma }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  <h2>Declaration</h2>
+  <p>
+    The Borrower confirms that the terms above have been explained and understood, that the
+    information given in support of this application is true, and that the instalment is
+    affordable against the Borrower&rsquo;s income.
+  </p>
+
+  <div class="signatures">
+    <div class="sign">
+      <div class="sign-line"></div>
+      <div class="sign-label">{{ borrower.full_name }} &mdash; Borrower</div>
+      <div class="sign-label">Date:</div>
+    </div>
+    <div class="sign">
+      <div class="sign-line"></div>
+      <div class="sign-label">
+        {% if loan.officer %}{{ loan.officer.full_name }}{% else %}Authorised signatory{% endif %}
+        &mdash; for {{ org.name }}
+      </div>
+      <div class="sign-label">Date:</div>
+    </div>
+  </div>
+
+  <footer>
+    {{ org.name }} &middot; agreement {{ loan.loan_no }} &middot;
+    generated {{ today|date:"Y-m-d" }}
+  </footer>
+</div>
+</body>
+</html>

@@ -1,0 +1,7 @@
+Django>=5.2,<7.0
+djangorestframework>=3.15
+djangorestframework-simplejwt>=5.3
+mssql-django>=1.5
+pyodbc>=5.1
+django-cors-headers>=4.4
+python-dotenv>=1.0
