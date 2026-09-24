@@ -38,6 +38,7 @@ CODES = {
     "bank": "1000",
     "loans_receivable": "1100",
     "penalties_receivable": "1300",
+    "charges_receivable": "1400",
     "provision": "1900",
     "client_funds": "2000",
     "interest_income": "4000",
@@ -53,6 +54,7 @@ DEFAULT_ACCOUNTS = [
     ("1000", "Cash and bank", AccountType.ASSET, "Where disbursements leave from and repayments land"),
     ("1100", "Loans receivable - principal", AccountType.ASSET, "Principal advanced and not yet repaid"),
     ("1300", "Penalties receivable", AccountType.ASSET, "Late-payment penalties charged and not yet collected"),
+    ("1400", "Charges receivable", AccountType.ASSET, "Fees added to a loan balance and not yet collected"),
     ("1900", "Provision for credit losses", AccountType.ASSET, "Contra-asset; expected credit loss held against the book"),
     ("2000", "Client funds payable", AccountType.LIABILITY, "Amounts held on behalf of borrowers"),
     ("3000", "Retained earnings", AccountType.EQUITY, "Accumulated result"),
@@ -97,6 +99,7 @@ def _lines_for(txn: Transaction) -> list[tuple[str, Decimal, Decimal, str]]:
     principal = q(txn.principal_component)
     interest = q(txn.interest_component)
     penalty = q(txn.penalty_component)
+    charge = q(txn.charge_component)
 
     if txn.txn_type == TxnType.DISBURSEMENT:
         # Dr the receivable with the full principal; the borrower gets the principal
@@ -124,6 +127,8 @@ def _lines_for(txn: Transaction) -> list[tuple[str, Decimal, Decimal, str]]:
             lines.append((CODES["interest_income"], ZERO, interest, "Interest collected"))
         if penalty > 0:
             lines.append((CODES["penalties_receivable"], ZERO, penalty, "Penalty collected"))
+        if charge > 0:
+            lines.append((CODES["charges_receivable"], ZERO, charge, "Charge collected"))
         return lines
 
     if txn.txn_type == TxnType.REVERSAL:
@@ -135,6 +140,8 @@ def _lines_for(txn: Transaction) -> list[tuple[str, Decimal, Decimal, str]]:
             lines.append((CODES["interest_income"], interest, ZERO, "Interest income reversed"))
         if penalty > 0:
             lines.append((CODES["penalties_receivable"], penalty, ZERO, "Penalty restored"))
+        if charge > 0:
+            lines.append((CODES["charges_receivable"], charge, ZERO, "Charge restored"))
         return lines
 
     if txn.txn_type == TxnType.WAIVER:
@@ -151,7 +158,7 @@ def _lines_for(txn: Transaction) -> list[tuple[str, Decimal, Decimal, str]]:
     if txn.txn_type == TxnType.WRITE_OFF:
         # Only recognised balances leave the ledger: principal and penalties.
         # Unearned interest was never income, so it is not an expense now.
-        recognised = q(principal + penalty)
+        recognised = q(principal + penalty + charge)
         if recognised <= 0:
             return []
         lines = [(CODES["write_off"], recognised, ZERO, "Balance written off")]
@@ -159,12 +166,21 @@ def _lines_for(txn: Transaction) -> list[tuple[str, Decimal, Decimal, str]]:
             lines.append((CODES["loans_receivable"], ZERO, principal, "Principal written off"))
         if penalty > 0:
             lines.append((CODES["penalties_receivable"], ZERO, penalty, "Penalties written off"))
+        if charge > 0:
+            lines.append((CODES["charges_receivable"], ZERO, charge, "Charges written off"))
         return lines
 
     if txn.txn_type == TxnType.CHARGE:
         # Raised and settled at the counter, unlike the fees netted off an advance.
         return [
             (CODES["bank"], amount, ZERO, "Charge collected"),
+            (CODES["fee_income"], ZERO, amount, "Charge income"),
+        ]
+
+    if txn.txn_type == TxnType.CHARGE_ADDED:
+        # Added to the loan balance: a receivable now, cash when the borrower pays.
+        return [
+            (CODES["charges_receivable"], amount, ZERO, "Charge added to the balance"),
             (CODES["fee_income"], ZERO, amount, "Charge income"),
         ]
 

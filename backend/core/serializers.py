@@ -15,6 +15,7 @@ from .models import (
     BorrowerGroup,
     Branch,
     Charge,
+    ChargeCollection,
     Collateral,
     DocumentType,
     GroupMember,
@@ -239,9 +240,13 @@ class ChargeSerializer(serializers.ModelSerializer):
 
 
 class LoanChargeSerializer(serializers.ModelSerializer):
+    instalment_number = serializers.IntegerField(source="instalment.number", read_only=True,
+                                                 default=None)
+
     class Meta:
         model = LoanCharge
-        fields = ["id", "loan_id", "charge_id", "name", "amount", "applied_on", "transaction_id"]
+        fields = ["id", "loan_id", "charge_id", "name", "amount", "applied_on", "collection",
+                  "instalment_id", "instalment_number", "transaction_id"]
 
 
 class ProductChargeSerializer(serializers.ModelSerializer):
@@ -257,6 +262,8 @@ class ManualChargeSerializer(serializers.Serializer):
     name = serializers.CharField(required=False, allow_blank=True, max_length=120)
     amount = money(min_value=Decimal("0.01"), required=False, allow_null=True)
     applied_on = serializers.DateField(required=False, allow_null=True)
+    collection = serializers.ChoiceField(choices=ChargeCollection.choices,
+                                         default=ChargeCollection.COUNTER)
 
 
 class ScoreFactorSerializer(serializers.Serializer):
@@ -314,8 +321,9 @@ class InstalmentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Instalment
         fields = ["id", "number", "due_date", "opening_balance", "principal_due", "interest_due",
-                  "penalty_due", "principal_paid", "interest_paid", "penalty_paid",
-                  "closing_balance", "status", "paid_date", "total_due", "total_paid", "balance"]
+                  "penalty_due", "charge_due", "principal_paid", "interest_paid", "penalty_paid",
+                  "charge_paid", "closing_balance", "status", "paid_date", "total_due",
+                  "total_paid", "balance"]
 
 
 class TransactionSerializer(serializers.ModelSerializer):
@@ -324,8 +332,8 @@ class TransactionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Transaction
         fields = ["id", "loan_id", "txn_type", "txn_date", "amount", "principal_component",
-                  "interest_component", "penalty_component", "method", "reference", "narration",
-                  "reversed", "reversal_of_id", "created_at"]
+                  "interest_component", "penalty_component", "charge_component", "method",
+                  "reference", "narration", "reversed", "reversal_of_id", "created_at"]
 
 
 class LoanSerializer(serializers.ModelSerializer):
@@ -347,8 +355,8 @@ class LoanSerializer(serializers.ModelSerializer):
                   "instalment_amount", "total_interest", "status",
                   "application_date", "approved_at", "rejection_reason", "disbursement_date",
                   "first_instalment_date", "maturity_date", "closed_at", "principal_outstanding",
-                  "interest_outstanding", "penalties_outstanding", "total_paid",
-                  "total_outstanding", "arrears_amount", "days_in_arrears",
+                  "interest_outstanding", "penalties_outstanding", "charges_outstanding",
+                  "total_paid", "total_outstanding", "arrears_amount", "days_in_arrears",
                   "credit_score", "credit_grade"]
 
 
@@ -411,6 +419,7 @@ class SettlementQuoteSerializer(serializers.Serializer):
     principal_outstanding = money()
     interest_accrued = money()
     penalties_outstanding = money()
+    charges_outstanding = money()
     interest_rebate = money()
     settlement_amount = money()
     total_outstanding = money()

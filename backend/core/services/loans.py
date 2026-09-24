@@ -35,15 +35,15 @@ ZERO = Decimal("0")
 
 # Instalment columns that the services mutate in memory.
 INSTALMENT_WRITE_FIELDS = [
-    "principal_due", "interest_due", "penalty_due",
-    "principal_paid", "interest_paid", "penalty_paid",
+    "principal_due", "interest_due", "penalty_due", "charge_due",
+    "principal_paid", "interest_paid", "penalty_paid", "charge_paid",
     "status", "paid_date", "last_penalty_date",
 ]
 
 # Loan columns that refresh_balances owns.
 LOAN_BALANCE_FIELDS = [
     "principal_outstanding", "interest_outstanding", "penalties_outstanding",
-    "total_paid", "status", "closed_at",
+    "charges_outstanding", "total_paid", "status", "closed_at",
 ]
 
 
@@ -265,11 +265,12 @@ def disburse(loan: Loan, user: User, disbursement_date: date | None,
     loan.principal_outstanding = loan.principal
     loan.interest_outstanding = loan.total_interest
     loan.penalties_outstanding = ZERO
+    loan.charges_outstanding = ZERO
     loan.total_paid = ZERO
     loan.save(update_fields=[
         "status", "disbursement_date", "first_instalment_date", "maturity_date",
         "instalment_amount", "total_interest", "principal_outstanding",
-        "interest_outstanding", "penalties_outstanding", "total_paid",
+        "interest_outstanding", "penalties_outstanding", "charges_outstanding", "total_paid",
     ])
 
     fees = q(loan.admin_fee + loan.insurance_fee + loan.other_charges)
@@ -303,12 +304,13 @@ def refresh_balances(loan: Loan, as_of: date | None = None, save: bool = True) -
     """Recompute the loan's running balances and instalment statuses from the schedule,
     then write the schedule and the loan back to the database."""
     as_of = as_of or date.today()
-    p = i = pen = paid = ZERO
+    p = i = pen = chg = paid = ZERO
     rows = sched(loan)
     for ins in rows:
         p += ins.principal_due - ins.principal_paid
         i += ins.interest_due - ins.interest_paid
         pen += ins.penalty_due - ins.penalty_paid
+        chg += ins.charge_due - ins.charge_paid
         paid += ins.total_paid
         if ins.balance <= 0:
             ins.status = InstalmentStatus.PAID
@@ -321,6 +323,7 @@ def refresh_balances(loan: Loan, as_of: date | None = None, save: bool = True) -
     loan.principal_outstanding = q(p)
     loan.interest_outstanding = q(i)
     loan.penalties_outstanding = q(pen)
+    loan.charges_outstanding = q(chg)
     loan.total_paid = q(paid)
     if loan.status == LoanStatus.ACTIVE and loan.total_outstanding <= 0 and rows:
         loan.status = LoanStatus.CLOSED
@@ -356,22 +359,24 @@ def settlement_quote(loan: Loan, as_of: date | None = None) -> dict:
     if loan.status != LoanStatus.ACTIVE:
         raise BusinessRuleError(f"Loan is {loan.status}; only active loans can be settled early")
     as_of = as_of or date.today()
-    principal_due = interest_earned = interest_unearned = penalties = ZERO
+    principal_due = interest_earned = interest_unearned = penalties = charges = ZERO
     for ins in sched(loan):
         principal_due += ins.principal_due - ins.principal_paid
         penalties += ins.penalty_due - ins.penalty_paid
+        charges += ins.charge_due - ins.charge_paid
         unpaid_interest = ins.interest_due - ins.interest_paid
         if ins.due_date <= as_of:
             interest_earned += unpaid_interest
         else:
             interest_unearned += unpaid_interest
-    payoff = q(principal_due + interest_earned + penalties)
+    payoff = q(principal_due + interest_earned + penalties + charges)
     return {
         "as_of": as_of,
         "loan_no": loan.loan_no,
         "principal_outstanding": q(principal_due),
         "interest_accrued": q(interest_earned),
         "penalties_outstanding": q(penalties),
+        "charges_outstanding": q(charges),
         "interest_rebate": q(interest_unearned),
         "settlement_amount": payoff,
         "total_outstanding": q(loan.total_outstanding),
@@ -416,7 +421,8 @@ def write_off(loan: Loan, user: User, narration: str) -> Loan:
         loan=loan, txn_type=TxnType.WRITE_OFF, txn_date=date.today(), amount=amt,
         principal_component=loan.principal_outstanding,
         interest_component=loan.interest_outstanding,
-        penalty_component=loan.penalties_outstanding, narration=narration, posted_by=user,
+        penalty_component=loan.penalties_outstanding,
+        charge_component=loan.charges_outstanding, narration=narration, posted_by=user,
     )
     loan.status = LoanStatus.WRITTEN_OFF
     loan.closed_at = datetime.now(timezone.utc)
@@ -512,7 +518,8 @@ def reschedule(loan: Loan, user: User, new_term: int, new_rate: Decimal | None,
     today = date.today()
     overdue_interest = sum(
         (i.interest_due - i.interest_paid for i in sched(loan) if i.due_date < today), ZERO)
-    new_principal = q(loan.principal_outstanding + overdue_interest + loan.penalties_outstanding)
+    new_principal = q(loan.principal_outstanding + overdue_interest
+                      + loan.penalties_outstanding + loan.charges_outstanding)
     rate = new_rate if new_rate is not None else loan.interest_rate_pct
     first = first_due or default_first_due(today, loan.borrower.payday)
     prior_paid = loan.total_paid
@@ -531,11 +538,12 @@ def reschedule(loan: Loan, user: User, new_term: int, new_rate: Decimal | None,
     loan.principal_outstanding = new_principal
     loan.interest_outstanding = loan.total_interest
     loan.penalties_outstanding = ZERO
+    loan.charges_outstanding = ZERO
     loan.total_paid = ZERO
     loan.save(update_fields=[
         "principal", "interest_rate_pct", "term_months", "first_instalment_date",
         "maturity_date", "instalment_amount", "total_interest", "principal_outstanding",
-        "interest_outstanding", "penalties_outstanding", "total_paid",
+        "interest_outstanding", "penalties_outstanding", "charges_outstanding", "total_paid",
     ])
     Transaction.objects.create(
         loan=loan, txn_type=TxnType.FEE, txn_date=today, amount=ZERO, posted_by=user,

@@ -35,9 +35,14 @@ closure on full settlement, **early settlement with an interest rebate**, **top-
 a new schedule), write-off, and a **printable loan agreement** with the terms, the schedule, the
 guarantors, the security and signature blocks.
 
-**Repayments** — waterfall allocation (penalties, then interest, then principal, oldest instalment
-first), cash / bank / mobile money / salary deduction, reversals, penalty waivers, and **bulk CSV
-import** with a line-by-line dry run before anything is posted. Overpayment is refused.
+**Repayments** — waterfall allocation (penalties, then charges, then interest, then principal,
+oldest instalment first), cash / bank / mobile money / salary deduction, reversals, penalty
+waivers, and **bulk CSV import** with a line-by-line dry run before anything is posted.
+Overpayment is refused.
+
+**Fees mid-term** — a charge raised against a running loan is either collected at the counter
+(cash in, the balance untouched) or **added to the loan balance**, where it rides on the next
+unpaid instalment and is recovered ahead of interest.
 
 **Penalties** — an end-of-day job accrues late-payment penalties on overdue instalments after the
 grace period. Idempotent, so it can run any number of times a day.
@@ -147,9 +152,37 @@ is on <http://localhost:8000> with no CORS and no second server.
 
 ---
 
+## Going to production
+
+`backend/.env.production.example` is the starting point. Four things are not optional:
+
+1. **`SECRET_KEY`** — a long random value. Settings refuses to start with `DEBUG=0` and the
+   development placeholder, rather than letting you deploy it by accident:
+   ```powershell
+   python -c "import secrets; print(secrets.token_urlsafe(64))"
+   ```
+2. **`DEBUG=0`**, which switches on HSTS, secure cookies, the SSL redirect, `X-Frame-Options:
+   DENY` and content-type nosniff. Behind a reverse proxy that terminates TLS, the proxy must set
+   `X-Forwarded-Proto`.
+3. **`ALLOWED_HOSTS`** — every hostname the app answers on, and nothing else.
+4. **A real certificate on SQL Server**, so `DB_ENCRYPT=1` and `DB_TRUST_SERVER_CERT=0`.
+
+Then check your work and collect the static files:
+
+```powershell
+cd backend
+..\.venv\Scripts\python.exe manage.py check --deploy
+..\.venv\Scripts\python.exe manage.py collectstatic --noinput
+```
+
+Run it behind a real server (IIS with HttpPlatformHandler, or nginx in front of gunicorn/waitress)
+rather than `runserver`, put the media directory somewhere backed up, and schedule the nightly job
+and the backups.
+
 ## Configuration
 
-Everything lives in `backend/.env` (see `backend/.env.example`). The settings that matter most:
+Everything lives in `backend/.env` (see `backend/.env.example` for development and
+`backend/.env.production.example` for a server). The settings that matter most:
 
 | Variable | Meaning |
 |---|---|
@@ -185,23 +218,68 @@ automatically), covering:
 
 ## Scheduled jobs
 
-Two commands are meant for Task Scheduler or cron. Both are idempotent, so a double run is safe.
+One script runs the lot, and everything in it is idempotent, so a repeated or retried run changes
+nothing extra:
+
+```powershell
+.\scripts\run_nightly_jobs.ps1                    # penalties, reminders, savings interest, backup
+.\scripts\run_nightly_jobs.ps1 -AsOf 2026-09-30 -SkipBackup
+```
+
+Register it with Task Scheduler. No administrator rights are needed, because it registers for the
+current user:
+
+```powershell
+.\scripts\register_scheduled_task.ps1 -At 22:00
+Start-ScheduledTask -TaskName 'LMS nightly batch'   # run it now rather than waiting
+.\scripts\register_scheduled_task.ps1 -Remove
+```
+
+For a server, register it instead under a service account with "run whether the user is logged on
+or not", which does need elevation. Output is appended to `logs/nightly-YYYYMMDD.log`.
+
+The individual commands, if you would rather schedule them separately:
 
 ```powershell
 cd backend
-# End-of-day: accrue late-payment penalties on overdue instalments
-..\.venv\Scripts\python.exe manage.py run_penalties
-..\.venv\Scripts\python.exe manage.py run_penalties --as-of 2026-09-30
-
-# Daily: queue instalment reminders and arrears notices (--send also marks them sent)
-..\.venv\Scripts\python.exe manage.py send_reminders
-..\.venv\Scripts\python.exe manage.py send_reminders --send --days-before 5
+..\.venv\Scripts\python.exe manage.py run_penalties [--as-of 2026-09-30]
+..\.venv\Scripts\python.exe manage.py send_reminders [--send] [--days-before 5]
+..\.venv\Scripts\python.exe manage.py run_savings_interest [--dormant-after 6]
 ```
 
-The same work is available over the API as `POST /api/reports/run-penalties` and
-`POST /api/notifications/generate`. Savings interest and the monthly account fee run from
-`POST /api/savings/run-interest` (the Run monthly interest button), which is idempotent within a
-calendar month.
+The same work is available over the API: `POST /api/reports/run-penalties`,
+`POST /api/notifications/generate` and `POST /api/savings/run-interest`. Savings interest is
+idempotent within a calendar month, so the nightly script only attempts it on the 1st.
+
+## Backups
+
+```powershell
+.\scripts\backup_database.ps1 -Verify
+.\scripts\backup_database.ps1 -BackupRoot \\fileserver\sql-backups -RetentionDays 30
+```
+
+Takes a checksummed full backup, has SQL Server read it back to prove it is restorable, archives
+the borrower documents (which live on disk, not in the database), and prunes anything past the
+retention window.
+
+Two things worth knowing:
+
+- **The backup file is written by the SQL Server service account, not by you.** With no
+  `-BackupRoot` the script uses the instance's own backup directory, which that account can always
+  write. On Express that directory is ACL'd to the service, so the script cannot prune it — for
+  anything beyond a trial, point `-BackupRoot` at a share both the service account and your
+  operators can reach.
+- **Express Edition cannot compress a backup.** The script detects the edition and omits
+  `COMPRESSION` rather than failing.
+
+The `LMS` database is created in SIMPLE recovery, which means point-in-time restore is not
+available: you can only go back to the last full backup. If the loan book matters, switch it to
+FULL and add log backups:
+
+```sql
+ALTER DATABASE LMS SET RECOVERY FULL;
+BACKUP LOG LMS TO DISK = N'...\LMS-log.trn';   -- then schedule this every 15 minutes
+```
 
 ## Sending messages for real
 
@@ -261,7 +339,13 @@ frontend/                       React + Vite single-page app
 sql/
   01_create_database.sql        create the LMS database (run first)
   02_app_login.sql              optional SQL login and a read-only analyst login
-  03_reporting_views.sql        views, stored procedure and indexes for SSMS
+  03_reporting_views.sql        loan-book views, arrears ageing, indexes
+  04_reporting_views_v2.sql     savings, groups, ledger and charge views, plus
+                                usp_reconcile_ledger
+scripts/
+  run_nightly_jobs.ps1          the nightly batch, with a dated log
+  register_scheduled_task.ps1   register (or remove) that batch in Task Scheduler
+  backup_database.ps1           verified backup of the database and the documents
 ```
 
 ## Key calculations
@@ -314,6 +398,16 @@ posts everything that was missed.
 The test suite asserts the invariant directly — after a lifecycle of disbursement, repayment,
 penalty accrual, waiver and write-off, the trial balance balances and account 1100 equals the sum
 of `principal_outstanding` across active loans.
+
+The same reconciliation is available in SSMS, for the morning of a board meeting:
+
+```sql
+EXEC dbo.usp_reconcile_ledger;
+```
+
+It checks loans receivable, penalties receivable, charges receivable and client funds against
+their sub-ledgers, and that debits equal credits. Any mismatch raises an error rather than
+returning quietly.
 
 *Fees*: admin and credit-life fees are a percentage of principal, deducted from the disbursed
 amount. The borrower repays the full principal.

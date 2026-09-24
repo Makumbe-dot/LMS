@@ -426,6 +426,94 @@ class ChargeTests(Base):
         self.assertEqual(lines["4100"].credit, dec("2.00"))
         self.assertTrue(gl.trial_balance()["balanced"])
 
+    def test_a_charge_can_instead_be_added_to_the_loan_balance(self):
+        borrower = self.make_borrower()
+        loan = self.disbursed_loan(self.product, borrower)
+        before = dec(loan["total_outstanding"])
+
+        response = self.officer.post(f"/api/loans/{loan['id']}/charges", {
+            "name": "Valuation fee", "amount": "25.00", "collection": "balance",
+        }, format="json")
+        self.assertEqual(response.status_code, 201, response.content)
+        item = response.json()
+        self.assertEqual(item["collection"], "balance")
+        self.assertEqual(item["instalment_number"], 1)
+
+        detail = self.officer.get(f"/api/loans/{loan['id']}").json()
+        self.assertEqual(dec(detail["charges_outstanding"]), dec("25.00"))
+        self.assertEqual(dec(detail["total_outstanding"]), before + dec("25.00"))
+        # it rides on the first unpaid instalment
+        self.assertEqual(dec(detail["schedule"][0]["charge_due"]), dec("25.00"))
+
+        entry = JournalEntry.objects.get(source="charge_added")
+        lines = {line.account.code: line for line in entry.lines.all()}
+        self.assertEqual(lines["1400"].debit, dec("25.00"))     # charges receivable
+        self.assertEqual(lines["4100"].credit, dec("25.00"))    # fee income
+        self.assertTrue(gl.trial_balance()["balanced"])
+
+    def test_the_waterfall_takes_charges_after_penalties_before_interest(self):
+        borrower = self.make_borrower()
+        loan = self.disbursed_loan(self.product, borrower)
+        self.officer.post(f"/api/loans/{loan['id']}/charges", {
+            "name": "Valuation fee", "amount": "25.00", "collection": "balance",
+        }, format="json")
+
+        # Instalment 1 is 197.02 (50.00 interest + 147.02 principal) plus the 25.00 charge.
+        paid = self.teller.post(f"/api/loans/{loan['id']}/repayments", {
+            "amount": "60.00", "txn_date": "2026-03-25",
+        }, format="json").json()
+
+        self.assertEqual(dec(paid["charge_component"]), dec("25.00"))
+        self.assertEqual(dec(paid["interest_component"]), dec("35.00"))
+        self.assertEqual(dec(paid["principal_component"]), dec("0.00"))
+
+        by_code = {r["code"]: r for r in gl.trial_balance()["rows"]}
+        self.assertEqual(by_code["1400"]["balance"], dec("0.00"))   # receivable cleared
+
+    def test_a_balance_charge_survives_a_reversal_intact(self):
+        borrower = self.make_borrower()
+        loan = self.disbursed_loan(self.product, borrower)
+        self.officer.post(f"/api/loans/{loan['id']}/charges", {
+            "name": "Valuation fee", "amount": "25.00", "collection": "balance",
+        }, format="json")
+        paid = self.teller.post(f"/api/loans/{loan['id']}/repayments",
+                                {"amount": "60.00", "txn_date": "2026-03-25"},
+                                format="json").json()
+
+        self.officer.post(f"/api/loans/{loan['id']}/transactions/{paid['id']}/reverse",
+                          {"narration": "wrong account"}, format="json")
+        detail = self.officer.get(f"/api/loans/{loan['id']}").json()
+        self.assertEqual(dec(detail["charges_outstanding"]), dec("25.00"))
+        self.assertTrue(gl.trial_balance()["balanced"])
+
+    def test_a_balance_charge_needs_an_active_loan(self):
+        borrower = self.make_borrower()
+        response = self.officer.post("/api/loans", {
+            "borrower_id": borrower["id"], "product_id": self.product["id"],
+            "principal": 1000, "term_months": 6,
+        }, format="json")
+        pending = response.json()
+        response = self.officer.post(f"/api/loans/{pending['id']}/charges", {
+            "name": "x", "amount": "5.00", "collection": "balance",
+        }, format="json")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("active loan", response.json()["detail"])
+
+    def test_writing_off_expenses_the_outstanding_charge(self):
+        borrower = self.make_borrower()
+        loan = self.disbursed_loan(self.product, borrower)
+        self.officer.post(f"/api/loans/{loan['id']}/charges", {
+            "name": "Valuation fee", "amount": "25.00", "collection": "balance",
+        }, format="json")
+        self.admin.post(f"/api/loans/{loan['id']}/write-off", {"narration": "gone"},
+                        format="json")
+
+        entry = JournalEntry.objects.get(source="write_off")
+        lines = {line.account.code: line for line in entry.lines.all()}
+        self.assertEqual(lines["1400"].credit, dec("25.00"))
+        self.assertEqual(lines["5000"].debit, dec("1025.00"))
+        self.assertTrue(gl.trial_balance()["balanced"])
+
     def test_a_used_charge_cannot_be_deleted(self):
         self.attach(self.proc)
         borrower = self.make_borrower()

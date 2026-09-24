@@ -385,6 +385,9 @@ export default function LoanDetail() {
               ['Principal outstanding', money(loan.principal_outstanding)],
               ['Interest outstanding', money(loan.interest_outstanding)],
               ['Penalties outstanding', money(loan.penalties_outstanding)],
+              ...((num(loan.charges_outstanding) ?? 0) > 0
+                ? [['Charges outstanding', money(loan.charges_outstanding)]]
+                : []),
               ['Total outstanding', <strong key="t">{money(loan.total_outstanding)}</strong>],
               ['Total paid', money(loan.total_paid)],
               [
@@ -435,6 +438,14 @@ export default function LoanDetail() {
         >
           Security ({loan.collateral?.length ?? 0})
         </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'charges'}
+          onClick={() => setTab('charges')}
+        >
+          Charges ({loan.charges?.length ?? 0})
+        </button>
         {loan.scorecard ? (
           <button
             type="button"
@@ -461,6 +472,7 @@ export default function LoanDetail() {
               { key: 'principal', header: 'Principal', num: true, render: (r) => fmt(r.principal_due) },
               { key: 'interest', header: 'Interest', num: true, render: (r) => fmt(r.interest_due) },
               { key: 'penalty', header: 'Penalty', num: true, render: (r) => fmt(r.penalty_due) },
+              { key: 'charge', header: 'Charges', num: true, render: (r) => fmt(r.charge_due) },
               { key: 'total', header: 'Total due', num: true, render: (r) => fmt(r.total_due) },
               { key: 'paid', header: 'Paid', num: true, render: (r) => fmt(r.total_paid) },
               {
@@ -488,6 +500,48 @@ export default function LoanDetail() {
             are enforced separately and cannot be scored around.
           </p>
           <Scorecard card={loan.scorecard} />
+        </div>
+      ) : tab === 'charges' ? (
+        <div className="card">
+          <div className="row between" style={{ marginBottom: 12 }}>
+            <h3 style={{ margin: 0 }}>Fees and charges</h3>
+            {isOfficer ? (
+              <button
+                type="button"
+                className="btn small"
+                onClick={() => setAction({ kind: 'charge' })}
+              >
+                Raise a charge
+              </button>
+            ) : null}
+          </div>
+          <DataTable
+            caption="Loan charges"
+            rows={loan.charges || []}
+            empty="Nothing beyond the fees deducted at disbursement"
+            columns={[
+              { key: 'date', header: 'Raised', render: (c) => c.applied_on },
+              { key: 'name', header: 'Charge', render: (c) => c.name },
+              { key: 'amount', header: 'Amount', num: true, render: (c) => fmt(c.amount) },
+              {
+                key: 'collection',
+                header: 'Recovered',
+                render: (c) =>
+                  c.collection === 'balance' ? (
+                    <span className="tag-warn">
+                      Added to instalment {c.instalment_number ?? '-'}
+                    </span>
+                  ) : (
+                    <span className="tag-ok">Collected at the counter</span>
+                  ),
+              },
+            ]}
+          />
+          <p className="muted" style={{ fontSize: 12, marginBottom: 0 }}>
+            A charge collected at the counter is paid there and then and never touches the loan
+            balance. One added to the balance rides on the next unpaid instalment, and the
+            repayment waterfall takes it after penalties and before interest.
+          </p>
         </div>
       ) : tab === 'security' ? (
         <div className="card">
@@ -668,6 +722,12 @@ export default function LoanDetail() {
               num: true,
               render: (t) => fmt(t.penalty_component),
             },
+            {
+              key: 'charge',
+              header: 'Charge',
+              num: true,
+              render: (t) => fmt(t.charge_component),
+            },
             { key: 'method', header: 'Method', render: (t) => t.method || '-' },
             { key: 'reference', header: 'Reference', render: (t) => t.reference || '-' },
             { key: 'narration', header: 'Narration', render: (t) => t.narration || '' },
@@ -743,6 +803,50 @@ export default function LoanDetail() {
             run(post(`/api/loans/${id}/top-up`, body), 'Top-up application captured')
           }
         />
+      ) : null}
+
+      {action?.kind === 'charge' ? (
+        <FormModal
+          title="Raise a charge"
+          submitLabel="Raise charge"
+          busy={busy}
+          onClose={() => setAction(null)}
+          onSubmit={(v) => run(post(`/api/loans/${id}/charges`, v), 'Charge raised')}
+        >
+          <div className="grid cols-2">
+            <Field label="What it is for" name="name" required />
+            <Field
+              label={`Amount (${getCurrency()})`}
+              type="number"
+              step="0.01"
+              min="0.01"
+              name="amount"
+              required
+            />
+            <Field label="Raised on" type="date" name="applied_on" defaultValue={today()} />
+            <Field
+              as="select"
+              label="How it is recovered"
+              name="collection"
+              defaultValue="counter"
+              hint={
+                loan.status === 'active'
+                  ? undefined
+                  : 'Only an active loan can carry a charge on its balance'
+              }
+            >
+              <option value="counter">Collected at the counter now</option>
+              {loan.status === 'active' ? (
+                <option value="balance">Added to the loan balance</option>
+              ) : null}
+            </Field>
+          </div>
+          <p className="muted" style={{ marginBottom: 0 }}>
+            Added to the balance, the charge rides on the next unpaid instalment and is taken
+            after penalties and before interest. Collected at the counter, it is cash in today and
+            the loan is untouched.
+          </p>
+        </FormModal>
       ) : null}
 
       {action?.kind === 'collateral' ? (

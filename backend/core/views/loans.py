@@ -302,8 +302,9 @@ def raise_charge(request, loan_id: int):
             raise NotFound("Give the charge an amount")
 
         item = chg.raise_manual(loan, request.user, catalogue_charge, name, amount,
-                                data.get("applied_on"))
-        audit(request.user, "raise_charge", "loan", loan.id, f"{item.name} {item.amount}")
+                                data.get("applied_on"), data["collection"])
+        audit(request.user, "raise_charge", "loan", loan.id,
+              f"{item.name} {item.amount} ({item.collection})")
     return Response(LoanChargeSerializer(item).data, status=status.HTTP_201_CREATED)
 
 

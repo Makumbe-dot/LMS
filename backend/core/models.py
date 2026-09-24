@@ -90,6 +90,7 @@ class TxnType(models.TextChoices):
     PENALTY = "penalty", "Penalty"
     FEE = "fee", "Fee"
     CHARGE = "charge", "Charge collected"
+    CHARGE_ADDED = "charge_added", "Charge added to the balance"
     WAIVER = "waiver", "Waiver"
     WRITE_OFF = "write_off", "Write-off"
     RECOVERY = "recovery", "Recovery after write-off"
@@ -136,6 +137,12 @@ class ChargeBasis(models.TextChoices):
 class ChargeTiming(models.TextChoices):
     DISBURSEMENT = "disbursement", "Deducted at disbursement"
     MANUAL = "manual", "Raised manually"
+
+
+class ChargeCollection(models.TextChoices):
+    """How a charge raised mid-term is recovered."""
+    COUNTER = "counter", "Collected at the counter"
+    BALANCE = "balance", "Added to the loan balance"
 
 
 class SavingsStatus(models.TextChoices):
@@ -441,6 +448,11 @@ class LoanCharge(models.Model):
     name = models.CharField(max_length=120, help_text="Snapshot, so history survives a rename")
     amount = models.DecimalField(**MONEY)
     applied_on = models.DateField()
+    collection = models.CharField(max_length=10, choices=ChargeCollection.choices,
+                                  default=ChargeCollection.COUNTER)
+    instalment = models.ForeignKey("Instalment", on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="charges",
+                                   help_text="Set when the charge was added to the balance")
     transaction = models.ForeignKey("Transaction", on_delete=models.SET_NULL, null=True,
                                     blank=True, related_name="loan_charges")
     created_at = models.DateTimeField(default=timezone.now)
@@ -625,6 +637,7 @@ class Loan(models.Model):
     principal_outstanding = models.DecimalField(default=ZERO, **MONEY)
     interest_outstanding = models.DecimalField(default=ZERO, **MONEY)
     penalties_outstanding = models.DecimalField(default=ZERO, **MONEY)
+    charges_outstanding = models.DecimalField(default=ZERO, **MONEY)
     total_paid = models.DecimalField(default=ZERO, **MONEY)
     created_at = models.DateTimeField(default=timezone.now)
 
@@ -639,7 +652,8 @@ class Loan(models.Model):
     def total_outstanding(self) -> Decimal:
         return ((self.principal_outstanding or ZERO)
                 + (self.interest_outstanding or ZERO)
-                + (self.penalties_outstanding or ZERO))
+                + (self.penalties_outstanding or ZERO)
+                + (self.charges_outstanding or ZERO))
 
     @property
     def schedule(self):
@@ -654,9 +668,12 @@ class Instalment(models.Model):
     principal_due = models.DecimalField(**MONEY)
     interest_due = models.DecimalField(**MONEY)
     penalty_due = models.DecimalField(default=ZERO, **MONEY)
+    charge_due = models.DecimalField(default=ZERO, **MONEY,
+                                     help_text="Fees added to this instalment mid-term")
     principal_paid = models.DecimalField(default=ZERO, **MONEY)
     interest_paid = models.DecimalField(default=ZERO, **MONEY)
     penalty_paid = models.DecimalField(default=ZERO, **MONEY)
+    charge_paid = models.DecimalField(default=ZERO, **MONEY)
     opening_balance = models.DecimalField(**MONEY)
     closing_balance = models.DecimalField(**MONEY)
     status = models.CharField(max_length=20, choices=InstalmentStatus.choices,
@@ -676,11 +693,11 @@ class Instalment(models.Model):
 
     @property
     def total_due(self) -> Decimal:
-        return self.principal_due + self.interest_due + self.penalty_due
+        return self.principal_due + self.interest_due + self.penalty_due + self.charge_due
 
     @property
     def total_paid(self) -> Decimal:
-        return self.principal_paid + self.interest_paid + self.penalty_paid
+        return self.principal_paid + self.interest_paid + self.penalty_paid + self.charge_paid
 
     @property
     def balance(self) -> Decimal:
@@ -695,6 +712,7 @@ class Transaction(models.Model):
     principal_component = models.DecimalField(default=ZERO, **MONEY)
     interest_component = models.DecimalField(default=ZERO, **MONEY)
     penalty_component = models.DecimalField(default=ZERO, **MONEY)
+    charge_component = models.DecimalField(default=ZERO, **MONEY)
     method = models.CharField(max_length=20, choices=PaymentMethod.choices, null=True, blank=True)
     reference = models.CharField(max_length=80, null=True, blank=True)
     narration = models.TextField(null=True, blank=True)

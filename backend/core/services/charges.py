@@ -11,7 +11,18 @@ repricing a charge never rewrites history.
 from datetime import date
 from decimal import Decimal
 
-from ..models import Charge, ChargeTiming, Loan, LoanCharge, LoanProduct, Transaction, TxnType, User
+from ..models import (
+    Charge,
+    ChargeCollection,
+    ChargeTiming,
+    Loan,
+    LoanCharge,
+    LoanProduct,
+    LoanStatus,
+    Transaction,
+    TxnType,
+    User,
+)
 from .amortisation import q
 
 ZERO = Decimal("0")
@@ -57,20 +68,51 @@ def raise_at_disbursement(loan: Loan, user: User, on: date,
 
 
 def raise_manual(loan: Loan, user: User, charge: Charge | None, name: str, amount: Decimal,
-                 on: date | None = None) -> LoanCharge:
-    """A one-off charge against a loan, outside the catalogue timing."""
+                 on: date | None = None,
+                 collection: str = ChargeCollection.COUNTER) -> LoanCharge:
+    """A one-off charge against a loan, outside the catalogue timing.
+
+    Two ways to recover it, and they are genuinely different transactions:
+
+    * **counter** - the borrower pays it now. Cash in, fee income; the loan's
+      balance is untouched.
+    * **balance** - the charge is added to the next unpaid instalment and
+      recovered with the loan. It becomes a receivable, and the repayment
+      waterfall takes it after penalties and before interest.
+    """
     from ..exceptions import BusinessRuleError
+    from .loans import refresh_balances, sched
 
     amount = q(Decimal(amount))
     if amount <= 0:
         raise BusinessRuleError("A charge must be greater than zero")
     on = on or date.today()
 
-    # A manual charge is settled at the counter, so it is its own movement of
-    # money rather than a deduction from an advance.
+    if collection == ChargeCollection.COUNTER:
+        txn = Transaction.objects.create(
+            loan=loan, txn_type=TxnType.CHARGE, txn_date=on, amount=amount, posted_by=user,
+            narration=f"Charge collected: {name}",
+        )
+        return LoanCharge.objects.create(loan=loan, charge=charge, name=name, amount=amount,
+                                         applied_on=on, collection=collection, transaction=txn)
+
+    # Added to the balance: find the instalment that will carry it.
+    if loan.status != LoanStatus.ACTIVE:
+        raise BusinessRuleError(
+            f"Loan is {loan.status}; a charge can only be added to the balance of an active loan")
+    rows = sched(loan)
+    target = next((i for i in rows if i.balance > 0), rows[-1] if rows else None)
+    if target is None:
+        raise BusinessRuleError("The loan has no schedule to add the charge to")
+
+    target.charge_due += amount
     txn = Transaction.objects.create(
-        loan=loan, txn_type=TxnType.CHARGE, txn_date=on, amount=amount, posted_by=user,
-        narration=f"Charge collected: {name}",
+        loan=loan, txn_type=TxnType.CHARGE_ADDED, txn_date=on, amount=amount,
+        charge_component=amount, posted_by=user,
+        narration=f"Charge added to instalment {target.number}: {name}",
     )
-    return LoanCharge.objects.create(loan=loan, charge=charge, name=name, amount=amount,
-                                     applied_on=on, transaction=txn)
+    item = LoanCharge.objects.create(loan=loan, charge=charge, name=name, amount=amount,
+                                     applied_on=on, collection=collection, instalment=target,
+                                     transaction=txn)
+    refresh_balances(loan)
+    return item

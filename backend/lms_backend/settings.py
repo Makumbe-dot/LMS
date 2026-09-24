@@ -8,6 +8,7 @@ import os
 from datetime import timedelta
 from pathlib import Path
 
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -186,6 +187,27 @@ ALLOWED_UPLOAD_TYPES = env_list(
 # Account lockout after repeated bad passwords
 LOGIN_MAX_ATTEMPTS = int(env("LOGIN_MAX_ATTEMPTS", "5"))
 LOGIN_LOCKOUT_MINUTES = int(env("LOGIN_LOCKOUT_MINUTES", "15"))
+
+# ---------------------------------------------------------------- production
+# These only bite when DEBUG is off, so development is unaffected. Behind a
+# reverse proxy that terminates TLS, the proxy must set X-Forwarded-Proto.
+if not DEBUG:
+    SECURE_SSL_REDIRECT = env_bool("SECURE_SSL_REDIRECT", True)
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = int(env("SECURE_HSTS_SECONDS", str(60 * 60 * 24 * 365)))
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    SECURE_REFERRER_POLICY = "same-origin"
+    X_FRAME_OPTIONS = "DENY"
+
+    if SECRET_KEY.startswith("django-insecure") or len(SECRET_KEY) < 32:
+        raise ImproperlyConfigured(
+            "SECRET_KEY is the development placeholder. Set a long random value in "
+            "backend/.env before running with DEBUG off. Generate one with:\n"
+            '  python -c "import secrets; print(secrets.token_urlsafe(64))"')
 
 LOGGING = {
     "version": 1,

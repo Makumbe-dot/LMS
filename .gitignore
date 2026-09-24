@@ -10,8 +10,13 @@ backend/.env
 frontend/.env
 frontend/.env.local
 
-# Databases
+# Databases and backups
 *.db
+*.bak
+lms-backups/
+
+# Job output
+logs/
 
 # Django
 backend/staticfiles/

@@ -1,6 +1,10 @@
-"""Repayment posting with waterfall allocation: penalties -> interest -> principal,
-oldest instalment first. Overpayment is refused outright, so a payment can never
-leave a negative balance."""
+"""Repayment posting with waterfall allocation, oldest instalment first:
+
+    penalties -> charges -> interest -> principal
+
+Costs the borrower has already incurred come off first, so a partial payment
+never leaves a fee quietly accruing behind the principal. Overpayment is refused
+outright, so a payment can never leave a negative balance."""
 from datetime import date
 from decimal import Decimal
 
@@ -24,7 +28,7 @@ def post_repayment(loan: Loan, user: User, amount: Decimal, txn_date: date | Non
             f"Amount {amount} exceeds total outstanding {loan.total_outstanding}")
 
     remaining = amount
-    p_alloc = i_alloc = pen_alloc = ZERO
+    p_alloc = i_alloc = pen_alloc = chg_alloc = ZERO
     for ins in sched(loan):  # ordered by instalment number
         if remaining <= 0:
             break
@@ -34,6 +38,13 @@ def post_repayment(loan: Loan, user: User, amount: Decimal, txn_date: date | Non
             take = min(due, remaining)
             ins.penalty_paid += take
             pen_alloc += take
+            remaining -= take
+        # charges added to the balance
+        due = ins.charge_due - ins.charge_paid
+        if due > 0 and remaining > 0:
+            take = min(due, remaining)
+            ins.charge_paid += take
+            chg_alloc += take
             remaining -= take
         # interest
         due = ins.interest_due - ins.interest_paid
@@ -55,8 +66,8 @@ def post_repayment(loan: Loan, user: User, amount: Decimal, txn_date: date | Non
     txn = Transaction.objects.create(
         loan=loan, txn_type=TxnType.REPAYMENT, txn_date=txn_date, amount=amount,
         principal_component=q(p_alloc), interest_component=q(i_alloc),
-        penalty_component=q(pen_alloc), method=method, reference=reference,
-        narration=narration, posted_by=user,
+        penalty_component=q(pen_alloc), charge_component=q(chg_alloc),
+        method=method, reference=reference, narration=narration, posted_by=user,
     )
     refresh_balances(loan)
     return txn
@@ -69,6 +80,7 @@ def reverse_transaction(loan: Loan, txn: Transaction, user: User, narration: str
         raise BusinessRuleError("Transaction already reversed")
     # Un-allocate from the LATEST instalments backwards, mirroring the waterfall in reverse.
     p, i, pen = txn.principal_component, txn.interest_component, txn.penalty_component
+    chg = txn.charge_component
     for ins in reversed(sched(loan)):
         take = min(p, ins.principal_paid)
         ins.principal_paid -= take
@@ -76,6 +88,9 @@ def reverse_transaction(loan: Loan, txn: Transaction, user: User, narration: str
         take = min(i, ins.interest_paid)
         ins.interest_paid -= take
         i -= take
+        take = min(chg, ins.charge_paid)
+        ins.charge_paid -= take
+        chg -= take
         take = min(pen, ins.penalty_paid)
         ins.penalty_paid -= take
         pen -= take
@@ -87,8 +102,8 @@ def reverse_transaction(loan: Loan, txn: Transaction, user: User, narration: str
     rev = Transaction.objects.create(
         loan=loan, txn_type=TxnType.REVERSAL, txn_date=date.today(), amount=txn.amount,
         principal_component=txn.principal_component, interest_component=txn.interest_component,
-        penalty_component=txn.penalty_component, reversal_of=txn, narration=narration,
-        posted_by=user,
+        penalty_component=txn.penalty_component, charge_component=txn.charge_component,
+        reversal_of=txn, narration=narration, posted_by=user,
     )
     if loan.status == LoanStatus.CLOSED:
         loan.status = LoanStatus.ACTIVE

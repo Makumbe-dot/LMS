@@ -191,6 +191,7 @@ def loan_book() -> list[dict]:
             "principal_outstanding": l.principal_outstanding,
             "interest_outstanding": l.interest_outstanding,
             "penalties_outstanding": l.penalties_outstanding,
+            "charges_outstanding": l.charges_outstanding,
             "total_outstanding": l.total_outstanding, "total_paid": l.total_paid,
             "arrears_amount": amt, "days_in_arrears": days,
         })
@@ -423,7 +424,7 @@ def loan_statement(loan: Loan) -> dict:
         if t.txn_type == TxnType.DISBURSEMENT:
             running += t.principal_component
             debit, credit = t.principal_component, ZERO
-        elif t.txn_type == TxnType.PENALTY:
+        elif t.txn_type in (TxnType.PENALTY, TxnType.CHARGE_ADDED):
             running += t.amount
             debit, credit = t.amount, ZERO
         elif t.txn_type in (TxnType.REPAYMENT, TxnType.WAIVER, TxnType.WRITE_OFF):
@@ -442,6 +443,7 @@ def loan_statement(loan: Loan) -> dict:
         "status": loan.status, "principal_outstanding": loan.principal_outstanding,
         "interest_outstanding": loan.interest_outstanding,
         "penalties_outstanding": loan.penalties_outstanding,
+        "charges_outstanding": loan.charges_outstanding,
         "total_outstanding": loan.total_outstanding, "total_paid": loan.total_paid,
         "lines": lines,
     }
