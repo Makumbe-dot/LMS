@@ -36,6 +36,8 @@ from core.models import (
     OrganisationSetting,
     PaymentMethod,
     ProductCharge,
+    ProvisionRun,
+    ProvisionRunLine,
     RateMethod,
     Role,
     SavingsAccount,
@@ -48,6 +50,7 @@ from core.models import (
 from core.services import loans as svc
 from core.services.amortisation import add_months, monthly_instalment
 from core.services import groups as group_svc
+from core.services import provisioning as provisioning_svc
 from core.services import savings as savings_svc
 from core.services.ledger import ensure_chart_of_accounts, trial_balance
 from core.services.notifications import generate_reminders
@@ -139,6 +142,8 @@ class Command(BaseCommand):
                 AuditLog.objects.all().delete()
                 Notification.objects.all().delete()
                 LoanNote.objects.all().delete()
+                ProvisionRunLine.objects.all().delete()
+                ProvisionRun.objects.all().delete()
                 JournalLine.objects.all().delete()
                 JournalEntry.objects.all().delete()
                 LedgerAccount.objects.all().delete()
@@ -395,6 +400,11 @@ class Command(BaseCommand):
         with transaction.atomic():
             messages = generate_reminders(today)
 
+        # Book the expected credit loss, so the demo book opens with account 1900
+        # agreeing with the provision carried on every loan.
+        with transaction.atomic():
+            provision = provisioning_svc.run_provision(users["admin"], today)
+
         balance = trial_balance()
 
         self.stdout.write(self.style.SUCCESS(
@@ -409,6 +419,9 @@ class Command(BaseCommand):
         self.stdout.write(f"Penalty accrual: {result}")
         self.stdout.write(f"Savings interest: {savings_run}")
         self.stdout.write(f"Messages queued: {messages}")
+        self.stdout.write(
+            f"Provision: {provision.run_no} for {provision.period_end}, required "
+            f"{provision.provision_required}, movement {provision.movement}")
         self.stdout.write(
             f"Ledger: {JournalEntry.objects.count()} entries, "
             f"Dr {balance['total_debit']} / Cr {balance['total_credit']}, "

@@ -81,6 +81,20 @@ try {
             Write-Log 'SKIP   savings interest (runs on the 1st)' 'Yellow'
         }
     }
+
+    # The expected credit loss provision, booked for the month that just closed.
+    # Passing yesterday's date on the 1st is what lands it in the right period.
+    if ((Get-Date).Day -eq 1 -or $AsOf) {
+        $provisionArgs = @('manage.py', 'run_provisions')
+        if ($AsOf) {
+            $provisionArgs += @('--as-of', $AsOf)
+        } else {
+            $provisionArgs += @('--as-of', (Get-Date).AddDays(-1).ToString('yyyy-MM-dd'))
+        }
+        if (-not (Invoke-Step 'provision run' $provisionArgs)) { $failures++ }
+    } else {
+        Write-Log 'SKIP   provision run (runs on the 1st)' 'Yellow'
+    }
 } finally {
     Pop-Location
 }

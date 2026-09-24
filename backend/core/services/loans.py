@@ -416,9 +416,10 @@ def settle_early(loan: Loan, user: User, amount: Decimal | None, txn_date: date 
 def write_off(loan: Loan, user: User, narration: str) -> Loan:
     if loan.status != LoanStatus.ACTIVE:
         raise BusinessRuleError("Only active loans can be written off")
+    today = date.today()
     amt = loan.total_outstanding
     Transaction.objects.create(
-        loan=loan, txn_type=TxnType.WRITE_OFF, txn_date=date.today(), amount=amt,
+        loan=loan, txn_type=TxnType.WRITE_OFF, txn_date=today, amount=amt,
         principal_component=loan.principal_outstanding,
         interest_component=loan.interest_outstanding,
         penalty_component=loan.penalties_outstanding,
@@ -427,6 +428,12 @@ def write_off(loan: Loan, user: User, narration: str) -> Loan:
     loan.status = LoanStatus.WRITTEN_OFF
     loan.closed_at = datetime.now(timezone.utc)
     loan.save(update_fields=["status", "closed_at"])
+
+    # The month that carries the write-off expense carries the offsetting release
+    # of the provision held against this loan.
+    from .provisioning import release_on_write_off  # local: provisioning imports this module
+
+    release_on_write_off(loan, user, today)
     return loan
 
 

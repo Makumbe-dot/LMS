@@ -11,6 +11,7 @@ from .views import (
     loans,
     org,
     products,
+    provisions,
     reports,
     savings,
 )
@@ -97,6 +98,13 @@ urlpatterns = [
     re_path(r"^loans/(?P<loan_id>\d+)/collateral/?$", loans.collateral),
     re_path(r"^loans/(?P<loan_id>\d+)/collateral/(?P<collateral_id>\d+)/?$",
             loans.collateral_detail),
+
+    # ---- provisioning (the literal paths must precede the numeric id route)
+    re_path(r"^provisions/preview/?$", provisions.preview),
+    re_path(r"^provisions/run/?$", provisions.run),
+    re_path(r"^provisions/?$", provisions.provisions),
+    re_path(r"^provisions/(?P<run_id>\d+)/reverse/?$", provisions.reverse),
+    re_path(r"^provisions/(?P<run_id>\d+)/?$", provisions.provision_detail),
 
     # ---- general ledger
     re_path(r"^ledger/accounts/?$", ledger.accounts),

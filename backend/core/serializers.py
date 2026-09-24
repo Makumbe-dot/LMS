@@ -34,6 +34,9 @@ from .models import (
     OrganisationSetting,
     PaymentMethod,
     ProductCharge,
+    ProvisionRun,
+    ProvisionRunLine,
+    ProvisionRunStatus,
     RateMethod,
     Role,
     SavingsAccount,
@@ -663,6 +666,51 @@ class JournalEntrySerializer(serializers.ModelSerializer):
         fields = ["id", "entry_no", "entry_date", "narration", "source", "transaction_id",
                   "loan_id", "loan_no", "branch_name", "posted_by_name", "total_debit",
                   "total_credit", "lines", "created_at"]
+
+
+# ---------------------------------------------------------------- provisioning
+class ProvisionRunSerializer(serializers.ModelSerializer):
+    entry_no = serializers.CharField(source="journal_entry.entry_no", read_only=True,
+                                     default=None)
+    reversal_entry_no = serializers.CharField(source="reversal_entry.entry_no", read_only=True,
+                                              default=None)
+    run_by_name = serializers.CharField(source="run_by.full_name", read_only=True, default=None)
+    reversed_by_name = serializers.CharField(source="reversed_by.full_name", read_only=True,
+                                             default=None)
+
+    class Meta:
+        model = ProvisionRun
+        fields = ["id", "run_no", "period_end", "status", "loans_assessed", "loans_released",
+                  "total_exposure", "total_carrying_amount", "provision_required",
+                  "provision_before", "movement", "ledger_provision_before",
+                  "stage1_pct", "stage2_pct", "stage3_pct", "stage2_days", "stage3_days",
+                  "entry_no", "reversal_entry_no", "narration", "run_by_name",
+                  "reversed_by_name", "created_at", "reversed_at"]
+
+
+class ProvisionRunLineSerializer(serializers.ModelSerializer):
+    loan_no = serializers.CharField(source="loan.loan_no", read_only=True)
+    borrower = serializers.CharField(source="loan.borrower.full_name", read_only=True)
+    product = serializers.CharField(source="loan.product.name", read_only=True)
+
+    class Meta:
+        model = ProvisionRunLine
+        fields = ["id", "loan_id", "loan_no", "borrower", "product", "loan_status", "stage",
+                  "days_past_due", "exposure", "carrying_amount", "rate_pct",
+                  "provision_required", "provision_before", "provision_after", "movement"]
+
+
+class ProvisionRunDetailSerializer(ProvisionRunSerializer):
+    lines = ProvisionRunLineSerializer(many=True, read_only=True)
+
+    class Meta(ProvisionRunSerializer.Meta):
+        fields = ProvisionRunSerializer.Meta.fields + ["lines"]
+
+
+class ProvisionRunRequestSerializer(serializers.Serializer):
+    as_of = serializers.DateField(required=False, allow_null=True)
+    narration = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    force = serializers.BooleanField(default=False)
 
 
 class AuditSerializer(serializers.ModelSerializer):

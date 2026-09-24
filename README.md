@@ -62,6 +62,11 @@ raises one balanced journal entry automatically, so loans receivable in the ledg
 principal outstanding on the book. Trial balance, income statement, searchable journal, and a
 rebuild command for a book that predates the ledger.
 
+**Impairment booked, not just reported** — a month-end run compares the IFRS 9 provision required
+to the provision already carried and posts only the **movement** (Dr 5100 Impairment / Cr 1900
+Provision, or the reverse). The provision carried is tracked per loan, released the moment a loan
+is written off, and swept when a loan leaves the book. Running a period twice posts nothing.
+
 **Credit assessment** — a transparent, points-based **scorecard** at application (repayment
 history, affordability, current arrears, employment, KYC), with the reason for every factor, plus
 **approval limits** so a loan above a set amount needs an administrator.
@@ -405,9 +410,40 @@ The same reconciliation is available in SSMS, for the morning of a board meeting
 EXEC dbo.usp_reconcile_ledger;
 ```
 
-It checks loans receivable, penalties receivable, charges receivable and client funds against
-their sub-ledgers, and that debits equal credits. Any mismatch raises an error rather than
-returning quietly.
+It checks loans receivable, penalties receivable, charges receivable, client funds and the credit
+loss provision against their sub-ledgers, and that debits equal credits. Any mismatch raises an
+error rather than returning quietly.
+
+## Provisioning
+
+The expected credit loss is **booked**, not merely reported:
+
+```powershell
+cd backend
+..\.venv\Scripts\python.exe manage.py run_provisions [--as-of 2026-09-30] [--dry-run] [--force]
+```
+
+or the **Book the movement** button on the Provisioning page. The nightly script attempts it on
+the 1st, for the month that just closed.
+
+Three decisions worth knowing:
+
+- **Only the movement is posted.** The provision carried sits on `Loan.provision_held`, which is
+  the sub-ledger behind account 1900 — a fifth reconciliation identity, checked by
+  `usp_reconcile_ledger` and by the test suite.
+- **The provision is booked on the recognised carrying amount** — principal, penalties and
+  charges outstanding, exactly what accounts 1100, 1300 and 1400 hold — not on gross exposure.
+  Interest is recognised when collected and there is no interest receivable, so provisioning
+  gross exposure would put a provision against an asset the ledger does not carry. The page shows
+  both figures side by side.
+- **A run reads balances as they stand when it executes.** `period_end` is the label it is filed
+  under and the key that makes it idempotent, not a point-in-time restatement, so a run behind the
+  latest posted one is refused rather than posting a figure that means nothing.
+
+A run can be reversed (the mirror is dated on the original entry, so the pair nets to zero inside
+one income-statement window), and is refused if a later run exists or if any loan has moved on
+since. `POST /api/ledger/rebuild` re-posts provision entries as well as transaction entries, so
+the identity survives a journal wipe.
 
 *Fees*: admin and credit-life fees are a percentage of principal, deducted from the disbursed
 amount. The borrower repays the full principal.

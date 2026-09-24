@@ -199,6 +199,32 @@ GO
 /* ---------------------------------------------------------------------------
    vw_trial_balance - the ledger, summarised per account
    --------------------------------------------------------------------------- */
+/* ---------------------------------------------------------------------------
+   vw_provision_runs - the month-end provision history
+   --------------------------------------------------------------------------- */
+CREATE OR ALTER VIEW dbo.vw_provision_runs
+AS
+SELECT
+    r.run_no,
+    r.period_end,
+    r.status,
+    r.loans_assessed,
+    r.loans_released,
+    r.total_carrying_amount,
+    r.provision_required,
+    r.provision_before,
+    r.movement,
+    r.stage1_pct, r.stage2_pct, r.stage3_pct, r.stage2_days, r.stage3_days,
+    je.entry_no,
+    rev.entry_no                    AS reversal_entry_no,
+    u.full_name                     AS run_by,
+    r.created_at
+FROM dbo.provision_runs r
+LEFT JOIN dbo.journal_entries je  ON je.id  = r.journal_entry_id
+LEFT JOIN dbo.journal_entries rev ON rev.id = r.reversal_entry_id
+LEFT JOIN dbo.users u             ON u.id   = r.run_by_id;
+GO
+
 CREATE OR ALTER VIEW dbo.vw_trial_balance
 AS
 SELECT
@@ -321,6 +347,17 @@ BEGIN
            CASE WHEN gl.balance = book.total THEN 'OK' ELSE 'MISMATCH' END
     FROM (SELECT balance FROM dbo.vw_trial_balance WHERE code = '2000') gl
     CROSS JOIN (SELECT total = ISNULL(SUM(balance), 0) FROM dbo.savings_accounts) book;
+
+    /* 1900 Provision for credit losses vs the provision carried on every loan.
+       The unary minus is required: 1900 is typed ASSET (it is a contra-asset),
+       so vw_trial_balance reports it as debit-minus-credit, and the provision
+       stands on the credit side. The sub-ledger sums ALL loans, not just active
+       ones, because a closed loan keeps its provision until a run sweeps it. */
+    INSERT INTO @results
+    SELECT 'Provision for credit losses', -gl.balance, book.total, -gl.balance - book.total,
+           CASE WHEN -gl.balance = book.total THEN 'OK' ELSE 'MISMATCH' END
+    FROM (SELECT balance FROM dbo.vw_trial_balance WHERE code = '1900') gl
+    CROSS JOIN (SELECT total = ISNULL(SUM(provision_held), 0) FROM dbo.loans) book;
 
     /* Double entry itself */
     INSERT INTO @results

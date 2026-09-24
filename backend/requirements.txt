@@ -1,7 +1,10 @@
 Django>=5.2,<7.0
 djangorestframework>=3.15
 djangorestframework-simplejwt>=5.3
-mssql-django>=1.5
+# >=2.0 is required, not merely preferred: the filtered unique index behind
+# ProvisionRun's one-posted-run-per-period rule needs supports_partial_indexes,
+# and on a build where that flag is False Django drops the constraint SILENTLY.
+mssql-django>=2.0
 pyodbc>=5.1
 django-cors-headers>=4.4
 python-dotenv>=1.0

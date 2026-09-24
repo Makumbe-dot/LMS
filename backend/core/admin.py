@@ -29,6 +29,8 @@ from .models import (
     Notification,
     OrganisationSetting,
     ProductCharge,
+    ProvisionRun,
+    ProvisionRunLine,
     SavingsAccount,
     SavingsProduct,
     SavingsTransaction,
@@ -278,6 +280,33 @@ class SavingsAccountAdmin(admin.ModelAdmin):
     autocomplete_fields = ("borrower",)
     readonly_fields = ("balance",)
     inlines = [SavingsTransactionInline]
+
+
+class ProvisionRunLineInline(admin.TabularInline):
+    model = ProvisionRunLine
+    extra = 0
+    can_delete = False
+    readonly_fields = [f.name for f in ProvisionRunLine._meta.fields]
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(ProvisionRun)
+class ProvisionRunAdmin(admin.ModelAdmin):
+    list_display = ("run_no", "period_end", "status", "provision_required", "provision_before",
+                    "movement", "loans_assessed", "loans_released", "run_by")
+    list_filter = ("status",)
+    search_fields = ("run_no",)
+    date_hierarchy = "period_end"
+    inlines = [ProvisionRunLineInline]
+
+    # Provisions are booked by the run, never by hand.
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
 
 
 admin.site.register(Sequence)

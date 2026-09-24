@@ -238,6 +238,79 @@ def post_transaction(txn: Transaction) -> JournalEntry | None:
     return entry
 
 
+def account_movement(code: str, start=None, end=None, branch_id=None) -> tuple[Decimal, Decimal]:
+    """(total debits, total credits) posted to one account over a window.
+
+    Returned as a pair rather than a balance, so the caller decides which side is
+    natural for that account. A contra-asset such as 1900 stands on the credit
+    side even though it is typed ASSET.
+    """
+    from django.db.models import DecimalField, Q, Sum, Value
+    from django.db.models.functions import Coalesce
+
+    money = DecimalField(max_digits=18, decimal_places=2)
+    where = Q(account__code=code)
+    if start:
+        where &= Q(entry__entry_date__gte=start)
+    if end:
+        where &= Q(entry__entry_date__lte=end)
+    if branch_id:
+        where &= Q(entry__branch_id=branch_id)
+
+    totals = JournalLine.objects.filter(where).aggregate(
+        debit=Coalesce(Sum("debit", output_field=money), Value(ZERO, output_field=money)),
+        credit=Coalesce(Sum("credit", output_field=money), Value(ZERO, output_field=money)),
+    )
+    return q(totals["debit"]), q(totals["credit"])
+
+
+@db_transaction.atomic
+def post_manual_entry(lines, entry_date, narration: str, source: str, *, loan=None,
+                      branch_id=None, posted_by=None, strict: bool = True) -> JournalEntry | None:
+    """Raise one balanced entry that no Transaction stands behind.
+
+    `lines` is a list of (account code, debit, credit, description). Used by the
+    provision run and anything else that moves value without moving cash. With
+    strict=True a missing account raises rather than silently skipping, because
+    an accounting run that half-posts is worse than one that refuses.
+    """
+    from ..exceptions import BusinessRuleError
+
+    rows = [(code, q(d), q(c), text) for code, d, c, text in lines if q(d) > 0 or q(c) > 0]
+    if not rows:
+        return None
+
+    acc = _accounts_by_code([code for code, *_ in rows])
+    missing = sorted({code for code, *_ in rows if code not in acc})
+    if missing:
+        message = (f"Ledger account(s) {', '.join(missing)} are missing from the chart of "
+                   f"accounts. Use the Rebuild button on the General ledger page.")
+        if strict:
+            raise BusinessRuleError(message)
+        log.warning(message)
+        return None
+
+    debits = sum((d for _, d, _, _ in rows), ZERO)
+    credits = sum((c for _, _, c, _ in rows), ZERO)
+    if debits != credits:
+        raise BusinessRuleError(
+            f"Refusing an unbalanced entry for {source}: Dr {debits} vs Cr {credits}")
+
+    entry = JournalEntry.objects.create(
+        entry_no=_next_entry_no(), entry_date=entry_date, narration=narration, source=source,
+        loan=loan, branch_id=branch_id, posted_by=posted_by,
+    )
+    JournalLine.objects.bulk_create([
+        JournalLine(entry=entry, account=acc[code], debit=d, credit=c, description=text)
+        for code, d, c, text in rows
+    ])
+    return entry
+
+
+def _accounts_by_code(codes) -> dict[str, LedgerAccount]:
+    return {a.code: a for a in LedgerAccount.objects.filter(code__in=set(codes))}
+
+
 def _savings_lines(stxn) -> list[tuple[str, Decimal, Decimal, str]]:
     """Members' savings are the institution's liability, not its income."""
     from ..models import SavingsTxnType
@@ -341,7 +414,16 @@ def backfill(limit: int | None = None) -> dict:
         else:
             skipped += 1
 
-    return {"posted": posted, "skipped": skipped}
+    # Provision entries stand behind no Transaction, so the two sweeps above
+    # cannot find them. Without this, "Rebuild" after a JournalEntry wipe would
+    # leave account 1900 at zero while the loans still carry a provision, and
+    # the fifth reconciliation identity would be unrecoverable.
+    from .provisioning import repost_runs
+
+    reposted = repost_runs()
+    posted += reposted["reposted"]
+
+    return {"posted": posted, "skipped": skipped, "provision_runs_reposted": reposted["reposted"]}
 
 
 def trial_balance(start=None, end=None, branch_id=None) -> dict:

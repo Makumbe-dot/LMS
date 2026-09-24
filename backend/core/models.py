@@ -68,6 +68,11 @@ class ECLStage(models.TextChoices):
     STAGE_3 = "3", "Stage 3 - credit impaired"
 
 
+class ProvisionRunStatus(models.TextChoices):
+    POSTED = "posted", "Posted"
+    REVERSED = "reversed", "Reversed"
+
+
 class LoanStatus(models.TextChoices):
     PENDING = "pending", "Pending"              # application captured
     APPROVED = "approved", "Approved"           # approved, awaiting disbursement
@@ -639,6 +644,10 @@ class Loan(models.Model):
     penalties_outstanding = models.DecimalField(default=ZERO, **MONEY)
     charges_outstanding = models.DecimalField(default=ZERO, **MONEY)
     total_paid = models.DecimalField(default=ZERO, **MONEY)
+    # Expected credit loss booked to account 1900 against this loan, maintained by
+    # core.services.provisioning. Deliberately NOT in loans.LOAN_BALANCE_FIELDS:
+    # refresh_balances must never touch it.
+    provision_held = models.DecimalField(default=ZERO, **MONEY)
     created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
@@ -824,6 +833,93 @@ class JournalLine(models.Model):
     def __str__(self):
         side = f"Dr {self.debit}" if self.debit else f"Cr {self.credit}"
         return f"{self.account.code} {side}"
+
+
+# ---------------------------------------------------------------- provisioning
+class ProvisionRun(models.Model):
+    """One month-end booking of the IFRS 9 expected credit loss provision.
+
+    The run books only the MOVEMENT between the provision required and the
+    provision already carried, so running a period twice posts nothing. The
+    provision carried is tracked per loan in Loan.provision_held, which gives a
+    fifth reconciliation identity: the credit balance on account 1900 equals the
+    sum of provision_held over every loan.
+
+    Balances are read as they stand when the run executes; period_end is the
+    label the run is filed under, not a point-in-time restatement.
+    """
+    run_no = models.CharField(max_length=20, unique=True, db_index=True)
+    period_end = models.DateField()
+    status = models.CharField(max_length=10, choices=ProvisionRunStatus.choices,
+                              default=ProvisionRunStatus.POSTED)
+
+    loans_assessed = models.IntegerField(default=0)
+    loans_released = models.IntegerField(default=0)
+
+    total_exposure = models.DecimalField(default=ZERO, **MONEY)
+    total_carrying_amount = models.DecimalField(default=ZERO, **MONEY)
+    provision_required = models.DecimalField(default=ZERO, **MONEY)
+    provision_before = models.DecimalField(default=ZERO, **MONEY)
+    movement = models.DecimalField(default=ZERO, **MONEY)
+    ledger_provision_before = models.DecimalField(default=ZERO, **MONEY)
+
+    # The rates are snapshotted so a historical run still explains itself after
+    # someone edits Settings.
+    stage1_pct = models.DecimalField(default=ZERO, max_digits=6, decimal_places=2)
+    stage2_pct = models.DecimalField(default=ZERO, max_digits=6, decimal_places=2)
+    stage3_pct = models.DecimalField(default=ZERO, max_digits=6, decimal_places=2)
+    stage2_days = models.IntegerField(default=0)
+    stage3_days = models.IntegerField(default=0)
+
+    journal_entry = models.OneToOneField("JournalEntry", on_delete=models.SET_NULL, null=True,
+                                         blank=True, related_name="provision_run")
+    reversal_entry = models.OneToOneField("JournalEntry", on_delete=models.SET_NULL, null=True,
+                                          blank=True, related_name="provision_reversal")
+    narration = models.TextField(null=True, blank=True)
+    run_by = models.ForeignKey("User", on_delete=models.SET_NULL, null=True, blank=True,
+                               related_name="provision_runs")
+    created_at = models.DateTimeField(default=timezone.now)
+    reversed_at = models.DateTimeField(null=True, blank=True)
+    reversed_by = models.ForeignKey("User", on_delete=models.SET_NULL, null=True, blank=True,
+                                    related_name="reversed_provision_runs")
+
+    class Meta:
+        db_table = "provision_runs"
+        ordering = ["-period_end", "-id"]
+        constraints = [
+            # One posted run per period. A reversed run keeps its period_end and
+            # does not block a re-run.
+            models.UniqueConstraint(fields=["period_end"], condition=models.Q(status="posted"),
+                                    name="uq_provision_run_posted_period"),
+        ]
+
+    def __str__(self):
+        return f"{self.run_no} {self.period_end} {self.movement}"
+
+
+class ProvisionRunLine(models.Model):
+    run = models.ForeignKey(ProvisionRun, on_delete=models.CASCADE, related_name="lines")
+    loan = models.ForeignKey("Loan", on_delete=models.CASCADE, related_name="provision_lines")
+    loan_status = models.CharField(max_length=20, choices=LoanStatus.choices)
+    stage = models.CharField(max_length=1, choices=ECLStage.choices, null=True, blank=True)
+    days_past_due = models.IntegerField(default=0)
+    exposure = models.DecimalField(default=ZERO, **MONEY)
+    carrying_amount = models.DecimalField(default=ZERO, **MONEY)
+    rate_pct = models.DecimalField(default=ZERO, max_digits=6, decimal_places=2)
+    provision_required = models.DecimalField(default=ZERO, **MONEY)
+    provision_before = models.DecimalField(default=ZERO, **MONEY)
+    provision_after = models.DecimalField(default=ZERO, **MONEY)
+    movement = models.DecimalField(default=ZERO, **MONEY)
+
+    class Meta:
+        db_table = "provision_run_lines"
+        ordering = ["id"]
+        constraints = [
+            models.UniqueConstraint(fields=["run", "loan"], name="uq_provision_run_loan"),
+        ]
+
+    def __str__(self):
+        return f"{self.run_id}/{self.loan_id} {self.movement}"
 
 
 # ---------------------------------------------------------------- collateral

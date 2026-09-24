@@ -7,6 +7,7 @@ from . import (  # noqa: F401
     loans,
     org,
     products,
+    provisions,
     reports,
     savings,
 )

@@ -34,6 +34,11 @@ def set_day(d: date, day: int) -> date:
     return date(d.year, d.month, min(day, monthrange(d.year, d.month)[1]))
 
 
+def month_end(d: date) -> date:
+    """The last day of the calendar month d falls in."""
+    return date(d.year, d.month, monthrange(d.year, d.month)[1])
+
+
 REDUCING = "reducing"
 FLAT = "flat"
 

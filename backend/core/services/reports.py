@@ -236,44 +236,72 @@ def ecl_report(as_of: date | None = None, branch_id=None) -> dict:
         ECLStage.STAGE_3: cfg.ecl_stage3_pct,
     }
 
+    from .provisioning import booked_provision, carrying_amount, last_run, ledger_provision
+
     rows = []
     summary = {stage: {"stage": stage, "label": ECLStage(stage).label, "loans": 0,
-                       "exposure": ZERO, "rate_pct": rates[stage], "provision": ZERO}
+                       "exposure": ZERO, "carrying_amount": ZERO, "rate_pct": rates[stage],
+                       "provision": ZERO, "provision_required": ZERO}
                for stage in (ECLStage.STAGE_1, ECLStage.STAGE_2, ECLStage.STAGE_3)}
 
     for loan in active_loans(branch_id):
         amount, days = arrears(loan, as_of)
         stage = ecl_stage(days, cfg)
         exposure = loan.total_outstanding
+        carrying = carrying_amount(loan)
         rate = rates[stage]
         provision = q(exposure * rate / 100)
+        required = q(carrying * rate / 100)
+        booked = q(loan.provision_held or ZERO)
         rows.append({
             "loan_no": loan.loan_no, "loan_id": loan.id, "borrower": loan.borrower.full_name,
             "product": loan.product.name,
             "branch": loan.branch.name if loan.branch else "-",
             "days_past_due": days, "stage": stage, "stage_label": ECLStage(stage).label,
-            "exposure": exposure, "arrears_amount": amount,
+            "exposure": exposure, "carrying_amount": carrying, "arrears_amount": amount,
             "provision_rate_pct": rate, "provision": provision,
+            "provision_required": required, "provision_booked": booked,
+            "provision_movement": q(required - booked),
             "net_exposure": q(exposure - provision),
         })
         bucket = summary[stage]
         bucket["loans"] += 1
         bucket["exposure"] += exposure
+        bucket["carrying_amount"] += carrying
         bucket["provision"] += provision
+        bucket["provision_required"] += required
 
     rows.sort(key=lambda r: (-int(r["stage"]), -r["days_past_due"]))
     for bucket in summary.values():
         bucket["exposure"] = q(bucket["exposure"])
+        bucket["carrying_amount"] = q(bucket["carrying_amount"])
         bucket["provision"] = q(bucket["provision"])
+        bucket["provision_required"] = q(bucket["provision_required"])
 
     total_exposure = q(sum((b["exposure"] for b in summary.values()), ZERO))
     total_provision = q(sum((b["provision"] for b in summary.values()), ZERO))
+    total_required = q(sum((b["provision_required"] for b in summary.values()), ZERO))
+
+    # The booked figure and the ledger check must be over the same population, or
+    # the page asserts agreement on a number it is not showing. Both are
+    # institution-wide, so a branch slice reports them as null rather than lying.
+    whole_book = branch_id is None
+    booked_all = booked_provision() if whole_book else None
+    in_ledger = ledger_provision() if whole_book else None
+
     return {
         "as_of": as_of,
         "rows": rows,
         "summary": list(summary.values()),
         "total_exposure": total_exposure,
         "total_provision": total_provision,
+        "total_carrying_amount": q(sum((b["carrying_amount"] for b in summary.values()), ZERO)),
+        "total_provision_required": total_required,
+        "total_provision_booked": booked_all,
+        "total_provision_movement": q(total_required - booked_all) if whole_book else None,
+        "ledger_provision": in_ledger,
+        "ledger_agrees": (in_ledger == booked_all) if whole_book else None,
+        "last_run": last_run() if whole_book else None,
         "coverage_pct": q(total_provision / total_exposure * 100) if total_exposure else ZERO,
         "rates": {"stage_1": cfg.ecl_stage1_pct, "stage_2": cfg.ecl_stage2_pct,
                   "stage_3": cfg.ecl_stage3_pct,
