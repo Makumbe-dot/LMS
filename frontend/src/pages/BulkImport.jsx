@@ -5,6 +5,7 @@ import { useToast } from '../components/Toast.jsx'
 import { Check, Kpi, PageHeader } from '../components/ui.jsx'
 import { postForm } from '../lib/api.js'
 import { bytes, fmt, money } from '../lib/format.js'
+import { PeriodNotice } from '../lib/periods.jsx'
 
 const SAMPLE = `loan_no,amount,date,method,reference
 LN-000001,197.02,2026-09-25,salary_deduction,PAY-0925
@@ -77,6 +78,9 @@ export default function BulkImport() {
 
       <div className="card">
         <h3>1. Choose a file</h3>
+        {/* Before the upload, not after: a payroll return full of last month's
+            dates is worth knowing about before it is validated row by row. */}
+        <PeriodNotice />
         <div
           className={`dropzone ${dragging ? 'dragging' : ''}`}
           onDragOver={(e) => {

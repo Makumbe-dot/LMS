@@ -23,6 +23,7 @@ import Login from './pages/Login.jsx'
 import Notifications from './pages/Notifications.jsx'
 import Payroll from './pages/Payroll.jsx'
 import Performance from './pages/Performance.jsx'
+import Periods from './pages/Periods.jsx'
 import Products from './pages/Products.jsx'
 import Provisioning from './pages/Provisioning.jsx'
 import Savings from './pages/Savings.jsx'
@@ -78,6 +79,7 @@ export default function App() {
           <Route path="/ledger" element={<Ledger />} />
           <Route path="/performance" element={<Performance />} />
           <Route path="/provisioning" element={<Provisioning />} />
+          <Route path="/periods" element={<Periods />} />
 
           <Route path="/products" element={<Products />} />
           <Route path="/charges" element={<Charges />} />

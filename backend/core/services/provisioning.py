@@ -49,7 +49,7 @@ from ..models import (
     ProvisionRunStatus,
     User,
 )
-from . import ledger
+from . import ledger, periods
 from .amortisation import month_end, q
 from .loans import arrears, next_number
 from .reports import active_loans, ecl_stage
@@ -219,6 +219,11 @@ def run_provision(user: User | None = None, as_of: date | None = None, *,
             f"{latest.period_end}). A run reads today's balances, so booking it into an "
             f"earlier period would post a figure that means nothing.")
 
+    # The entry is dated at the period end, or today when the period has not ended
+    # yet; refuse up front rather than let the JournalEntry guard fire half way
+    # through the run.
+    periods.assert_open(min(period, date.today()), "This provision run")
+
     # Read the ledger BEFORE anything is posted, or the field whose whole purpose
     # is to reveal drift would always agree with itself.
     ledger_before = ledger_provision()
@@ -316,6 +321,12 @@ def reverse_run(run: ProvisionRun, user: User | None, narration: str) -> Provisi
     mirror = None
     if run.journal_entry_id:
         original = run.journal_entry
+        # The mirror carries the original's date, so a closed month refuses the
+        # reversal outright. That is the correct answer: a provision signed off in
+        # a closed month cannot be quietly undone.
+        periods.assert_open(
+            original.entry_date,
+            f"Reversing {run.run_no}, whose entry is dated {original.entry_date.isoformat()},")
         # Date the mirror on the original, so a run and its reversal net to zero
         # inside the same income-statement window.
         mirror = ledger.post_manual_entry(
@@ -372,7 +383,16 @@ def repost_runs() -> dict:
     entry stands behind neither, so a JournalEntry wipe followed by Rebuild
     would leave 1900 at zero while the loans still carry a provision. This is
     the repost path that makes the fifth identity recoverable.
+
+    Runs inside allow_closed_posting for the same reason backfill does: these runs
+    already happened, their dates are already history, and refusing to re-account
+    for them because the month is closed would leave 1900 permanently short.
     """
+    with periods.allow_closed_posting("provision run repost"):
+        return _repost_runs()
+
+
+def _repost_runs() -> dict:
     reposted = 0
     for run in ProvisionRun.objects.filter(status=ProvisionRunStatus.POSTED,
                                            journal_entry__isnull=True).exclude(movement=0):

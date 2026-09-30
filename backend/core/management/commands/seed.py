@@ -11,6 +11,7 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 
 from core.models import (
+    AccountingPeriod,
     AuditLog,
     Borrower,
     BorrowerDocument,
@@ -139,6 +140,11 @@ class Command(BaseCommand):
         if options["reset"]:
             self.stdout.write("Clearing the loan book...")
             with transaction.atomic():
+                # Before the User delete, so the closed_by/reopened_by SET_NULLs
+                # never run. A stale closed period left over from a previous demo
+                # would make this command fail on its first back-dated repayment,
+                # which is a baffling way to learn the tool.
+                AccountingPeriod.objects.all().delete()
                 AuditLog.objects.all().delete()
                 Notification.objects.all().delete()
                 LoanNote.objects.all().delete()

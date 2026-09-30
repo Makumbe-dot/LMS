@@ -27,7 +27,7 @@ from ..models import (
     TxnType,
     User,
 )
-from . import charges
+from . import charges, periods
 from .amortisation import add_months, build_schedule, q, set_day, total_interest
 from .scoring import score_application, store_on_loan
 
@@ -249,6 +249,9 @@ def disburse(loan: Loan, user: User, disbursement_date: date | None,
     if loan.status != LoanStatus.APPROVED:
         raise BusinessRuleError(f"Loan is {loan.status}, must be approved before disbursement")
     disb = disbursement_date or date.today()
+    # Before the schedule is built and written. An application may sit in a closed
+    # month — capturing and approving are not postings — but moving the money is.
+    periods.assert_open(disb, "This disbursement")
     first_due = first_instalment_date or default_first_due(disb, loan.borrower.payday)
     if first_due <= disb:
         raise BusinessRuleError("First instalment date must be after the disbursement date")
@@ -390,6 +393,7 @@ def settle_early(loan: Loan, user: User, amount: Decimal | None, txn_date: date 
     from .repayments import post_repayment  # local import: repayments imports this module
 
     as_of = txn_date or date.today()
+    periods.assert_open(as_of, "This early settlement")
     quote_now = settlement_quote(loan, as_of)
     expected = quote_now["settlement_amount"]
     if amount is not None and q(Decimal(amount)) != expected:
@@ -498,6 +502,8 @@ def record_recovery(loan: Loan, user: User, amount: Decimal, txn_date: date | No
     amount = q(Decimal(amount))
     if amount <= 0:
         raise BusinessRuleError("A recovery must be greater than zero")
+    txn_date = txn_date or date.today()
+    periods.assert_open(txn_date, "This recovery")
 
     written_off = q(sum(
         (t.amount for t in loan.transactions.filter(txn_type=TxnType.WRITE_OFF)), ZERO))
@@ -509,7 +515,7 @@ def record_recovery(loan: Loan, user: User, amount: Decimal, txn_date: date | No
             f"written off")
 
     return Transaction.objects.create(
-        loan=loan, txn_type=TxnType.RECOVERY, txn_date=txn_date or date.today(), amount=amount,
+        loan=loan, txn_type=TxnType.RECOVERY, txn_date=txn_date, amount=amount,
         method=method, reference=reference, posted_by=user,
         narration=narration or f"Recovery on written-off loan {loan.loan_no}",
     )

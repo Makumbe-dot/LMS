@@ -212,6 +212,18 @@ def _lines_for(txn: Transaction) -> list[tuple[str, Decimal, Decimal, str]]:
     return []
 
 
+def would_post(txn: Transaction) -> bool:
+    """Whether this transaction raises a journal entry at all.
+
+    Several types legitimately raise none: a FEE is informational because the fee
+    is already inside the disbursement entry, an interest waiver touches nothing
+    because interest is recognised on collection, and a write-off or capitalisation
+    of nothing has nothing to post. Anything that wants to audit "every posting has
+    an entry" must ask here rather than restate those rules, or the two drift.
+    """
+    return any(d > 0 or c > 0 for _, d, c, _ in _lines_for(txn))
+
+
 @db_transaction.atomic
 def post_transaction(txn: Transaction) -> JournalEntry | None:
     """Raise the journal entry for a transaction. Idempotent per transaction."""
@@ -402,7 +414,18 @@ def backfill(limit: int | None = None) -> dict:
 
     Used after the chart of accounts is set up on a book that already has
     history, and by the seed command.
+
+    Runs inside allow_closed_posting: every transaction it touches already exists,
+    so its date is already history, and refusing to account for it because its
+    month is closed would leave the ledger permanently short with no way to fix it.
     """
+    from . import periods
+
+    with periods.allow_closed_posting("ledger backfill"):
+        return _backfill(limit)
+
+
+def _backfill(limit: int | None = None) -> dict:
     ensure_chart_of_accounts()
     pending = (Transaction.objects
                .filter(journal_entry__isnull=True)

@@ -62,7 +62,9 @@ $failures = 0
 try {
     Write-Log "===== nightly batch starting =====" 'Cyan'
 
-    $penaltyArgs = @('manage.py', 'run_penalties')
+    # --skip-closed unconditionally: a month closed at 09:00 on the 1st must not
+    # log a FAILED step at 22:00 for a date nobody can post to any more.
+    $penaltyArgs = @('manage.py', 'run_penalties', '--skip-closed')
     if ($AsOf) { $penaltyArgs += @('--as-of', $AsOf) }
     if (-not (Invoke-Step 'penalty accrual' $penaltyArgs)) { $failures++ }
 
@@ -74,7 +76,7 @@ try {
         # Only on the first of the month: interest is credited once per month and
         # the command would otherwise be a no-op every other night.
         if ((Get-Date).Day -eq 1 -or $AsOf) {
-            $savingsArgs = @('manage.py', 'run_savings_interest')
+            $savingsArgs = @('manage.py', 'run_savings_interest', '--skip-closed')
             if ($AsOf) { $savingsArgs += @('--as-of', $AsOf) }
             if (-not (Invoke-Step 'savings interest' $savingsArgs)) { $failures++ }
         } else {

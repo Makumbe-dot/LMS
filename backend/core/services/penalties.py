@@ -9,6 +9,7 @@ from decimal import Decimal
 from django.db.models import Prefetch
 
 from ..models import Instalment, Loan, LoanStatus, Transaction, TxnType
+from . import periods
 from .amortisation import q
 from .loans import refresh_balances, sched
 
@@ -24,6 +25,10 @@ def active_loans_for_accrual():
 
 def accrue_penalties(as_of: date | None = None, loan: Loan | None = None) -> dict:
     as_of = as_of or date.today()
+    # Refuse the whole run up front rather than part-way down the loan book. The
+    # nightly script passes --skip-closed so a month closed on the 1st does not
+    # fail that evening's batch.
+    periods.assert_open(as_of, "Penalty accrual")
     loans = [loan] if loan is not None else list(active_loans_for_accrual())
     total = ZERO
     touched = 0

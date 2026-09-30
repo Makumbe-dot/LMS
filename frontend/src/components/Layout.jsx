@@ -34,6 +34,7 @@ const NAV = [
       { to: '/ledger', label: 'General ledger' },
       { to: '/performance', label: 'Performance' },
       { to: '/provisioning', label: 'Provisioning' },
+      { to: '/periods', label: 'Period close' },
     ],
   },
   {

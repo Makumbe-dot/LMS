@@ -73,6 +73,17 @@ class ProvisionRunStatus(models.TextChoices):
     REVERSED = "reversed", "Reversed"
 
 
+class PeriodState(models.TextChoices):
+    """A month is either open to postings or closed to them.
+
+    There is deliberately no LOCKED state. Anyone who could bypass a lock through
+    a management command already has manage.py shell and SSMS, so a lock would be
+    CLOSED with a worse error message rather than a stronger control.
+    """
+    OPEN = "open", "Open"
+    CLOSED = "closed", "Closed"
+
+
 class LoanStatus(models.TextChoices):
     PENDING = "pending", "Pending"              # application captured
     APPROVED = "approved", "Approved"           # approved, awaiting disbursement
@@ -921,6 +932,80 @@ class ProvisionRunLine(models.Model):
 
     def __str__(self):
         return f"{self.run_id}/{self.loan_id} {self.movement}"
+
+
+# ---------------------------------------------------------------- period close
+class AccountingPeriod(models.Model):
+    """One month closed to further postings, with the trial balance it froze.
+
+    A row exists only for a month that has actually been closed. A month with no
+    row is open, which is what keeps an existing book posting normally until an
+    administrator closes something for the first time.
+
+    Months close in order and only forwards, so the set of closed months is always
+    a contiguous prefix ending at `end_date`. That single rule is what makes
+    "the earliest date you may still post to" a correct answer rather than a guess:
+    it is the day after the latest closed month's end. Closing August therefore
+    closes everything up to 31 August, whether or not July has a row of its own.
+    """
+    year = models.IntegerField()
+    month = models.IntegerField(validators=[MinValueValidator(1), MaxValueValidator(12)])
+    start_date = models.DateField()
+    end_date = models.DateField()
+    state = models.CharField(max_length=8, choices=PeriodState.choices,
+                             default=PeriodState.CLOSED)
+
+    closed_at = models.DateTimeField(null=True, blank=True)
+    closed_by = models.ForeignKey("User", on_delete=models.SET_NULL, null=True, blank=True,
+                                  related_name="periods_closed")
+    reopened_at = models.DateTimeField(null=True, blank=True)
+    reopened_by = models.ForeignKey("User", on_delete=models.SET_NULL, null=True, blank=True,
+                                    related_name="periods_reopened")
+    reopen_reason = models.TextField(null=True, blank=True)
+    reopen_count = models.IntegerField(default=0)
+    note = models.TextField(null=True, blank=True)
+
+    # The trial balance as it stood at the close, so a later reopen-and-change is
+    # visible forever rather than silent. Money is 18,2 rather than the usual 14,2
+    # because these are whole-book totals, not one loan's balance.
+    snapshot_debits = models.DecimalField(default=ZERO, max_digits=18, decimal_places=2)
+    snapshot_credits = models.DecimalField(default=ZERO, max_digits=18, decimal_places=2)
+    snapshot_entries = models.IntegerField(default=0)
+    snapshot_principal_outstanding = models.DecimalField(default=ZERO, max_digits=18,
+                                                         decimal_places=2)
+    snapshot_savings_balance = models.DecimalField(default=ZERO, max_digits=18, decimal_places=2)
+    # TextField rather than JSONField, following the Loan.score_detail precedent:
+    # mssql-django maps JSONField with an ISJSON check constraint used nowhere else
+    # in this schema.
+    snapshot_json = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "accounting_periods"
+        ordering = ["-year", "-month"]
+        constraints = [
+            models.UniqueConstraint(fields=["year", "month"], name="uq_accounting_period"),
+            models.CheckConstraint(condition=models.Q(month__gte=1, month__lte=12),
+                                   name="ck_period_month"),
+        ]
+
+    def save(self, *args, **kwargs):
+        from calendar import monthrange
+
+        self.start_date = date(self.year, self.month, 1)
+        self.end_date = date(self.year, self.month, monthrange(self.year, self.month)[1])
+        return super().save(*args, **kwargs)
+
+    @property
+    def label(self) -> str:
+        return f"{self.start_date:%B %Y}"
+
+    @property
+    def is_open(self) -> bool:
+        return self.state == PeriodState.OPEN
+
+    def __str__(self):
+        return f"{self.year}-{self.month:02d} ({self.state})"
 
 
 # ---------------------------------------------------------------- collateral

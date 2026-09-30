@@ -2,6 +2,7 @@
 
     python manage.py run_penalties
     python manage.py run_penalties --as-of 2026-09-30
+    python manage.py run_penalties --as-of 2026-09-30 --skip-closed
 
 Idempotent: each instalment records the date penalties were accrued to, so
 running it twice in one day charges nothing extra.
@@ -13,6 +14,7 @@ from django.db import transaction
 
 from core.audit import audit
 from core.services.penalties import accrue_penalties
+from core.services.periods import is_closed
 
 
 class Command(BaseCommand):
@@ -21,6 +23,9 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument("--as-of", dest="as_of",
                            help="ISO date to accrue up to (default: today)")
+        parser.add_argument("--skip-closed", action="store_true", dest="skip_closed",
+                            help="Exit 0 with a warning when the date falls in a closed "
+                                 "accounting period, instead of failing")
 
     def handle(self, *args, **options):
         as_of = None
@@ -29,6 +34,15 @@ class Command(BaseCommand):
                 as_of = date.fromisoformat(options["as_of"])
             except ValueError:
                 raise CommandError("--as-of must be an ISO date, e.g. 2026-09-30")
+
+        # A month closed at 09:00 on the 1st must not fail that evening's batch.
+        if options.get("skip_closed") and is_closed(as_of or date.today()):
+            target = (as_of or date.today()).isoformat()
+            audit(None, "run_penalties_skipped", "system", None,
+                  f"{target} falls in a closed accounting period")
+            self.stdout.write(self.style.WARNING(
+                f"{target} falls in a closed accounting period; nothing accrued."))
+            return
 
         with transaction.atomic():
             result = accrue_penalties(as_of)

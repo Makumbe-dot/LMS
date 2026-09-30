@@ -20,6 +20,7 @@ import {
   rateMethodLabel,
   today,
 } from '../lib/format.js'
+import { PeriodNotice, useMinPostingDate } from '../lib/periods.jsx'
 import { useApi } from '../lib/useApi.js'
 
 /**
@@ -170,6 +171,7 @@ function TopUpModal({ loanId, loan, busy, onClose, onApply }) {
 export default function LoanDetail() {
   const { id } = useParams()
   const { can } = useAuth()
+  const minPostingDate = useMinPostingDate()
   const { toast, toastError } = useToast()
   const { data: loan, error, loading, reload } = useApi(`/api/loans/${id}`)
 
@@ -775,8 +777,15 @@ export default function LoanDetail() {
             Disbursing generates the amortisation schedule and posts the advance net of the{' '}
             {money((num(loan.admin_fee) ?? 0) + (num(loan.insurance_fee) ?? 0))} upfront fees.
           </p>
+          <PeriodNotice date={today()} />
           <div className="grid cols-2">
-            <Field label="Disbursement date" type="date" name="disbursement_date" defaultValue={today()} />
+            <Field
+              label="Disbursement date"
+              type="date"
+              name="disbursement_date"
+              min={minPostingDate}
+              defaultValue={today()}
+            />
             <Field
               label="First instalment date"
               type="date"
@@ -823,7 +832,13 @@ export default function LoanDetail() {
               name="amount"
               required
             />
-            <Field label="Raised on" type="date" name="applied_on" defaultValue={today()} />
+            <Field
+              label="Raised on"
+              type="date"
+              name="applied_on"
+              min={minPostingDate}
+              defaultValue={today()}
+            />
             <Field
               as="select"
               label="How it is recovered"
@@ -910,7 +925,13 @@ export default function LoanDetail() {
               name="amount"
               required
             />
-            <Field label="Date" type="date" name="txn_date" defaultValue={today()} />
+            <Field
+              label="Date"
+              type="date"
+              name="txn_date"
+              min={minPostingDate}
+              defaultValue={today()}
+            />
             <Field as="select" label="Method" name="method" defaultValue="cash">
               <option value="cash">Cash</option>
               <option value="bank_transfer">Bank transfer</option>
@@ -954,6 +975,7 @@ export default function LoanDetail() {
           onClose={() => setAction(null)}
           onSubmit={(v) => run(post(`/api/loans/${id}/repayments`, v), 'Repayment posted')}
         >
+          <PeriodNotice date={today()} />
           <div className="grid cols-2">
             <Field
               label={`Amount (${getCurrency()})`}
@@ -965,7 +987,13 @@ export default function LoanDetail() {
               required
               defaultValue={arrears > 0 ? loan.arrears_amount : loan.instalment_amount}
             />
-            <Field label="Date" type="date" name="txn_date" defaultValue={today()} />
+            <Field
+              label="Date"
+              type="date"
+              name="txn_date"
+              min={minPostingDate}
+              defaultValue={today()}
+            />
             <Field as="select" label="Method" name="method" defaultValue="cash">
               <option value="cash">Cash</option>
               <option value="salary_deduction">Salary deduction</option>

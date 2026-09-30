@@ -67,6 +67,12 @@ to the provision already carried and posts only the **movement** (Dr 5100 Impair
 Provision, or the reverse). The provision carried is tracked per loan, released the moment a loan
 is written off, and swept when a loan leaves the book. Running a period twice posts nothing.
 
+**Period close** — a month can be **closed to further postings**, with the trial balance it was
+signed off on frozen onto the period. Anything dated into a closed month is refused at the model
+layer, so no code path can slip past it. Months close in order and only forwards, which makes "the
+earliest date you can still post to" a real answer the date pickers and the bulk importer both use.
+Reopening needs a reason and goes in the audit trail with the numbers it supersedes.
+
 **Credit assessment** — a transparent, points-based **scorecard** at application (repayment
 history, affordability, current arrears, employment, KYC), with the reason for every factor, plus
 **approval limits** so a loan above a set amount needs an administrator.
@@ -325,21 +331,25 @@ backend/                        Django project
       ledger.py                 double-entry posting rules, trial balance, income statement
       imports.py                bulk repayment CSV: parse, validate, commit
       notifications.py          reminder and arrears message generation, outbox
+      provisioning.py           booking the IFRS 9 expected credit loss movement
+      periods.py                period close, and the guard that refuses a closed date
       reports.py                dashboard, PAR, collections due, loan book, statement,
                                 IFRS 9 provisioning, performance, payroll deductions
     templates/core/             the printable loan agreement
     views/                      auth, borrowers, products, charges, loans, groups, savings,
-                                ledger, reports, org
-    management/commands/        seed, run_penalties, send_reminders
+                                ledger, provisions, periods, reports, org
+    management/commands/        seed, run_penalties, run_savings_interest, run_provisions,
+                                send_reminders, close_period, reopen_period
     tests/                      the test suite
 frontend/                       React + Vite single-page app
   src/
-    lib/        api.js (fetch + JWT), auth.jsx, org.jsx, theme.jsx, format.js, useApi.js
+    lib/        api.js (fetch + JWT), auth.jsx, org.jsx, periods.jsx, theme.jsx, format.js,
+                useApi.js
     components/ Layout, GlobalSearch, DataTable, Modal, Toast, GroupedBars, HBars,
                 LoanTable, ui.jsx
     pages/      Login, Dashboard, Borrowers, Groups, Loans, Savings, Collections, Arrears,
                 Payroll, BulkImport, Notifications, Transactions, Ledger, Performance,
-                Provisioning, Products, Charges, Users, Settings, Account, Audit
+                Provisioning, Periods, Products, Charges, Users, Settings, Account, Audit
     styles.css  design tokens, light and dark themes
 sql/
   01_create_database.sql        create the LMS database (run first)
@@ -455,8 +465,71 @@ amount. The borrower repays the full principal.
 from the oldest unpaid due date. PAR>30 is principal outstanding on loans more than 30 days in
 arrears.
 
-*Reschedule*: outstanding principal + overdue unpaid interest + penalties are capitalised as the new
-principal; future unearned interest on the old schedule is dropped.
+*Reschedule*: outstanding principal + overdue unpaid interest + penalties + charges are capitalised
+as the new principal; future unearned interest on the old schedule is dropped. The capitalisation is
+posted as its own `capitalisation` transaction — the receivable grows by exactly what interest,
+penalties and charges shed — so the ledger moves with the loan book.
+
+## Period close
+
+A month is closed to further postings from the **Period close** page, or on the server:
+
+```powershell
+cd backend
+..\.venv\Scripts\python.exe manage.py close_period --year 2026 --month 8 --dry-run
+..\.venv\Scripts\python.exe manage.py close_period --year 2026 --month 8 --note "Board pack issued"
+..\.venv\Scripts\python.exe manage.py reopen_period --year 2026 --month 8 --reason "Bank confirmed a double capture"
+```
+
+`--dry-run` prints the pre-close checks and the trial balance that would be frozen, and changes
+nothing. Read it before closing anything for real.
+
+Once August is closed, any new repayment, disbursement, charge, savings movement, penalty accrual,
+savings-interest run or provision run dated on or before 31 August is refused with **409** and a
+message naming the earliest date that still works. The guard is a `pre_save` receiver on
+`Transaction`, `SavingsTransaction` and `JournalEntry`, so it cannot be bypassed by calling
+`objects.create()` directly, and the refused row never reaches SQL Server — no balance moves, no
+instalment is allocated against.
+
+Four decisions worth knowing:
+
+- **A month with no row is open.** Nothing changes on an existing book until an administrator
+  closes something. That is what lets this ship onto a book with fourteen months of back-dated
+  history.
+- **Months close in order and only forwards**, so the closed months are always one contiguous run
+  ending at a single date. Closing August closes everything up to 31 August whether or not July was
+  closed separately. This is what makes "the earliest date you can post to" a real answer rather
+  than a guess — and that answer is what the date pickers and the bulk importer use. Only the most
+  recently closed month can be reopened, for the same reason.
+- **Closing freezes the trial balance** for the month onto the period row, so a later
+  reopen-and-change is visible against what was signed off rather than silent. A reopen needs a
+  reason of at least ten characters and is written to the audit trail with the numbers it
+  supersedes.
+- **A closed month refuses new postings; it is not immutable.** Rescheduling a loan rebuilds its
+  schedule, including instalments dated inside a closed month (it posts its capitalisation today, so
+  the ledger stays balanced), deleting a loan cascades to its postings, and a raw `.update()` can
+  move a posting's date. `services/periods.py` says so in its docstring rather than implying
+  otherwise.
+
+`ledger.backfill()` — the **Rebuild** button — is deliberately allowed to post into closed months,
+because the transactions it accounts for already exist and refusing them would leave the ledger
+permanently short. It writes an audit row saying how many entries landed in a closed month, and only
+when some actually did.
+
+Two pre-close checks cannot be overridden even with force: a month that has not ended, and a month
+with an earlier month still open. Two are blocking but overridable (debits equal credits; every
+transaction that should post has an entry). Three are advisory and never refuse — postings dated
+after the month end, penalties not accrued to the month end, and whether the ledger agrees with the
+loan and savings books as at today. Which checks were overridden is recorded on the period and in
+the audit trail.
+
+The nightly script passes `--skip-closed` to the penalty and savings-interest runs, so a month
+closed at 09:00 on the 1st does not fail that evening's batch.
+
+**Close last.** Month-end order is: accrue penalties to the month end, credit savings interest, book
+the provision, then close. The provision run is *not* given `--skip-closed`, deliberately: if you
+close September before booking September's provision, the run fails loudly rather than silently
+skipping a month of impairment.
 
 ## Notes on the SQL Server backend
 

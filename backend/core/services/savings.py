@@ -21,6 +21,7 @@ from ..models import (
     SavingsTxnType,
     User,
 )
+from . import periods
 from .amortisation import add_months, q
 from .loans import next_number
 
@@ -62,10 +63,14 @@ def _post(account: SavingsAccount, user: User, kind: str, amount: Decimal,
     savings book by the reversed amount.
     """
     amount = q(Decimal(amount))
+    # Resolved before the balance moves, so a refused posting cannot leave the
+    # account's balance changed and the movement row absent.
+    txn_date = txn_date or date.today()
+    periods.assert_open(txn_date, f"This savings {kind}")
     account.balance = q((account.balance or ZERO) + signed)
     account.save(update_fields=["balance"])
     return SavingsTransaction.objects.create(
-        account=account, txn_type=kind, txn_date=txn_date or date.today(), amount=amount,
+        account=account, txn_type=kind, txn_date=txn_date, amount=amount,
         balance_after=account.balance, method=method, reference=reference,
         narration=narration, posted_by=user, reversal_of=reversal_of,
     )
@@ -149,6 +154,8 @@ def accrue_interest(as_of: date | None = None, account: SavingsAccount | None = 
     date it was last credited.
     """
     as_of = as_of or date.today()
+    # Refuse the whole run up front rather than part-way down the account list.
+    periods.assert_open(as_of, "Savings interest")
     accounts = ([account] if account is not None
                 else list(SavingsAccount.objects.filter(status=SavingsStatus.ACTIVE)
                           .select_related("product", "borrower")))

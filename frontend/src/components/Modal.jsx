@@ -45,7 +45,16 @@ export default function Modal({ title, onClose, wide = false, children, footer }
  * A modal that wraps a form: renders `fields`, then Confirm / Cancel.
  * onSubmit receives the form values as a plain object.
  */
-export function FormModal({ title, onClose, onSubmit, submitLabel = 'Confirm', busy, children, wide }) {
+export function FormModal({
+  title,
+  onClose,
+  onSubmit,
+  submitLabel = 'Confirm',
+  busy,
+  submitDisabled,
+  children,
+  wide,
+}) {
   return (
     <Modal title={title} onClose={onClose} wide={wide}>
       <form
@@ -63,7 +72,7 @@ export function FormModal({ title, onClose, onSubmit, submitLabel = 'Confirm', b
       >
         {children}
         <div className="row" style={{ marginTop: 8 }}>
-          <button type="submit" className="btn primary" disabled={busy}>
+          <button type="submit" className="btn primary" disabled={busy || submitDisabled}>
             {busy ? 'Working…' : submitLabel}
           </button>
           <button type="button" className="btn" onClick={onClose} disabled={busy}>

@@ -23,6 +23,7 @@ from ..models import (
     TxnType,
     User,
 )
+from . import periods
 from .amortisation import q
 
 ZERO = Decimal("0")
@@ -87,6 +88,7 @@ def raise_manual(loan: Loan, user: User, charge: Charge | None, name: str, amoun
     if amount <= 0:
         raise BusinessRuleError("A charge must be greater than zero")
     on = on or date.today()
+    periods.assert_open(on, "This charge")
 
     if collection == ChargeCollection.COUNTER:
         txn = Transaction.objects.create(

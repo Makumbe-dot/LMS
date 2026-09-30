@@ -10,6 +10,7 @@ from .views import (
     ledger,
     loans,
     org,
+    periods,
     products,
     provisions,
     reports,
@@ -105,6 +106,14 @@ urlpatterns = [
     re_path(r"^provisions/?$", provisions.provisions),
     re_path(r"^provisions/(?P<run_id>\d+)/reverse/?$", provisions.reverse),
     re_path(r"^provisions/(?P<run_id>\d+)/?$", provisions.provision_detail),
+
+    # ---- accounting periods (the literal path must precede the year-month route)
+    re_path(r"^periods/status/?$", periods.status),
+    re_path(r"^periods/?$", periods.register),
+    re_path(r"^periods/(?P<year>\d{4})-(?P<month>\d{1,2})/preflight/?$", periods.preflight),
+    re_path(r"^periods/(?P<year>\d{4})-(?P<month>\d{1,2})/close/?$", periods.close),
+    re_path(r"^periods/(?P<year>\d{4})-(?P<month>\d{1,2})/reopen/?$", periods.reopen),
+    re_path(r"^periods/(?P<year>\d{4})-(?P<month>\d{1,2})/?$", periods.period_detail),
 
     # ---- general ledger
     re_path(r"^ledger/accounts/?$", ledger.accounts),

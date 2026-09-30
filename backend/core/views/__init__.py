@@ -6,6 +6,7 @@ from . import (  # noqa: F401
     ledger,
     loans,
     org,
+    periods,
     products,
     provisions,
     reports,

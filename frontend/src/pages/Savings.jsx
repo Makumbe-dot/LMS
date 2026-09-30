@@ -17,12 +17,14 @@ import { downloadCsv, get, post, qs } from '../lib/api.js'
 import { useAuth } from '../lib/auth.jsx'
 import { fmt, getCurrency, humanise, money, today } from '../lib/format.js'
 import { useOrg } from '../lib/org.jsx'
+import { PeriodNotice, useMinPostingDate } from '../lib/periods.jsx'
 import { useApi, useDebounced } from '../lib/useApi.js'
 
 /** The savings book: accounts, counter movements and the monthly interest run. */
 export default function Savings() {
   const { can } = useAuth()
   const { activeBranches } = useOrg()
+  const minPostingDate = useMinPostingDate()
   const { toast, toastError } = useToast()
 
   const [search, setSearch] = useState('')
@@ -239,7 +241,15 @@ export default function Savings() {
               min="0"
               name="opening_deposit"
             />
-            <Field label="Opened on" type="date" name="opened_on" defaultValue={today()} />
+            {/* An opening deposit writes a movement dated that day, so the
+                posting window applies. */}
+            <Field
+              label="Opened on"
+              type="date"
+              name="opened_on"
+              min={minPostingDate}
+              defaultValue={today()}
+            />
             <Field as="select" label="Method" name="method" defaultValue="cash">
               <option value="cash">Cash</option>
               <option value="bank_transfer">Bank transfer</option>
@@ -274,6 +284,7 @@ export default function Savings() {
               {money(action.account.min_balance)}).
             </p>
           ) : null}
+          <PeriodNotice date={today()} />
           <div className="grid cols-2">
             <Field
               label={`Amount (${getCurrency()})`}
@@ -284,7 +295,13 @@ export default function Savings() {
               name="amount"
               required
             />
-            <Field label="Date" type="date" name="txn_date" defaultValue={today()} />
+            <Field
+              label="Date"
+              type="date"
+              name="txn_date"
+              min={minPostingDate}
+              defaultValue={today()}
+            />
             <Field as="select" label="Method" name="method" defaultValue="cash">
               <option value="cash">Cash</option>
               <option value="bank_transfer">Bank transfer</option>

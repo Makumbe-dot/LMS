@@ -21,6 +21,7 @@ from django.db.models import Prefetch
 
 from ..exceptions import BusinessRuleError
 from ..models import Instalment, Loan, LoanStatus, PaymentMethod, User
+from . import periods
 from .amortisation import q
 from .repayments import post_repayment
 
@@ -79,6 +80,9 @@ def validate(rows: list[dict]) -> dict:
     valid = 0
     # Running tally per loan, so two lines against one loan cannot jointly overpay it.
     committed_per_loan: dict[int, Decimal] = {}
+    # Read once for the whole file: a payroll return of 500 lines should not run
+    # 500 identical period lookups, and it cannot change mid-validation.
+    closed_through = periods.closed_through()
 
     for row in rows:
         result = {
@@ -113,6 +117,11 @@ def validate(rows: list[dict]) -> dict:
             result["error"] = f"Amount '{result['amount']}' is not a positive number"
         elif parsed_date is None:
             result["error"] = f"Date '{result['date']}' is not an ISO date (YYYY-MM-DD)"
+        elif closed_through is not None and parsed_date <= closed_through:
+            # Reported per row rather than raised, so one stale date does not
+            # reject a file of 500 good ones.
+            result["error"] = (f"{parsed_date.isoformat()} falls in a closed accounting "
+                               f"period (closed through {closed_through.isoformat()})")
         elif result["method"] not in METHODS:
             result["error"] = (f"Method '{result['method']}' is not one of "
                                f"{', '.join(sorted(METHODS))}")

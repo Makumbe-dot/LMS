@@ -9,6 +9,7 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 
 from .models import (
+    AccountingPeriod,
     AuditLog,
     Borrower,
     BorrowerDocument,
@@ -302,6 +303,25 @@ class ProvisionRunAdmin(admin.ModelAdmin):
     inlines = [ProvisionRunLineInline]
 
     # Provisions are booked by the run, never by hand.
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(AccountingPeriod)
+class AccountingPeriodAdmin(admin.ModelAdmin):
+    list_display = ("year", "month", "state", "closed_at", "closed_by", "snapshot_debits",
+                    "snapshot_credits", "reopen_count")
+    list_filter = ("state", "year")
+    date_hierarchy = "end_date"
+    # Everything is readonly and nothing can be added here on purpose. A period
+    # closed by setting state='closed' in admin would carry no preflight, no
+    # snapshot and no audit row, which is the whole of the control. Closing and
+    # reopening go through /api/periods or manage.py close_period.
+    readonly_fields = [f.name for f in AccountingPeriod._meta.fields]
+
     def has_add_permission(self, request):
         return False
 

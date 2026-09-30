@@ -10,6 +10,7 @@ from decimal import Decimal
 
 from ..exceptions import BusinessRuleError
 from ..models import Loan, LoanStatus, Transaction, TxnType, User
+from . import periods
 from .amortisation import q
 from .loans import refresh_balances, sched
 
@@ -23,6 +24,9 @@ def post_repayment(loan: Loan, user: User, amount: Decimal, txn_date: date | Non
             f"Loan is {loan.status}; repayments can only be posted to active loans")
     amount = q(Decimal(amount))
     txn_date = txn_date or date.today()
+    # Before the waterfall mutates any in-memory instalment. The pre_save guard
+    # would catch it anyway, but this says which posting was refused.
+    periods.assert_open(txn_date, "This repayment")
     if amount > loan.total_outstanding:
         raise BusinessRuleError(
             f"Amount {amount} exceeds total outstanding {loan.total_outstanding}")

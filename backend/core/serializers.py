@@ -9,6 +9,7 @@ from decimal import Decimal
 from rest_framework import serializers
 
 from .models import (
+    AccountingPeriod,
     AuditLog,
     Borrower,
     BorrowerDocument,
@@ -711,6 +712,63 @@ class ProvisionRunRequestSerializer(serializers.Serializer):
     as_of = serializers.DateField(required=False, allow_null=True)
     narration = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     force = serializers.BooleanField(default=False)
+
+
+# ---------------------------------------------------------------- period close
+class AccountingPeriodSerializer(serializers.ModelSerializer):
+    label = serializers.CharField(read_only=True)
+    closed_by_name = serializers.CharField(source="closed_by.full_name", read_only=True,
+                                           default=None)
+    reopened_by_name = serializers.CharField(source="reopened_by.full_name", read_only=True,
+                                             default=None)
+    snapshot = serializers.SerializerMethodField()
+
+    class Meta:
+        model = AccountingPeriod
+        fields = ["id", "year", "month", "label", "start_date", "end_date", "state",
+                  "closed_at", "closed_by_name", "reopened_at", "reopened_by_name",
+                  "reopen_reason", "reopen_count", "note", "snapshot_debits",
+                  "snapshot_credits", "snapshot_entries", "snapshot_principal_outstanding",
+                  "snapshot_savings_balance", "snapshot"]
+
+    def get_snapshot(self, obj) -> dict | None:
+        """The frozen trial balance, parsed out of the stored JSON.
+
+        Only on the detail view: the register renders a dozen rows and none of them
+        needs a whole trial balance inlined.
+        """
+        if not self.context.get("with_snapshot") or not obj.snapshot_json:
+            return None
+        import json
+
+        try:
+            return json.loads(obj.snapshot_json)
+        except ValueError:
+            return None
+
+
+class PeriodMonthSerializer(serializers.Serializer):
+    """One row of the register: a month, closed or not, with its period if it has one."""
+    year = serializers.IntegerField()
+    month = serializers.IntegerField()
+    label = serializers.CharField()
+    start_date = serializers.DateField()
+    end_date = serializers.DateField()
+    state = serializers.CharField()
+    closed_by_implication = serializers.BooleanField()
+    has_ended = serializers.BooleanField()
+    closable = serializers.BooleanField()
+    transactions = serializers.IntegerField()
+    period = AccountingPeriodSerializer(allow_null=True)
+
+
+class PeriodCloseSerializer(serializers.Serializer):
+    note = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    force = serializers.BooleanField(default=False)
+
+
+class PeriodReopenSerializer(serializers.Serializer):
+    reason = serializers.CharField(min_length=10, trim_whitespace=True)
 
 
 class AuditSerializer(serializers.ModelSerializer):

@@ -15,6 +15,18 @@ class BusinessRuleError(APIException):
     default_detail = "The request breaks a business rule."
 
 
+class PeriodClosedError(BusinessRuleError):
+    """The posting date falls in a month that has been closed (409).
+
+    Subclasses BusinessRuleError so every existing `except BusinessRuleError`
+    still catches it, but answers 409 rather than 400 so the React layer can tell
+    a period block apart from an ordinary validation failure and offer the right
+    next step.
+    """
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = "That date falls in a closed accounting period."
+
+
 class NotFound(APIException):
     status_code = status.HTTP_404_NOT_FOUND
     default_detail = "Not found."
