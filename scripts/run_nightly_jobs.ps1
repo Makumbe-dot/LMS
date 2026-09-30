@@ -1,7 +1,8 @@
 <#
 .SYNOPSIS
-    The nightly batch: accrue penalties, credit savings interest, queue borrower
-    messages, and back up the database.
+    The nightly batch: accrue penalties, credit savings interest, accrue interest
+    owed to funders, book the provision, queue borrower messages, and back up the
+    database.
 
 .DESCRIPTION
     Every step is idempotent, so a repeated or retried run changes nothing
@@ -82,6 +83,16 @@ try {
         } else {
             Write-Log 'SKIP   savings interest (runs on the 1st)' 'Yellow'
         }
+    }
+
+    # Interest owed to funders. Monthly is enough, and the accrual catches up any
+    # month it missed, so a night that fails costs nothing.
+    if ((Get-Date).Day -eq 1 -or $AsOf) {
+        $borrowingArgs = @('manage.py', 'accrue_borrowing_interest', '--skip-closed')
+        if ($AsOf) { $borrowingArgs += @('--as-of', $AsOf) }
+        if (-not (Invoke-Step 'borrowing interest' $borrowingArgs)) { $failures++ }
+    } else {
+        Write-Log 'SKIP   borrowing interest (runs on the 1st)' 'Yellow'
     }
 
     # The expected credit loss provision, booked for the month that just closed.

@@ -73,6 +73,22 @@ class ProvisionRunStatus(models.TextChoices):
     REVERSED = "reversed", "Reversed"
 
 
+class FacilityTxnType(models.TextChoices):
+    DRAWDOWN = "drawdown", "Drawdown"
+    REPAYMENT = "repayment", "Principal repayment"
+    INTEREST_ACCRUAL = "interest_accrual", "Interest accrued"
+    INTEREST_PAYMENT = "interest_payment", "Interest paid"
+    FEE = "fee", "Facility fee"
+    REVERSAL = "reversal", "Reversal"
+
+
+class CapitalTxnType(models.TextChoices):
+    INJECTION = "injection", "Capital injection"
+    RETURN_OF_CAPITAL = "return_of_capital", "Return of capital"
+    DIVIDEND = "dividend", "Dividend"
+    REVERSAL = "reversal", "Reversal"
+
+
 class PeriodState(models.TextChoices):
     """A month is either open to postings or closed to them.
 
@@ -623,6 +639,14 @@ class Loan(models.Model):
     refinanced_from = models.ForeignKey("self", on_delete=models.SET_NULL, null=True, blank=True,
                                         related_name="refinanced_into",
                                         help_text="The loan this one tops up and settles")
+    # Which borrowed money funded this advance. Reporting only — it raises no
+    # posting and no balance depends on it — but it is what makes "how much of the
+    # CBZ line is on-lent" and "cost of funds on this book" answerable. Added now
+    # because a nullable column on `loans` is a metadata-only change today and a
+    # backfill over a populated table later.
+    funding_facility = models.ForeignKey("FundingFacility", on_delete=models.SET_NULL, null=True,
+                                        blank=True, related_name="loans",
+                                        help_text="The facility this advance was funded from")
 
     admin_fee = models.DecimalField(default=ZERO, **MONEY)
     insurance_fee = models.DecimalField(default=ZERO, **MONEY)
@@ -800,10 +824,28 @@ class JournalEntry(models.Model):
     entry_no = models.CharField(max_length=20, unique=True, db_index=True)
     entry_date = models.DateField(db_index=True)
     narration = models.TextField()
-    source = models.CharField(max_length=20, help_text="The transaction type that raised it")
+    # 32, not 20: the longest value is now "facility_interest_payment" (25).
+    source = models.CharField(max_length=32, help_text="The transaction type that raised it")
+
+    # One nullable OneToOneField per posting source. On SQL Server mssql-django
+    # emits a FILTERED unique index (WHERE col IS NOT NULL) for these, which is the
+    # only reason this table can already hold thousands of NULLs in each — a plain
+    # SQL Server UNIQUE constraint permits exactly one.
+    #
+    # KNOWN DEBT: four of these, and any future source wants a fifth. Nothing
+    # enforces that exactly one is set. A source_model/source_id pair would settle
+    # it, but that is a migration over a populated table and a rewrite of every
+    # post_* path, so it is its own slice. ledger.SOURCES is at least table-driven,
+    # so backfill is one loop rather than one block per source.
     transaction = models.OneToOneField("Transaction", on_delete=models.CASCADE, null=True,
                                        blank=True, related_name="journal_entry")
     savings_transaction = models.OneToOneField("SavingsTransaction", on_delete=models.CASCADE,
+                                               null=True, blank=True,
+                                               related_name="journal_entry")
+    facility_transaction = models.OneToOneField("FacilityTransaction", on_delete=models.CASCADE,
+                                                null=True, blank=True,
+                                                related_name="journal_entry")
+    capital_transaction = models.OneToOneField("CapitalTransaction", on_delete=models.CASCADE,
                                                null=True, blank=True,
                                                related_name="journal_entry")
     loan = models.ForeignKey("Loan", on_delete=models.SET_NULL, null=True, blank=True,
@@ -932,6 +974,142 @@ class ProvisionRunLine(models.Model):
 
     def __str__(self):
         return f"{self.run_id}/{self.loan_id} {self.movement}"
+
+
+# ---------------------------------------------------------------- funding
+class FundingFacility(models.Model):
+    """A line of credit the institution borrows on to fund its lending.
+
+    There is no separate funder table. `funder_name` is a snapshot, the same
+    treatment LoanCharge.name gets and for the same reason: a funder register
+    would be an address book the balance sheet never asks anything of, and a
+    snapshot means history survives a rename.
+
+    Only the two balances the ledger reconciles against are stored:
+    principal_outstanding ties to account 2100 and interest_accrued to 2110.
+    Everything else (total drawn, repaid, interest paid) is a SUM over the
+    transactions, computed when asked. The loan book keeps running totals because
+    arrears, PAR and ECL read them on every row of every report; there will be
+    three facilities, not three thousand, so five denormalised columns here would
+    only be five ways to drift from the ledger.
+    """
+    facility_no = models.CharField(max_length=20, unique=True, db_index=True)
+    funder_name = models.CharField(max_length=120)
+    name = models.CharField(max_length=120)
+    facility_limit = models.DecimalField(**MONEY)
+    # Per annum, simple, on the drawn balance — matching SavingsProduct, not the
+    # monthly LoanProduct convention. Funders quote annual rates.
+    interest_rate_pct_pa = models.DecimalField(default=ZERO, **RATE)
+    is_revolving = models.BooleanField(
+        default=False, help_text="A revolving facility frees its limit as principal is repaid")
+    start_date = models.DateField()
+    maturity_date = models.DateField(null=True, blank=True)
+    repayment_terms = models.CharField(max_length=200, null=True, blank=True)
+
+    principal_outstanding = models.DecimalField(default=ZERO, **MONEY)
+    interest_accrued = models.DecimalField(default=ZERO, **MONEY)
+    last_accrual_date = models.DateField(null=True, blank=True)
+
+    # A date rather than a status enum. Four states plus a cancel action is a state
+    # machine for something with two interesting conditions, and it is where a
+    # "fully repaid revolving facility can never be drawn again" bug lives.
+    closed_on = models.DateField(null=True, blank=True)
+    branch = models.ForeignKey("Branch", on_delete=models.SET_NULL, null=True, blank=True,
+                               related_name="facilities")
+    notes = models.TextField(null=True, blank=True)
+    created_by = models.ForeignKey("User", on_delete=models.SET_NULL, null=True, blank=True,
+                                  related_name="facilities_created")
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "funding_facilities"
+        ordering = ["-id"]
+        verbose_name_plural = "funding facilities"
+
+    @property
+    def is_open(self) -> bool:
+        return self.closed_on is None
+
+    @property
+    def total_outstanding(self):
+        return (self.principal_outstanding or ZERO) + (self.interest_accrued or ZERO)
+
+    @property
+    def available(self):
+        """Headroom to draw.
+
+        A revolving facility measures against what is currently outstanding, a term
+        facility against everything ever drawn.
+        """
+        from django.db.models import Sum
+
+        if self.is_revolving:
+            used = self.principal_outstanding or ZERO
+        else:
+            used = (self.transactions
+                    .filter(txn_type=FacilityTxnType.DRAWDOWN, reversed=False)
+                    .aggregate(v=Sum("amount"))["v"] or ZERO)
+        return max(ZERO, (self.facility_limit or ZERO) - used)
+
+    def __str__(self):
+        return f"{self.facility_no} {self.funder_name} {self.principal_outstanding}"
+
+
+class FacilityTransaction(models.Model):
+    """One movement on a funding facility."""
+    facility = models.ForeignKey(FundingFacility, on_delete=models.CASCADE,
+                                 related_name="transactions", db_index=True)
+    txn_type = models.CharField(max_length=20, choices=FacilityTxnType.choices)
+    txn_date = models.DateField(db_index=True)
+    amount = models.DecimalField(**MONEY)
+    # Both balances after the movement, because two of the six row types move the
+    # accrual and not the principal. One column would leave an accrual row saying
+    # nothing about what changed.
+    principal_after = models.DecimalField(default=ZERO, **MONEY)
+    accrued_after = models.DecimalField(default=ZERO, **MONEY)
+    method = models.CharField(max_length=20, choices=PaymentMethod.choices, null=True, blank=True)
+    reference = models.CharField(max_length=80, null=True, blank=True)
+    narration = models.TextField(null=True, blank=True)
+    reversed = models.BooleanField(default=False)
+    reversal_of = models.ForeignKey("self", on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="reversals")
+    posted_by = models.ForeignKey("User", on_delete=models.SET_NULL, null=True, blank=True,
+                                  related_name="facility_postings")
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "facility_transactions"
+        ordering = ["id"]
+
+    def __str__(self):
+        return f"{self.txn_date} {self.txn_type} {self.amount}"
+
+
+class CapitalTransaction(models.Model):
+    """Shareholders' money going in, or coming back out."""
+    txn_type = models.CharField(max_length=20, choices=CapitalTxnType.choices)
+    txn_date = models.DateField(db_index=True)
+    amount = models.DecimalField(**MONEY)
+    contributor = models.CharField(
+        max_length=160, help_text="Who put the money in — a snapshot, so history survives a rename")
+    method = models.CharField(max_length=20, choices=PaymentMethod.choices, null=True, blank=True)
+    reference = models.CharField(max_length=80, null=True, blank=True)
+    narration = models.TextField(null=True, blank=True)
+    reversed = models.BooleanField(default=False)
+    reversal_of = models.ForeignKey("self", on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="reversals")
+    branch = models.ForeignKey("Branch", on_delete=models.SET_NULL, null=True, blank=True,
+                               related_name="capital_transactions")
+    posted_by = models.ForeignKey("User", on_delete=models.SET_NULL, null=True, blank=True,
+                                  related_name="capital_postings")
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "capital_transactions"
+        ordering = ["-id"]
+
+    def __str__(self):
+        return f"{self.txn_date} {self.txn_type} {self.amount}"
 
 
 # ---------------------------------------------------------------- period close

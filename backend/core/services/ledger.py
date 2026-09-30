@@ -45,10 +45,22 @@ CODES = {
     "fee_income": "4100",
     "penalty_income": "4200",
     "recovery_income": "4300",
+    "borrowings": "2100",
+    "accrued_interest": "2110",
+    "share_capital": "3100",
+    "distributions": "3200",
     "write_off": "5000",
     "impairment": "5100",
     "savings_interest": "5200",
+    "borrowing_interest": "5300",
+    "facility_fees": "5310",
 }
+
+# Deliberately NOT in CODES, which is documented as the accounts this module posts
+# to. Nothing posts to 3000: balance_sheet derives it as income less expense since
+# inception, and that derivation is what makes assets equal liabilities plus equity
+# by construction rather than by luck.
+RETAINED_EARNINGS = "3000"
 
 DEFAULT_ACCOUNTS = [
     ("1000", "Cash and bank", AccountType.ASSET, "Where disbursements leave from and repayments land"),
@@ -57,7 +69,11 @@ DEFAULT_ACCOUNTS = [
     ("1400", "Charges receivable", AccountType.ASSET, "Fees added to a loan balance and not yet collected"),
     ("1900", "Provision for credit losses", AccountType.ASSET, "Contra-asset; expected credit loss held against the book"),
     ("2000", "Client funds payable", AccountType.LIABILITY, "Amounts held on behalf of borrowers"),
+    ("2100", "Funder borrowings", AccountType.LIABILITY, "Principal drawn on funding facilities and not yet repaid"),
+    ("2110", "Accrued interest on borrowings", AccountType.LIABILITY, "Interest owed to funders and not yet paid"),
     ("3000", "Retained earnings", AccountType.EQUITY, "Accumulated result"),
+    ("3100", "Share capital", AccountType.EQUITY, "Capital contributed by shareholders, less any returned"),
+    ("3200", "Distributions to shareholders", AccountType.EQUITY, "Dividends paid out; carries a debit balance and nets off contributed capital"),
     ("4000", "Interest income", AccountType.INCOME, "Interest recognised as it is collected"),
     ("4100", "Fee income", AccountType.INCOME, "Admin and credit-life fees deducted at disbursement"),
     ("4200", "Penalty income", AccountType.INCOME, "Late-payment penalties charged"),
@@ -65,6 +81,8 @@ DEFAULT_ACCOUNTS = [
     ("5000", "Loan write-offs", AccountType.EXPENSE, "Balances written off the book"),
     ("5100", "Impairment charge", AccountType.EXPENSE, "Movement in the expected credit loss provision"),
     ("5200", "Savings interest expense", AccountType.EXPENSE, "Interest credited to members' savings"),
+    ("5300", "Interest on borrowings", AccountType.EXPENSE, "Interest expense on funding facilities, accrued monthly"),
+    ("5310", "Facility fees", AccountType.EXPENSE, "Arrangement and commitment fees on funding facilities"),
 ]
 
 
@@ -226,46 +244,20 @@ def would_post(txn: Transaction) -> bool:
 
 @db_transaction.atomic
 def post_transaction(txn: Transaction) -> JournalEntry | None:
-    """Raise the journal entry for a transaction. Idempotent per transaction."""
+    """Raise the journal entry for a loan transaction. Idempotent per transaction."""
     existing = JournalEntry.objects.filter(transaction=txn).first()
     if existing:
         return existing
 
-    acc = _accounts()
-    if not acc:
-        log.warning("No chart of accounts; skipping the ledger entry for transaction %s", txn.id)
-        return None
-
-    raw = _lines_for(txn)
-    lines = [(code, d, c, text) for code, d, c, text in raw if d > 0 or c > 0]
-    if not lines:
-        return None
-
-    missing = [code for code, *_ in lines if code not in acc]
-    if missing:
-        log.warning("Ledger accounts %s are missing; skipping entry for transaction %s",
-                    missing, txn.id)
-        return None
-
-    debits = sum((d for _, d, _, _ in lines), ZERO)
-    credits = sum((c for _, _, c, _ in lines), ZERO)
-    if debits != credits:
-        # Refusing to post a lopsided entry is the whole point of double entry.
-        log.error("Refusing an unbalanced entry for transaction %s: Dr %s vs Cr %s",
-                  txn.id, debits, credits)
-        return None
-
-    entry = JournalEntry.objects.create(
-        entry_no=_next_entry_no(), entry_date=txn.txn_date,
+    return _raise_entry(
+        _lines_for(txn),
+        entry_date=txn.txn_date,
         narration=txn.narration or f"{txn.get_txn_type_display()} on {txn.loan.loan_no}",
-        source=txn.txn_type, transaction=txn, loan=txn.loan,
-        branch_id=txn.loan.branch_id, posted_by=txn.posted_by,
+        source=txn.txn_type,
+        what=f"transaction {txn.id}",
+        loan=txn.loan, branch_id=txn.loan.branch_id, posted_by=txn.posted_by,
+        transaction=txn,
     )
-    JournalLine.objects.bulk_create([
-        JournalLine(entry=entry, account=acc[code], debit=d, credit=c, description=text)
-        for code, d, c, text in lines
-    ])
-    return entry
 
 
 def account_movement(code: str, start=None, end=None, branch_id=None) -> tuple[Decimal, Decimal]:
@@ -341,6 +333,48 @@ def _accounts_by_code(codes) -> dict[str, LedgerAccount]:
     return {a.code: a for a in LedgerAccount.objects.filter(code__in=set(codes))}
 
 
+def _raise_entry(lines, *, entry_date, narration: str, source: str, what: str,
+                 loan=None, branch_id=None, posted_by=None, **fk) -> JournalEntry | None:
+    """The mechanics every posting source shares.
+
+    Drops zero lines, refuses an entry whose accounts are missing or whose debits
+    do not equal its credits, then writes the entry and its lines. Each source
+    supplies only its own posting rules and which FK points back at it.
+
+    Returns None rather than raising, because these run inside a post_save hook: a
+    source with nothing to post (an informational fee, a waiver of interest) is
+    normal, and a chart of accounts that does not exist yet is recoverable through
+    backfill. `post_manual_entry` is the strict counterpart for callers that would
+    rather fail loudly.
+    """
+    rows = [(c, q(d), q(cr), t) for c, d, cr, t in lines if q(d) > 0 or q(cr) > 0]
+    if not rows:
+        return None
+
+    acc = _accounts_by_code([code for code, *_ in rows])
+    missing = sorted({code for code, *_ in rows if code not in acc})
+    if missing:
+        log.warning("Ledger accounts %s are missing; skipping the entry for %s", missing, what)
+        return None
+
+    debits = sum((d for _, d, _, _ in rows), ZERO)
+    credits = sum((c for _, _, c, _ in rows), ZERO)
+    if debits != credits:
+        # Refusing a lopsided entry is the whole point of double entry.
+        log.error("Refusing an unbalanced entry for %s: Dr %s vs Cr %s", what, debits, credits)
+        return None
+
+    entry = JournalEntry.objects.create(
+        entry_no=_next_entry_no(), entry_date=entry_date, narration=narration, source=source,
+        loan=loan, branch_id=branch_id, posted_by=posted_by, **fk,
+    )
+    JournalLine.objects.bulk_create([
+        JournalLine(entry=entry, account=acc[code], debit=d, credit=c, description=text)
+        for code, d, c, text in rows
+    ])
+    return entry
+
+
 def _savings_lines(stxn) -> list[tuple[str, Decimal, Decimal, str]]:
     """Members' savings are the institution's liability, not its income."""
     from ..models import SavingsTxnType
@@ -380,33 +414,129 @@ def post_savings_transaction(stxn) -> JournalEntry | None:
     if existing:
         return existing
 
-    acc = _accounts()
-    lines = [(c, d, cr, t) for c, d, cr, t in _savings_lines(stxn) if d > 0 or cr > 0]
-    if not lines:
-        return None
-    missing = [code for code, *_ in lines if code not in acc]
-    if missing:
-        log.warning("Ledger accounts %s are missing; skipping savings entry %s", missing, stxn.id)
-        return None
-
-    debits = sum((d for _, d, _, _ in lines), ZERO)
-    credits = sum((c for _, _, c, _ in lines), ZERO)
-    if debits != credits:
-        log.error("Refusing an unbalanced savings entry %s: Dr %s vs Cr %s",
-                  stxn.id, debits, credits)
-        return None
-
-    entry = JournalEntry.objects.create(
-        entry_no=_next_entry_no(), entry_date=stxn.txn_date,
+    return _raise_entry(
+        _savings_lines(stxn),
+        entry_date=stxn.txn_date,
         narration=stxn.narration or f"{stxn.get_txn_type_display()} on {stxn.account.account_no}",
-        source=f"savings_{stxn.txn_type}", savings_transaction=stxn,
+        source=f"savings_{stxn.txn_type}",
+        what=f"savings transaction {stxn.id}",
         branch_id=stxn.account.branch_id, posted_by=stxn.posted_by,
+        savings_transaction=stxn,
     )
-    JournalLine.objects.bulk_create([
-        JournalLine(entry=entry, account=acc[code], debit=d, credit=c, description=text)
-        for code, d, c, text in lines
-    ])
-    return entry
+
+
+# ---------------------------------------------------------------- funding
+def _mirror(lines) -> list[tuple[str, Decimal, Decimal, str]]:
+    """Swap every debit and credit, so a reversal undoes exactly what it reverses."""
+    return [(code, credit, debit, f"Reversal: {text}")
+            for code, debit, credit, text in lines]
+
+
+def _facility_lines(ftxn) -> list[tuple[str, Decimal, Decimal, str]]:
+    """Borrowing from a funder is a liability, and its interest is an expense.
+
+    Unlike loan interest — recognised when collected, because there is no interest
+    receivable — borrowing interest is accrued monthly to 2110. The asymmetry is
+    deliberate: an unrecognised asset is prudent, an unrecognised liability is not.
+    """
+    from ..models import FacilityTxnType
+
+    amount = q(ftxn.amount)
+    kind = ftxn.txn_type
+    mirror = False
+    if kind == FacilityTxnType.REVERSAL and ftxn.reversal_of_id:
+        kind = ftxn.reversal_of.txn_type
+        mirror = True
+
+    if kind == FacilityTxnType.DRAWDOWN:
+        lines = [(CODES["bank"], amount, ZERO, "Received from the funder"),
+                 (CODES["borrowings"], ZERO, amount, "Drawn on the facility")]
+    elif kind == FacilityTxnType.REPAYMENT:
+        lines = [(CODES["borrowings"], amount, ZERO, "Principal repaid to the funder"),
+                 (CODES["bank"], ZERO, amount, "Paid to the funder")]
+    elif kind == FacilityTxnType.INTEREST_ACCRUAL:
+        lines = [(CODES["borrowing_interest"], amount, ZERO, "Interest accrued on borrowings"),
+                 (CODES["accrued_interest"], ZERO, amount, "Owed to the funder")]
+    elif kind == FacilityTxnType.INTEREST_PAYMENT:
+        # Never split between 2110 and 5300. funding.pay_interest refuses more than
+        # has accrued and tells the caller to run the accrual first, so an interest
+        # payment only ever settles a liability already on the books. Expensing the
+        # unaccrued remainder here is what double-counts it when the month-end
+        # accrual then posts the same period again.
+        lines = [(CODES["accrued_interest"], amount, ZERO, "Accrued interest settled"),
+                 (CODES["bank"], ZERO, amount, "Interest paid to the funder")]
+    elif kind == FacilityTxnType.FEE:
+        lines = [(CODES["facility_fees"], amount, ZERO, "Facility fee"),
+                 (CODES["bank"], ZERO, amount, "Paid to the funder")]
+    else:
+        return []
+
+    return _mirror(lines) if mirror else lines
+
+
+def _capital_lines(ctxn) -> list[tuple[str, Decimal, Decimal, str]]:
+    """Shareholders' money is equity, never income."""
+    from ..models import CapitalTxnType
+
+    amount = q(ctxn.amount)
+    kind = ctxn.txn_type
+    mirror = False
+    if kind == CapitalTxnType.REVERSAL and ctxn.reversal_of_id:
+        kind = ctxn.reversal_of.txn_type
+        mirror = True
+
+    if kind == CapitalTxnType.INJECTION:
+        lines = [(CODES["bank"], amount, ZERO, "Capital received"),
+                 (CODES["share_capital"], ZERO, amount, "Capital contributed")]
+    elif kind == CapitalTxnType.RETURN_OF_CAPITAL:
+        lines = [(CODES["share_capital"], amount, ZERO, "Capital returned"),
+                 (CODES["bank"], ZERO, amount, "Paid to the shareholder")]
+    elif kind == CapitalTxnType.DIVIDEND:
+        # 3200 is typed EQUITY and carries a debit balance, so a trial balance
+        # reports it negative and it nets off contributed capital by itself.
+        lines = [(CODES["distributions"], amount, ZERO, "Dividend declared and paid"),
+                 (CODES["bank"], ZERO, amount, "Paid to the shareholder")]
+    else:
+        return []
+
+    return _mirror(lines) if mirror else lines
+
+
+@db_transaction.atomic
+def post_facility_transaction(ftxn) -> JournalEntry | None:
+    """Raise the journal entry for a facility movement. Idempotent per transaction."""
+    existing = JournalEntry.objects.filter(facility_transaction=ftxn).first()
+    if existing:
+        return existing
+
+    return _raise_entry(
+        _facility_lines(ftxn),
+        entry_date=ftxn.txn_date,
+        narration=(ftxn.narration
+                   or f"{ftxn.get_txn_type_display()} on {ftxn.facility.facility_no}"),
+        source=f"facility_{ftxn.txn_type}",
+        what=f"facility transaction {ftxn.id}",
+        branch_id=ftxn.facility.branch_id, posted_by=ftxn.posted_by,
+        facility_transaction=ftxn,
+    )
+
+
+@db_transaction.atomic
+def post_capital_transaction(ctxn) -> JournalEntry | None:
+    """Raise the journal entry for a capital movement. Idempotent per transaction."""
+    existing = JournalEntry.objects.filter(capital_transaction=ctxn).first()
+    if existing:
+        return existing
+
+    return _raise_entry(
+        _capital_lines(ctxn),
+        entry_date=ctxn.txn_date,
+        narration=ctxn.narration or f"{ctxn.get_txn_type_display()} — {ctxn.contributor}",
+        source=f"capital_{ctxn.txn_type}",
+        what=f"capital transaction {ctxn.id}",
+        branch_id=ctxn.branch_id, posted_by=ctxn.posted_by,
+        capital_transaction=ctxn,
+    )
 
 
 def backfill(limit: int | None = None) -> dict:
@@ -425,46 +555,55 @@ def backfill(limit: int | None = None) -> dict:
         return _backfill(limit)
 
 
+def _sources():
+    """Every model that raises a journal entry, and how to sweep it.
+
+    A table rather than one block per source, because each new posting source used
+    to mean another near-identical paragraph here — and a source someone forgot to
+    add would leave its account silently short after a Rebuild.
+    """
+    from ..models import CapitalTransaction, FacilityTransaction, SavingsTransaction
+
+    return [
+        ("loan", Transaction.objects.select_related("loan"), post_transaction),
+        ("savings", SavingsTransaction.objects.select_related("account", "reversal_of"),
+         post_savings_transaction),
+        ("facility", FacilityTransaction.objects.select_related("facility", "reversal_of"),
+         post_facility_transaction),
+        ("capital", CapitalTransaction.objects.select_related("reversal_of"),
+         post_capital_transaction),
+    ]
+
+
 def _backfill(limit: int | None = None) -> dict:
     ensure_chart_of_accounts()
-    pending = (Transaction.objects
-               .filter(journal_entry__isnull=True)
-               .select_related("loan")
-               .order_by("id"))
-    if limit:
-        pending = pending[:limit]
 
     posted = skipped = 0
-    for txn in pending:
-        if post_transaction(txn):
-            posted += 1
-        else:
-            skipped += 1
+    per_source = {}
+    for name, queryset, post in _sources():
+        pending = queryset.filter(journal_entry__isnull=True).order_by("id")
+        if limit:
+            pending = pending[:limit]
+        raised = 0
+        for row in pending:
+            if post(row):
+                raised += 1
+                posted += 1
+            else:
+                skipped += 1
+        per_source[name] = raised
 
-    from ..models import SavingsTransaction
-
-    savings_pending = (SavingsTransaction.objects
-                       .filter(journal_entry__isnull=True)
-                       .select_related("account", "reversal_of")
-                       .order_by("id"))
-    if limit:
-        savings_pending = savings_pending[:limit]
-    for stxn in savings_pending:
-        if post_savings_transaction(stxn):
-            posted += 1
-        else:
-            skipped += 1
-
-    # Provision entries stand behind no Transaction, so the two sweeps above
-    # cannot find them. Without this, "Rebuild" after a JournalEntry wipe would
-    # leave account 1900 at zero while the loans still carry a provision, and
-    # the fifth reconciliation identity would be unrecoverable.
+    # Provision entries stand behind no transaction of any kind, so the sweeps
+    # above cannot find them. Without this, "Rebuild" after a JournalEntry wipe
+    # would leave account 1900 at zero while the loans still carry a provision, and
+    # that reconciliation identity would be unrecoverable.
     from .provisioning import repost_runs
 
     reposted = repost_runs()
     posted += reposted["reposted"]
 
-    return {"posted": posted, "skipped": skipped, "provision_runs_reposted": reposted["reposted"]}
+    return {"posted": posted, "skipped": skipped, "by_source": per_source,
+            "provision_runs_reposted": reposted["reposted"]}
 
 
 def trial_balance(start=None, end=None, branch_id=None) -> dict:
@@ -530,4 +669,149 @@ def income_statement(start=None, end=None, branch_id=None) -> dict:
         "surplus": q(total_income - total_expense),
         "start": start,
         "end": end,
+    }
+
+
+def balance_sheet(as_of=None, branch_id=None) -> dict:
+    """Assets, liabilities and equity as at one date.
+
+    Retained earnings is DERIVED as income less expense since inception, plus
+    anything a manual posting has put on 3000. Nothing in this system posts a
+    year-end closing entry to 3000, so without the derivation the surplus would
+    simply be missing from equity and the sheet would not add up.
+
+    `balanced` is therefore close to a tautology: given a set of entries where every
+    debit has a credit, assets minus liabilities always equals the derived equity.
+    It is reported because a non-zero difference means something has corrupted the
+    journal, not because agreement is an achievement. The checks that can genuinely
+    fail are the sub-ledger identities in `reconciliation()`, and those are what a
+    board pack should be read against.
+    """
+    from datetime import date as _date
+
+    as_of = as_of or _date.today()
+    balance = trial_balance(None, as_of, branch_id)
+    rows = balance["rows"]
+
+    assets = [r for r in rows if r["type"] == AccountType.ASSET]
+    liabilities = [r for r in rows if r["type"] == AccountType.LIABILITY]
+    # 3000 is excluded from the posted equity rows and folded into the derived
+    # figure instead, so a manual posting to it can never be counted twice.
+    posted_equity = [r for r in rows
+                     if r["type"] == AccountType.EQUITY and r["code"] != RETAINED_EARNINGS]
+    posted_retained = next((r["balance"] for r in rows if r["code"] == RETAINED_EARNINGS), ZERO)
+
+    income = q(sum((r["balance"] for r in rows if r["type"] == AccountType.INCOME), ZERO))
+    expense = q(sum((r["balance"] for r in rows if r["type"] == AccountType.EXPENSE), ZERO))
+    retained = q(income - expense + posted_retained)
+
+    # trial_balance drops accounts with no movement, so in the normal case there is
+    # no 3000 row to take a name from.
+    name = (LedgerAccount.objects.filter(code=RETAINED_EARNINGS)
+            .values_list("name", flat=True).first() or "Retained earnings")
+    retained_row = {
+        "code": RETAINED_EARNINGS, "name": name, "type": AccountType.EQUITY,
+        # Presented on its natural side, so the keys match every other row: a
+        # csv_response builds its DictWriter from the first row's keys and an extra
+        # or missing key on a later row raises.
+        "debit": ZERO if retained >= 0 else q(-retained),
+        "credit": retained if retained >= 0 else ZERO,
+        "balance": retained, "side": "credit",
+    }
+    equity = posted_equity + [retained_row]
+
+    total_assets = q(sum((r["balance"] for r in assets), ZERO))
+    total_liabilities = q(sum((r["balance"] for r in liabilities), ZERO))
+    total_equity = q(sum((r["balance"] for r in equity), ZERO))
+
+    return {
+        "as_of": as_of,
+        "assets": assets,
+        "liabilities": liabilities,
+        "equity": equity,
+        "total_assets": total_assets,
+        "total_liabilities": total_liabilities,
+        "total_equity": total_equity,
+        "total_liabilities_and_equity": q(total_liabilities + total_equity),
+        "retained_earnings": retained,
+        "income_to_date": income,
+        "expense_to_date": expense,
+        "difference": q(total_assets - total_liabilities - total_equity),
+        "balanced": q(total_assets - total_liabilities - total_equity) == ZERO,
+        "branch_id": branch_id,
+    }
+
+
+def reconciliation(as_of=None) -> dict:
+    """Every account whose balance is claimed to equal a sub-ledger, checked.
+
+    These are the checks that can actually fail, unlike the balance sheet's own
+    `balanced` flag. Each row names the account, what the ledger says, what the
+    sub-ledger says, and the difference. Whole-book only: facility and capital
+    entries carry no branch, so a branch slice of any of these is meaningless.
+    """
+    from django.db.models import Sum
+
+    from ..models import (
+        CapitalTransaction,
+        CapitalTxnType,
+        FundingFacility,
+        Loan,
+        LoanStatus,
+        SavingsAccount,
+    )
+
+    def total(queryset, field):
+        return queryset.aggregate(v=Sum(field))["v"] or ZERO
+
+    by_code = {row["code"]: row["balance"] for row in trial_balance(None, as_of)["rows"]}
+    active = Loan.objects.filter(status=LoanStatus.ACTIVE)
+    facilities = FundingFacility.objects.all()
+    # A reversed movement and the reversal itself both stay on the register; the
+    # pair nets to zero in the ledger, so the sub-ledger total must exclude both.
+    capital = CapitalTransaction.objects.filter(reversed=False).exclude(
+        txn_type=CapitalTxnType.REVERSAL)
+
+    claims = [
+        ("1100", "Loans receivable", total(active, "principal_outstanding"),
+         "principal outstanding on active loans"),
+        ("1300", "Penalties receivable", total(active, "penalties_outstanding"),
+         "penalties outstanding on active loans"),
+        ("1400", "Charges receivable", total(active, "charges_outstanding"),
+         "charges outstanding on active loans"),
+        ("1900", "Provision for credit losses", -total(Loan.objects.all(), "provision_held"),
+         "provision held across every loan"),
+        ("2000", "Client funds payable", total(SavingsAccount.objects.all(), "balance"),
+         "savings balances"),
+        ("2100", "Funder borrowings", total(facilities, "principal_outstanding"),
+         "principal outstanding on funding facilities"),
+        ("2110", "Accrued interest on borrowings", total(facilities, "interest_accrued"),
+         "interest accrued and unpaid on funding facilities"),
+        ("3100", "Share capital",
+         q(total(capital.filter(txn_type=CapitalTxnType.INJECTION), "amount")
+           - total(capital.filter(txn_type=CapitalTxnType.RETURN_OF_CAPITAL), "amount")),
+         "capital injected less capital returned"),
+        ("3200", "Distributions to shareholders",
+         -total(capital.filter(txn_type=CapitalTxnType.DIVIDEND), "amount"),
+         "dividends paid"),
+    ]
+
+    rows = []
+    for code, name, book, what in claims:
+        ledger_value = q(by_code.get(code, ZERO))
+        book = q(book)
+        rows.append({
+            "code": code, "name": name, "ledger": ledger_value, "book": book,
+            "difference": q(ledger_value - book), "agrees": ledger_value == book,
+            "sub_ledger": what,
+        })
+
+    sheet = balance_sheet(as_of)
+    return {
+        "as_of": sheet["as_of"],
+        "rows": rows,
+        "agrees": all(r["agrees"] for r in rows),
+        "breaks": [r for r in rows if not r["agrees"]],
+        "trial_balance_balanced": trial_balance(None, as_of)["balanced"],
+        "balance_sheet_balanced": sheet["balanced"],
     }

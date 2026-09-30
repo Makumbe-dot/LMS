@@ -2,6 +2,7 @@ from . import (  # noqa: F401
     auth,
     borrowers,
     charges,
+    funding,
     groups,
     ledger,
     loans,

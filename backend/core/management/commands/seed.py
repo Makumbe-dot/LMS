@@ -14,6 +14,9 @@ from core.models import (
     AccountingPeriod,
     AuditLog,
     Borrower,
+    CapitalTransaction,
+    FacilityTransaction,
+    FundingFacility,
     BorrowerDocument,
     BorrowerGroup,
     Branch,
@@ -49,11 +52,17 @@ from core.models import (
     User,
 )
 from core.services import loans as svc
-from core.services.amortisation import add_months, monthly_instalment
+from core.services.amortisation import add_months, monthly_instalment, q
+from core.services import funding as funding_svc
 from core.services import groups as group_svc
 from core.services import provisioning as provisioning_svc
 from core.services import savings as savings_svc
-from core.services.ledger import ensure_chart_of_accounts, trial_balance
+from core.services.ledger import (
+    balance_sheet,
+    ensure_chart_of_accounts,
+    reconciliation,
+    trial_balance,
+)
 from core.services.notifications import generate_reminders
 from core.services.penalties import accrue_penalties
 from core.services.repayments import post_repayment
@@ -147,6 +156,9 @@ class Command(BaseCommand):
                 AccountingPeriod.objects.all().delete()
                 AuditLog.objects.all().delete()
                 Notification.objects.all().delete()
+                FacilityTransaction.objects.all().delete()
+                CapitalTransaction.objects.all().delete()
+                FundingFacility.objects.all().delete()
                 LoanNote.objects.all().delete()
                 ProvisionRunLine.objects.all().delete()
                 ProvisionRun.objects.all().delete()
@@ -246,6 +258,23 @@ class Command(BaseCommand):
         officer, admin, teller = users["officer"], users["admin"], users["teller"]
         n_pending = n_active = 0
 
+        # The money has to be in the bank before the first disbursement leaves it.
+        # Without this, account 1000 finishes the seed thousands of dollars negative
+        # and no balance sheet can be drawn: the loans were real but nothing said
+        # where the cash came from.
+        with transaction.atomic():
+            funding_svc.inject_capital(
+                admin, Decimal("15000"), "Founding shareholders", add_months(today, -18),
+                PaymentMethod.BANK_TRANSFER, "CAP0001", "Initial share capital")
+            facility = funding_svc.open_facility(
+                admin, funder_name="CBZ Bank Wholesale", name="Wholesale on-lending line",
+                facility_limit=Decimal("50000"), interest_rate_pct_pa=Decimal("12"),
+                start_date=add_months(today, -15), maturity_date=add_months(today, 21),
+                is_revolving=True, repayment_terms="Quarterly interest, principal at maturity")
+            funding_svc.drawdown(
+                facility, admin, Decimal("20000"), add_months(today, -14),
+                PaymentMethod.BANK_TRANSFER, "DRW0001", "First drawdown")
+
         for idx, borrower in enumerate(borrowers):
             if not borrower.kyc_verified or borrower.is_blacklisted or idx % 7 == 6:
                 continue
@@ -329,10 +358,13 @@ class Command(BaseCommand):
                     promised_date=today + timedelta(days=random.randint(3, 20)),
                 )
 
-        # Security against the larger loans
+        # Security against the largest active loans. The largest four rather than
+        # everything over a threshold: the random principals shift with the run date,
+        # and a fixed cut-off can silently match nothing and leave the demo with no
+        # collateral at all.
         with transaction.atomic():
             secured = 0
-            for loan in Loan.objects.filter(status="active", principal__gte=2000):
+            for loan in Loan.objects.filter(status="active").order_by("-principal")[:4]:
                 Collateral.objects.create(
                     loan=loan, recorded_by=officer,
                     type=random.choice([CollateralType.VEHICLE, CollateralType.EQUIPMENT,
@@ -406,12 +438,28 @@ class Command(BaseCommand):
         with transaction.atomic():
             messages = generate_reminders(today)
 
+        # Catches up every month since the drawdown, so 5300 and 2110 carry real
+        # numbers rather than one month's worth. Then pay the funder all but the
+        # latest month, which is what quarterly-interest terms look like in practice
+        # and leaves 2110 holding a live accrual rather than a year of arrears.
+        with transaction.atomic():
+            borrowing_interest = funding_svc.accrue_interest(today)
+            monthly = q(facility.principal_outstanding * facility.interest_rate_pct_pa / 100 / 12)
+            facility.refresh_from_db()
+            to_pay = max(Decimal("0"), facility.interest_accrued - monthly)
+            if to_pay > 0:
+                funding_svc.pay_interest(facility, admin, to_pay, today,
+                                         PaymentMethod.BANK_TRANSFER, "INT0001",
+                                         "Interest settled with the funder")
+
         # Book the expected credit loss, so the demo book opens with account 1900
         # agreeing with the provision carried on every loan.
         with transaction.atomic():
             provision = provisioning_svc.run_provision(users["admin"], today)
 
         balance = trial_balance()
+        sheet = balance_sheet()
+        ties = reconciliation()
 
         self.stdout.write(self.style.SUCCESS(
             f"Seeded {len(USERS)} users, {len(BRANCHES)} branches, {len(PRODUCTS)} products, "
@@ -425,6 +473,12 @@ class Command(BaseCommand):
         self.stdout.write(f"Penalty accrual: {result}")
         self.stdout.write(f"Savings interest: {savings_run}")
         self.stdout.write(f"Messages queued: {messages}")
+        self.stdout.write(f"Borrowing interest: {borrowing_interest}")
+        self.stdout.write(
+            f"Funding: {FundingFacility.objects.count()} facility drawn "
+            f"{facility.principal_outstanding} of {facility.facility_limit}, capital "
+            f"{funding_svc.capital_summary()['net_capital']}, cash "
+            f"{funding_svc.cash_balance()}")
         self.stdout.write(
             f"Provision: {provision.run_no} for {provision.period_end}, required "
             f"{provision.provision_required}, movement {provision.movement}")
@@ -432,5 +486,15 @@ class Command(BaseCommand):
             f"Ledger: {JournalEntry.objects.count()} entries, "
             f"Dr {balance['total_debit']} / Cr {balance['total_credit']}, "
             + ("balanced" if balance["balanced"] else self.style.ERROR("OUT OF BALANCE")))
+        self.stdout.write(
+            f"Balance sheet: assets {sheet['total_assets']} = liabilities "
+            f"{sheet['total_liabilities']} + equity {sheet['total_equity']} "
+            + ("" if sheet["balanced"]
+               else self.style.ERROR(f"OUT BY {sheet['difference']}")))
+        self.stdout.write(
+            "Sub-ledger ties: "
+            + ("all agree" if ties["agrees"] else self.style.ERROR(
+                "; ".join(f"{r['code']} ledger {r['ledger']} vs book {r['book']}"
+                          for r in ties["breaks"]))))
         self.stdout.write("Logins:  admin/admin123  officer/officer123  teller/teller123  "
                           "viewer/viewer123")

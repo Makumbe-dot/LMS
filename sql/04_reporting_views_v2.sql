@@ -299,8 +299,20 @@ LEFT JOIN dbo.instalments i ON i.id = lc.instalment_id;
 GO
 
 /* ---------------------------------------------------------------------------
-   usp_reconcile_ledger - the check worth running before any board pack:
-   does the ledger still agree with the loan and savings books?
+   usp_reconcile_ledger - the check worth running before any board pack.
+
+   Every account below carries a balance that is claimed to equal something
+   counted elsewhere. These are the checks with teeth: a balanced trial balance
+   and a balance sheet that adds up both follow automatically from entries where
+   every debit has a credit, so neither is evidence of anything. These can break,
+   and a migration, a hand-edit in SSMS, or a service that moves a balance without
+   posting will all show up here.
+
+   Each ledger figure is read with a SCALAR SUBQUERY wrapped in ISNULL, not with
+   a CROSS JOIN onto vw_trial_balance. A CROSS JOIN yields zero rows when the
+   account does not exist - on a database that has migrated but not yet run
+   Rebuild, the check would silently vanish instead of failing. A check that can
+   disappear is worse than no check.
    --------------------------------------------------------------------------- */
 CREATE OR ALTER PROCEDURE dbo.usp_reconcile_ledger
 AS
@@ -314,52 +326,74 @@ BEGIN
         difference   decimal(18, 2),
         result       nvarchar(10));
 
-    /* 1100 Loans receivable vs principal outstanding on active loans */
-    INSERT INTO @results
-    SELECT 'Loans receivable',
-           gl.balance,
-           book.total,
-           gl.balance - book.total,
-           CASE WHEN gl.balance = book.total THEN 'OK' ELSE 'MISMATCH' END
-    FROM (SELECT balance FROM dbo.vw_trial_balance WHERE code = '1100') gl
-    CROSS JOIN (SELECT total = ISNULL(SUM(principal_outstanding), 0)
-                FROM dbo.loans WHERE status = 'active') book;
+    DECLARE @gl decimal(18, 2), @book decimal(18, 2);
 
-    /* 1300 Penalties receivable */
-    INSERT INTO @results
-    SELECT 'Penalties receivable', gl.balance, book.total, gl.balance - book.total,
-           CASE WHEN gl.balance = book.total THEN 'OK' ELSE 'MISMATCH' END
-    FROM (SELECT balance FROM dbo.vw_trial_balance WHERE code = '1300') gl
-    CROSS JOIN (SELECT total = ISNULL(SUM(penalties_outstanding), 0)
-                FROM dbo.loans WHERE status = 'active') book;
+    /* ---- the loan book */
+    SELECT @gl = ISNULL((SELECT balance FROM dbo.vw_trial_balance WHERE code = '1100'), 0),
+           @book = ISNULL((SELECT SUM(principal_outstanding) FROM dbo.loans
+                           WHERE status = 'active'), 0);
+    INSERT INTO @results VALUES ('Loans receivable', @gl, @book, @gl - @book,
+        CASE WHEN @gl = @book THEN 'OK' ELSE 'MISMATCH' END);
 
-    /* 1400 Charges receivable */
-    INSERT INTO @results
-    SELECT 'Charges receivable', gl.balance, book.total, gl.balance - book.total,
-           CASE WHEN gl.balance = book.total THEN 'OK' ELSE 'MISMATCH' END
-    FROM (SELECT balance FROM dbo.vw_trial_balance WHERE code = '1400') gl
-    CROSS JOIN (SELECT total = ISNULL(SUM(charges_outstanding), 0)
-                FROM dbo.loans WHERE status = 'active') book;
+    SELECT @gl = ISNULL((SELECT balance FROM dbo.vw_trial_balance WHERE code = '1300'), 0),
+           @book = ISNULL((SELECT SUM(penalties_outstanding) FROM dbo.loans
+                           WHERE status = 'active'), 0);
+    INSERT INTO @results VALUES ('Penalties receivable', @gl, @book, @gl - @book,
+        CASE WHEN @gl = @book THEN 'OK' ELSE 'MISMATCH' END);
 
-    /* 2000 Client funds payable vs the savings book */
-    INSERT INTO @results
-    SELECT 'Client funds payable', gl.balance, book.total, gl.balance - book.total,
-           CASE WHEN gl.balance = book.total THEN 'OK' ELSE 'MISMATCH' END
-    FROM (SELECT balance FROM dbo.vw_trial_balance WHERE code = '2000') gl
-    CROSS JOIN (SELECT total = ISNULL(SUM(balance), 0) FROM dbo.savings_accounts) book;
+    SELECT @gl = ISNULL((SELECT balance FROM dbo.vw_trial_balance WHERE code = '1400'), 0),
+           @book = ISNULL((SELECT SUM(charges_outstanding) FROM dbo.loans
+                           WHERE status = 'active'), 0);
+    INSERT INTO @results VALUES ('Charges receivable', @gl, @book, @gl - @book,
+        CASE WHEN @gl = @book THEN 'OK' ELSE 'MISMATCH' END);
 
-    /* 1900 Provision for credit losses vs the provision carried on every loan.
-       The unary minus is required: 1900 is typed ASSET (it is a contra-asset),
-       so vw_trial_balance reports it as debit-minus-credit, and the provision
-       stands on the credit side. The sub-ledger sums ALL loans, not just active
-       ones, because a closed loan keeps its provision until a run sweeps it. */
-    INSERT INTO @results
-    SELECT 'Provision for credit losses', -gl.balance, book.total, -gl.balance - book.total,
-           CASE WHEN -gl.balance = book.total THEN 'OK' ELSE 'MISMATCH' END
-    FROM (SELECT balance FROM dbo.vw_trial_balance WHERE code = '1900') gl
-    CROSS JOIN (SELECT total = ISNULL(SUM(provision_held), 0) FROM dbo.loans) book;
+    /* 1900 Provision for credit losses. The unary minus is required: 1900 is typed
+       ASSET (it is a contra-asset), so vw_trial_balance reports it as debit minus
+       credit and the provision stands on the credit side. The sub-ledger sums ALL
+       loans, not just active ones, because a closed loan keeps its provision until
+       a run sweeps it. */
+    SELECT @gl = -ISNULL((SELECT balance FROM dbo.vw_trial_balance WHERE code = '1900'), 0),
+           @book = ISNULL((SELECT SUM(provision_held) FROM dbo.loans), 0);
+    INSERT INTO @results VALUES ('Provision for credit losses', @gl, @book, @gl - @book,
+        CASE WHEN @gl = @book THEN 'OK' ELSE 'MISMATCH' END);
 
-    /* Double entry itself */
+    /* ---- the savings book */
+    SELECT @gl = ISNULL((SELECT balance FROM dbo.vw_trial_balance WHERE code = '2000'), 0),
+           @book = ISNULL((SELECT SUM(balance) FROM dbo.savings_accounts), 0);
+    INSERT INTO @results VALUES ('Client funds payable', @gl, @book, @gl - @book,
+        CASE WHEN @gl = @book THEN 'OK' ELSE 'MISMATCH' END);
+
+    /* ---- funder borrowings */
+    SELECT @gl = ISNULL((SELECT balance FROM dbo.vw_trial_balance WHERE code = '2100'), 0),
+           @book = ISNULL((SELECT SUM(principal_outstanding) FROM dbo.funding_facilities), 0);
+    INSERT INTO @results VALUES ('Funder borrowings', @gl, @book, @gl - @book,
+        CASE WHEN @gl = @book THEN 'OK' ELSE 'MISMATCH' END);
+
+    SELECT @gl = ISNULL((SELECT balance FROM dbo.vw_trial_balance WHERE code = '2110'), 0),
+           @book = ISNULL((SELECT SUM(interest_accrued) FROM dbo.funding_facilities), 0);
+    INSERT INTO @results VALUES ('Accrued borrowing interest', @gl, @book, @gl - @book,
+        CASE WHEN @gl = @book THEN 'OK' ELSE 'MISMATCH' END);
+
+    /* ---- equity. A reversed movement and its reversal net to zero in the ledger,
+       so the sub-ledger total must exclude both. */
+    SELECT @gl = ISNULL((SELECT balance FROM dbo.vw_trial_balance WHERE code = '3100'), 0),
+           @book = ISNULL((SELECT SUM(CASE WHEN txn_type = 'injection' THEN amount
+                                           ELSE -amount END)
+                           FROM dbo.capital_transactions
+                           WHERE reversed = 0
+                             AND txn_type IN ('injection', 'return_of_capital')), 0);
+    INSERT INTO @results VALUES ('Share capital', @gl, @book, @gl - @book,
+        CASE WHEN @gl = @book THEN 'OK' ELSE 'MISMATCH' END);
+
+    /* 3200 Distributions is typed EQUITY and carries a debit balance, so
+       vw_trial_balance reports it negative. */
+    SELECT @gl = -ISNULL((SELECT balance FROM dbo.vw_trial_balance WHERE code = '3200'), 0),
+           @book = ISNULL((SELECT SUM(amount) FROM dbo.capital_transactions
+                           WHERE reversed = 0 AND txn_type = 'dividend'), 0);
+    INSERT INTO @results VALUES ('Distributions to shareholders', @gl, @book, @gl - @book,
+        CASE WHEN @gl = @book THEN 'OK' ELSE 'MISMATCH' END);
+
+    /* ---- double entry itself */
     INSERT INTO @results
     SELECT 'Debits equal credits', d.total, c.total, d.total - c.total,
            CASE WHEN d.total = c.total THEN 'OK' ELSE 'MISMATCH' END
@@ -374,6 +408,130 @@ BEGIN
 END
 GO
 
+/* ---------------------------------------------------------------------------
+   The funding book: where the money to lend came from.
+   --------------------------------------------------------------------------- */
+CREATE OR ALTER VIEW dbo.vw_funding_book AS
+SELECT f.facility_no,
+       f.funder_name,
+       f.name                        AS line_name,
+       state                         = CASE WHEN f.closed_on IS NOT NULL THEN 'closed'
+                                            WHEN f.is_revolving = 1 THEN 'revolving'
+                                            ELSE 'term' END,
+       f.facility_limit,
+       f.principal_outstanding,
+       f.interest_accrued,
+       total_drawn                   = ISNULL(t.drawn, 0),
+       total_repaid                  = ISNULL(t.repaid, 0),
+       total_interest_accrued        = ISNULL(t.accrued, 0),
+       total_interest_paid           = ISNULL(t.interest_paid, 0),
+       total_fees                    = ISNULL(t.fees, 0),
+       /* The same rule as FundingFacility.available: a revolving facility measures
+          against what is outstanding now, a term facility against everything drawn. */
+       available                     = CASE WHEN f.is_revolving = 1
+                                            THEN f.facility_limit - f.principal_outstanding
+                                            ELSE f.facility_limit - ISNULL(t.drawn, 0) END,
+       utilisation_pct               = CASE WHEN f.facility_limit > 0
+                                            THEN CAST(f.principal_outstanding * 100.0
+                                                      / f.facility_limit AS decimal(6, 2))
+                                            ELSE 0 END,
+       f.interest_rate_pct_pa,
+       f.start_date,
+       f.maturity_date,
+       days_to_maturity              = DATEDIFF(day, CAST(GETDATE() AS date), f.maturity_date),
+       f.last_accrual_date,
+       f.closed_on,
+       f.repayment_terms,
+       branch                        = b.name,
+       loans_funded                  = (SELECT COUNT(*) FROM dbo.loans l
+                                        WHERE l.funding_facility_id = f.id)
+FROM dbo.funding_facilities f
+LEFT JOIN dbo.branches b ON b.id = f.branch_id
+OUTER APPLY (
+    /* ELSE 0 rather than an implicit NULL: SUM over NULLs raises "Null value is
+       eliminated by an aggregate", which is noise in the output of every script
+       that touches this view. */
+    SELECT drawn         = SUM(CASE WHEN ft.txn_type = 'drawdown' THEN ft.amount ELSE 0 END),
+           repaid        = SUM(CASE WHEN ft.txn_type = 'repayment' THEN ft.amount ELSE 0 END),
+           accrued       = SUM(CASE WHEN ft.txn_type = 'interest_accrual' THEN ft.amount ELSE 0 END),
+           interest_paid = SUM(CASE WHEN ft.txn_type = 'interest_payment' THEN ft.amount ELSE 0 END),
+           fees          = SUM(CASE WHEN ft.txn_type = 'fee' THEN ft.amount ELSE 0 END)
+    FROM dbo.facility_transactions ft
+    WHERE ft.facility_id = f.id AND ft.reversed = 0 AND ft.txn_type <> 'reversal'
+) t;
+GO
+
+/* The funder cash book, shaped like vw_savings_transactions. */
+CREATE OR ALTER VIEW dbo.vw_funding_transactions AS
+SELECT f.facility_no,
+       f.funder_name,
+       ft.txn_date,
+       ft.txn_type,
+       amount_in   = CASE WHEN ft.txn_type = 'drawdown' THEN ft.amount ELSE 0 END,
+       amount_out  = CASE WHEN ft.txn_type IN ('repayment', 'interest_payment', 'fee')
+                          THEN ft.amount ELSE 0 END,
+       ft.amount,
+       ft.principal_after,
+       ft.accrued_after,
+       ft.method,
+       ft.reference,
+       ft.narration,
+       ft.reversed,
+       entry_no    = je.entry_no,
+       posted_by   = u.full_name,
+       ft.created_at
+FROM dbo.facility_transactions ft
+JOIN dbo.funding_facilities f ON f.id = ft.facility_id
+LEFT JOIN dbo.journal_entries je ON je.facility_transaction_id = ft.id
+LEFT JOIN dbo.users u ON u.id = ft.posted_by_id;
+GO
+
+/* ---------------------------------------------------------------------------
+   vw_balance_sheet - assets, liabilities and equity, with retained earnings
+   derived as income less expense since inception. Nothing posts to 3000, so
+   without the derivation the surplus would be missing from equity.
+
+   Agrees with core.services.ledger.balance_sheet() on every account that has
+   movement. It differs on accounts with none: vw_trial_balance LEFT JOINs
+   journal_lines and so emits a zero row for every account in the chart, while
+   the Python version drops them. The HAVING below makes the two match.
+   --------------------------------------------------------------------------- */
+CREATE OR ALTER VIEW dbo.vw_balance_sheet AS
+WITH tb AS (
+    SELECT a.code, a.name, a.type,
+           debit  = ISNULL(SUM(jl.debit), 0),
+           credit = ISNULL(SUM(jl.credit), 0)
+    FROM dbo.ledger_accounts a
+    LEFT JOIN dbo.journal_lines jl ON jl.account_id = a.id
+    GROUP BY a.code, a.name, a.type
+    HAVING ISNULL(SUM(jl.debit), 0) <> 0 OR ISNULL(SUM(jl.credit), 0) <> 0
+),
+posted AS (
+    SELECT code, name, type,
+           balance = CASE WHEN type IN ('asset', 'expense') THEN debit - credit
+                          ELSE credit - debit END
+    FROM tb
+)
+SELECT section = 'assets',      code, name, balance, is_derived = CAST(0 AS bit)
+FROM posted WHERE type = 'asset'
+UNION ALL
+SELECT section = 'liabilities', code, name, balance, is_derived = CAST(0 AS bit)
+FROM posted WHERE type = 'liability'
+UNION ALL
+/* 3000 is excluded from the posted equity rows and folded into the derived figure
+   below, so a manual posting to it can never be counted twice. */
+SELECT section = 'equity',      code, name, balance, is_derived = CAST(0 AS bit)
+FROM posted WHERE type = 'equity' AND code <> '3000'
+UNION ALL
+SELECT section    = 'equity',
+       code       = '3000',
+       name       = 'Retained earnings',
+       balance    = ISNULL((SELECT SUM(balance) FROM posted WHERE type = 'income'), 0)
+                  - ISNULL((SELECT SUM(balance) FROM posted WHERE type = 'expense'), 0)
+                  + ISNULL((SELECT SUM(balance) FROM posted WHERE code = '3000'), 0),
+       is_derived = CAST(1 AS bit);
+GO
+
 PRINT 'Savings, group, ledger and charge views are in place.';
 GO
 
@@ -381,5 +539,8 @@ GO
 SELECT TOP 5 * FROM dbo.vw_savings_book;
 SELECT * FROM dbo.vw_group_standing;
 SELECT * FROM dbo.vw_trial_balance ORDER BY code;
+SELECT * FROM dbo.vw_funding_book;
+SELECT section, code, name, balance, is_derived FROM dbo.vw_balance_sheet
+ORDER BY CASE section WHEN 'assets' THEN 1 WHEN 'liabilities' THEN 2 ELSE 3 END, code;
 EXEC dbo.usp_reconcile_ledger;
 GO

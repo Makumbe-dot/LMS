@@ -12,10 +12,15 @@ import { useApi, useDebounced } from '../lib/useApi.js'
 
 const TABS = [
   { key: 'trial', label: 'Trial balance' },
+  { key: 'balance', label: 'Balance sheet' },
   { key: 'income', label: 'Income statement' },
+  { key: 'ties', label: 'Reconciliation' },
   { key: 'journal', label: 'Journal' },
   { key: 'accounts', label: 'Chart of accounts' },
 ]
+
+// Tabs that take a single date rather than a range.
+const AS_OF_TABS = new Set(['balance', 'ties'])
 
 const startOfYear = () => `${today().slice(0, 4)}-01-01`
 
@@ -38,7 +43,9 @@ export default function Ledger() {
   const range = qs({ start, end, branch_id: branchId })
   const paths = {
     trial: `/api/ledger/trial-balance${range}`,
+    balance: `/api/ledger/balance-sheet${qs({ as_of: end, branch_id: branchId })}`,
     income: `/api/ledger/income-statement${range}`,
+    ties: `/api/ledger/reconciliation${qs({ as_of: end })}`,
     journal: `/api/ledger/journal${qs({
       start,
       end,
@@ -51,12 +58,14 @@ export default function Ledger() {
   }
   const { data, error, loading, reload } = useApi(paths[tab])
 
-  // The four tabs answer with four different shapes, and `data` still holds the
-  // previous tab's response until the new one lands. Render on the shape, not on
-  // the tab, so a tab switch can never read a field the old payload lacks.
+  // The tabs answer with different shapes, and `data` still holds the previous
+  // tab's response until the new one lands. Render on the shape, not on the tab, so
+  // a tab switch can never read a field the old payload lacks.
   const shapes = {
     trial: (d) => Array.isArray(d?.rows) && d?.total_debit !== undefined,
+    balance: (d) => Array.isArray(d?.assets) && d?.total_assets !== undefined,
     income: (d) => Array.isArray(d?.income),
+    ties: (d) => Array.isArray(d?.rows) && d?.agrees !== undefined,
     journal: (d) => Array.isArray(d?.results),
     accounts: (d) => Array.isArray(d),
   }
@@ -85,15 +94,17 @@ export default function Ledger() {
       >
         {tab !== 'accounts' ? (
           <>
+            {!AS_OF_TABS.has(tab) ? (
+              <label className="check">
+                From&nbsp;
+                <input type="date" value={start} onChange={(e) => setStart(e.target.value)} />
+              </label>
+            ) : null}
             <label className="check">
-              From&nbsp;
-              <input type="date" value={start} onChange={(e) => setStart(e.target.value)} />
-            </label>
-            <label className="check">
-              To&nbsp;
+              {AS_OF_TABS.has(tab) ? 'As at' : 'To'}&nbsp;
               <input type="date" value={end} onChange={(e) => setEnd(e.target.value)} />
             </label>
-            {activeBranches.length > 1 ? (
+            {activeBranches.length > 1 && tab !== 'ties' ? (
               <select
                 value={branchId}
                 onChange={(e) => setBranchId(e.target.value)}
@@ -191,6 +202,153 @@ export default function Ledger() {
                     {fmt(r.balance)} {r.side === 'debit' ? 'Dr' : 'Cr'}
                   </strong>
                 ),
+              },
+            ]}
+          />
+        </>
+      ) : null}
+
+      {ready && tab === 'balance' ? (
+        <>
+          <div className="grid cols-3">
+            <Kpi label="Total assets" value={money(data.total_assets)} sub={`as at ${data.as_of}`} />
+            <Kpi
+              label="Liabilities + equity"
+              value={money(data.total_liabilities_and_equity)}
+              sub={`${money(data.total_liabilities)} owed, ${money(data.total_equity)} equity`}
+            />
+            <Kpi
+              label="Retained earnings"
+              value={money(data.retained_earnings)}
+              sub="income less expense since inception"
+            />
+          </div>
+          {data.branch_id ? (
+            <div className="banner">
+              <strong>This is a branch sub-book, not the institution's balance sheet. </strong>
+              Capital and funder borrowings carry no branch, so they are absent from it.
+            </div>
+          ) : null}
+          {!data.balanced ? (
+            <div className="banner" role="alert">
+              <strong>Out by {money(data.difference)}. </strong>
+              Assets should equal liabilities plus equity for any set of balanced entries, so a
+              difference here means the journal itself is damaged. Check the Reconciliation tab.
+            </div>
+          ) : null}
+          {[
+            ['Assets', data.assets, 'what the institution owns and is owed'],
+            ['Liabilities', data.liabilities, 'what it owes to savers and funders'],
+            ['Equity', data.equity, "shareholders' capital and accumulated result"],
+          ].map(([heading, rows, blurb]) => (
+            <div className="card" key={heading}>
+              <h3>{heading}</h3>
+              <p className="muted" style={{ marginTop: 0, fontSize: 12 }}>{blurb}</p>
+              <DataTable
+                caption={heading}
+                rows={rows}
+                rowKey={(r) => r.code}
+                empty={`No ${heading.toLowerCase()} yet`}
+                columns={[
+                  { key: 'code', header: 'Code', render: (r) => r.code },
+                  {
+                    key: 'name',
+                    header: 'Account',
+                    render: (r) => (
+                      <>
+                        {r.name}
+                        {r.code === '3000' ? (
+                          <span className="muted"> · derived, income less expense to date</span>
+                        ) : null}
+                      </>
+                    ),
+                  },
+                  {
+                    key: 'balance',
+                    header: 'Balance',
+                    num: true,
+                    render: (r) => (
+                      <strong className={Number(r.balance) < 0 ? 'tag-danger' : undefined}>
+                        {fmt(r.balance)}
+                      </strong>
+                    ),
+                  },
+                ]}
+              />
+            </div>
+          ))}
+          <p className="muted" style={{ fontSize: 12 }}>
+            Retained earnings is derived rather than posted: nothing in this system writes a
+            year-end closing entry to 3000, so without the derivation the surplus would simply be
+            missing from equity. That also means a balanced sheet follows from balanced entries —
+            it is arithmetic, not evidence. The Reconciliation tab holds the checks that can
+            genuinely fail.
+          </p>
+        </>
+      ) : null}
+
+      {ready && tab === 'ties' ? (
+        <>
+          <div className="grid cols-3">
+            <Kpi
+              label="Sub-ledger ties"
+              value={
+                data.agrees ? (
+                  <span className="tag-ok">All agree</span>
+                ) : (
+                  <span className="tag-danger">{data.breaks.length} break(s)</span>
+                )
+              }
+              sub={`${data.rows.length} accounts checked as at ${data.as_of}`}
+            />
+            <Kpi
+              label="Double entry"
+              value={
+                data.trial_balance_balanced ? (
+                  <span className="tag-ok">Balanced</span>
+                ) : (
+                  <span className="tag-danger">Out of balance</span>
+                )
+              }
+              sub="debits equal credits"
+            />
+            <Kpi
+              label="Balance sheet"
+              value={
+                data.balance_sheet_balanced ? (
+                  <span className="tag-ok">Adds up</span>
+                ) : (
+                  <span className="tag-danger">Out</span>
+                )
+              }
+              sub="follows from the above"
+            />
+          </div>
+          <p className="muted" style={{ fontSize: 12 }}>
+            Each account below carries a balance that is claimed to equal something counted
+            elsewhere. These are the checks worth reading before trusting a set of numbers: unlike
+            a balanced trial balance, they can break — a migration, a hand-edit in SSMS or a
+            service that moves a balance without posting would all show up here.
+          </p>
+          <DataTable
+            caption="Ledger against the sub-ledgers"
+            rows={data.rows}
+            rowKey={(r) => r.code}
+            columns={[
+              { key: 'code', header: 'Code', render: (r) => r.code },
+              { key: 'name', header: 'Account', render: (r) => r.name },
+              { key: 'sub', header: 'Checked against', render: (r) => r.sub_ledger },
+              { key: 'ledger', header: 'Ledger', num: true, render: (r) => fmt(r.ledger) },
+              { key: 'book', header: 'Sub-ledger', num: true, render: (r) => fmt(r.book) },
+              {
+                key: 'agrees',
+                header: 'Result',
+                render: (r) =>
+                  r.agrees ? (
+                    <span className="tag-ok">Agrees</span>
+                  ) : (
+                    <span className="tag-danger">Out by {fmt(r.difference)}</span>
+                  ),
               },
             ]}
           />

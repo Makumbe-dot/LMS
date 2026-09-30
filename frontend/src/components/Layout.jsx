@@ -32,6 +32,7 @@ const NAV = [
     items: [
       { to: '/transactions', label: 'Transactions' },
       { to: '/ledger', label: 'General ledger' },
+      { to: '/funding', label: 'Funding & capital' },
       { to: '/performance', label: 'Performance' },
       { to: '/provisioning', label: 'Provisioning' },
       { to: '/periods', label: 'Period close' },

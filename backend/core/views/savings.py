@@ -21,6 +21,7 @@ from ..serializers import (
     SavingsAccountDetailSerializer,
     SavingsAccountSerializer,
     SavingsMovementSerializer,
+    SavingsPortfolioSerializer,
     SavingsProductSerializer,
     SavingsTransactionSerializer,
 )
@@ -205,4 +206,5 @@ def run_interest(request):
 
 @api_view(["GET"])
 def portfolio(request):
-    return Response(svc.portfolio(parse_int(request, "branch_id")))
+    return Response(
+        SavingsPortfolioSerializer(svc.portfolio(parse_int(request, "branch_id"))).data)

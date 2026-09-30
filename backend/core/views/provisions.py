@@ -11,6 +11,7 @@ from ..models import ProvisionRun, ProvisionRunLine, ProvisionRunStatus
 from ..permissions import IsAdmin
 from ..serializers import (
     NarrationSerializer,
+    ProvisionPreviewSerializer,
     ProvisionRunDetailSerializer,
     ProvisionRunRequestSerializer,
     ProvisionRunSerializer,
@@ -53,7 +54,7 @@ def provisions(request):
 @api_view(["GET"])
 def preview(request):
     """What a run for this period would post. Posts nothing."""
-    return Response(svc.preview(parse_date(request, "as_of")))
+    return Response(ProvisionPreviewSerializer(svc.preview(parse_date(request, "as_of"))).data)
 
 
 @api_view(["POST"])

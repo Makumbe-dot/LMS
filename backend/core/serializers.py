@@ -12,6 +12,10 @@ from .models import (
     AccountingPeriod,
     AuditLog,
     Borrower,
+    CapitalTransaction,
+    CapitalTxnType,
+    FacilityTransaction,
+    FundingFacility,
     BorrowerDocument,
     BorrowerGroup,
     Branch,
@@ -664,7 +668,10 @@ class JournalEntrySerializer(serializers.ModelSerializer):
 
     class Meta:
         model = JournalEntry
+        # Every source id, so a line in the journal can be traced back to whatever
+        # raised it rather than rendering with no identity.
         fields = ["id", "entry_no", "entry_date", "narration", "source", "transaction_id",
+                  "savings_transaction_id", "facility_transaction_id", "capital_transaction_id",
                   "loan_id", "loan_no", "branch_name", "posted_by_name", "total_debit",
                   "total_credit", "lines", "created_at"]
 
@@ -712,6 +719,246 @@ class ProvisionRunRequestSerializer(serializers.Serializer):
     as_of = serializers.DateField(required=False, allow_null=True)
     narration = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     force = serializers.BooleanField(default=False)
+
+
+# ---------------------------------------------------------------- funding and capital
+class FundingFacilitySerializer(serializers.ModelSerializer):
+    available = money(read_only=True)
+    total_outstanding = money(read_only=True)
+    is_open = serializers.BooleanField(read_only=True)
+    branch_name = serializers.CharField(source="branch.name", read_only=True, default=None)
+    created_by_name = serializers.CharField(source="created_by.full_name", read_only=True,
+                                           default=None)
+
+    class Meta:
+        model = FundingFacility
+        fields = ["id", "facility_no", "funder_name", "name", "facility_limit",
+                  "interest_rate_pct_pa", "is_revolving", "start_date", "maturity_date",
+                  "repayment_terms", "principal_outstanding", "interest_accrued",
+                  "last_accrual_date", "closed_on", "is_open", "available",
+                  "total_outstanding", "branch", "branch_name", "notes", "created_by_name",
+                  "created_at"]
+
+
+class FacilityTransactionSerializer(serializers.ModelSerializer):
+    txn_type_label = serializers.CharField(source="get_txn_type_display", read_only=True)
+    posted_by_name = serializers.CharField(source="posted_by.full_name", read_only=True,
+                                          default=None)
+    entry_no = serializers.CharField(source="journal_entry.entry_no", read_only=True, default=None)
+
+    class Meta:
+        model = FacilityTransaction
+        fields = ["id", "txn_type", "txn_type_label", "txn_date", "amount", "principal_after",
+                  "accrued_after", "method", "reference", "narration", "reversed",
+                  "reversal_of", "posted_by_name", "entry_no", "created_at"]
+
+
+class FundingFacilityDetailSerializer(FundingFacilitySerializer):
+    transactions = FacilityTransactionSerializer(many=True, read_only=True)
+    totals = serializers.SerializerMethodField()
+
+    class Meta(FundingFacilitySerializer.Meta):
+        fields = FundingFacilitySerializer.Meta.fields + ["transactions", "totals"]
+
+    def get_totals(self, obj) -> dict:
+        from .services.funding import facility_totals
+
+        return facility_totals(obj)
+
+
+class OpenFacilitySerializer(serializers.Serializer):
+    funder_name = serializers.CharField(max_length=120)
+    name = serializers.CharField(max_length=120)
+    facility_limit = money(min_value=Decimal("0.01"))
+    interest_rate_pct_pa = serializers.DecimalField(max_digits=6, decimal_places=3, required=False,
+                                                    default=Decimal("0"), min_value=Decimal("0"))
+    is_revolving = serializers.BooleanField(default=False)
+    start_date = serializers.DateField(required=False, allow_null=True)
+    maturity_date = serializers.DateField(required=False, allow_null=True)
+    repayment_terms = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    branch = serializers.IntegerField(required=False, allow_null=True)
+    notes = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+
+
+class FacilityUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FundingFacility
+        # status is absent on purpose: a facility closes through the close action,
+        # and its balances move only through a posting.
+        fields = ["funder_name", "name", "facility_limit", "interest_rate_pct_pa",
+                  "is_revolving", "maturity_date", "repayment_terms", "branch", "notes"]
+
+
+class FacilityMovementSerializer(serializers.Serializer):
+    amount = money(min_value=Decimal("0.01"))
+    txn_date = serializers.DateField(required=False, allow_null=True)
+    method = serializers.ChoiceField(choices=[m.value for m in PaymentMethod], required=False,
+                                     default=PaymentMethod.BANK_TRANSFER)
+    reference = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    narration = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+
+
+class CapitalTransactionSerializer(serializers.ModelSerializer):
+    txn_type_label = serializers.CharField(source="get_txn_type_display", read_only=True)
+    posted_by_name = serializers.CharField(source="posted_by.full_name", read_only=True,
+                                          default=None)
+    branch_name = serializers.CharField(source="branch.name", read_only=True, default=None)
+    entry_no = serializers.CharField(source="journal_entry.entry_no", read_only=True, default=None)
+
+    class Meta:
+        model = CapitalTransaction
+        fields = ["id", "txn_type", "txn_type_label", "txn_date", "amount", "contributor",
+                  "method", "reference", "narration", "reversed", "reversal_of", "branch",
+                  "branch_name", "posted_by_name", "entry_no", "created_at"]
+
+
+class CapitalSummarySerializer(serializers.Serializer):
+    injected = money()
+    returned = money()
+    dividends = money()
+    net_capital = money()
+
+
+class MaturingFacilitySerializer(serializers.Serializer):
+    facility_no = serializers.CharField()
+    funder_name = serializers.CharField()
+    maturity_date = serializers.DateField()
+    principal_outstanding = money()
+    days = serializers.IntegerField()
+
+
+class FundingSummarySerializer(serializers.Serializer):
+    """The KPI strip. Money goes through money() so cents survive as strings."""
+    as_of = serializers.DateField()
+    facilities = serializers.IntegerField()
+    open_facilities = serializers.IntegerField()
+    total_limit = money()
+    drawn = money()
+    available = money()
+    accrued_interest = money()
+    utilisation_pct = money()
+    capital = CapitalSummarySerializer()
+    cash = money()
+    maturing_soon = MaturingFacilitySerializer(many=True)
+
+
+class LedgerRowSerializer(serializers.Serializer):
+    """One trial-balance row, as trial_balance() and balance_sheet() emit it."""
+    code = serializers.CharField()
+    name = serializers.CharField()
+    type = serializers.CharField()
+    debit = money(max_digits=18)
+    credit = money(max_digits=18)
+    balance = money(max_digits=18)
+    side = serializers.CharField()
+
+
+class BalanceSheetSerializer(serializers.Serializer):
+    as_of = serializers.DateField()
+    assets = LedgerRowSerializer(many=True)
+    liabilities = LedgerRowSerializer(many=True)
+    equity = LedgerRowSerializer(many=True)
+    total_assets = money(max_digits=18)
+    total_liabilities = money(max_digits=18)
+    total_equity = money(max_digits=18)
+    total_liabilities_and_equity = money(max_digits=18)
+    retained_earnings = money(max_digits=18)
+    income_to_date = money(max_digits=18)
+    expense_to_date = money(max_digits=18)
+    difference = money(max_digits=18)
+    balanced = serializers.BooleanField()
+    branch_id = serializers.IntegerField(allow_null=True)
+
+
+class ReconciliationRowSerializer(serializers.Serializer):
+    code = serializers.CharField()
+    name = serializers.CharField()
+    ledger = money(max_digits=18)
+    book = money(max_digits=18)
+    difference = money(max_digits=18)
+    agrees = serializers.BooleanField()
+    sub_ledger = serializers.CharField()
+
+
+class ReconciliationSerializer(serializers.Serializer):
+    as_of = serializers.DateField()
+    rows = ReconciliationRowSerializer(many=True)
+    agrees = serializers.BooleanField()
+    breaks = ReconciliationRowSerializer(many=True)
+    trial_balance_balanced = serializers.BooleanField()
+    balance_sheet_balanced = serializers.BooleanField()
+
+
+class SavingsPortfolioProductSerializer(serializers.Serializer):
+    product = serializers.CharField()
+    accounts = serializers.IntegerField()
+    balance = money()
+
+
+class SavingsPortfolioSerializer(serializers.Serializer):
+    """The savings book at a glance.
+
+    A serializer rather than the raw dict: DRF renders a bare Decimal as a JSON
+    float, and this API renders money as a decimal string so cents survive.
+    """
+    accounts = serializers.IntegerField()
+    active_accounts = serializers.IntegerField()
+    dormant_accounts = serializers.IntegerField()
+    closed_accounts = serializers.IntegerField()
+    total_balance = money()
+    by_product = SavingsPortfolioProductSerializer(many=True)
+
+
+class ProvisionRatesSerializer(serializers.Serializer):
+    stage_1 = serializers.DecimalField(max_digits=6, decimal_places=2)
+    stage_2 = serializers.DecimalField(max_digits=6, decimal_places=2)
+    stage_3 = serializers.DecimalField(max_digits=6, decimal_places=2)
+    stage_2_days = serializers.IntegerField()
+    stage_3_days = serializers.IntegerField()
+
+
+class ProvisionPreviewSerializer(serializers.Serializer):
+    period_end = serializers.DateField()
+    entry_date = serializers.DateField()
+    loans_assessed = serializers.IntegerField()
+    loans_released = serializers.IntegerField()
+    total_exposure = money()
+    total_carrying_amount = money()
+    provision_required = money()
+    provision_booked = money()
+    movement = money()
+    ledger_provision = money()
+    ledger_agrees = serializers.BooleanField()
+    already_posted = serializers.BooleanField()
+    existing_run_no = serializers.CharField(allow_null=True)
+    rates = ProvisionRatesSerializer()
+
+
+class BorrowingAccrualSerializer(serializers.Serializer):
+    as_of = serializers.CharField()
+    facilities_accrued = serializers.IntegerField()
+    months_posted = serializers.IntegerField()
+    interest_accrued = money()
+    months_skipped = serializers.IntegerField()
+    skipped = serializers.ListField(child=serializers.CharField())
+
+
+class CapitalMovementSerializer(serializers.Serializer):
+    # Never 'reversal': a reversal is raised by the reverse action, against the
+    # movement it undoes.
+    txn_type = serializers.ChoiceField(choices=[
+        CapitalTxnType.INJECTION.value,
+        CapitalTxnType.RETURN_OF_CAPITAL.value,
+        CapitalTxnType.DIVIDEND.value,
+    ])
+    amount = money(min_value=Decimal("0.01"))
+    contributor = serializers.CharField(max_length=160)
+    txn_date = serializers.DateField(required=False, allow_null=True)
+    method = serializers.ChoiceField(choices=[m.value for m in PaymentMethod], required=False,
+                                     default=PaymentMethod.BANK_TRANSFER)
+    reference = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    narration = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    branch = serializers.IntegerField(required=False, allow_null=True)
 
 
 # ---------------------------------------------------------------- period close

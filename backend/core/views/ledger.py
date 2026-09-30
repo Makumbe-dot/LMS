@@ -11,7 +11,12 @@ from ..audit import audit
 from ..exceptions import BusinessRuleError, NotFound
 from ..models import JournalEntry, JournalLine, LedgerAccount
 from ..permissions import IsAdmin
-from ..serializers import JournalEntrySerializer, LedgerAccountSerializer
+from ..serializers import (
+    BalanceSheetSerializer,
+    JournalEntrySerializer,
+    LedgerAccountSerializer,
+    ReconciliationSerializer,
+)
 from ..services import ledger as gl
 from ..services.amortisation import add_months
 from .helpers import csv_response, paginate, parse_date, parse_int
@@ -119,6 +124,38 @@ def income_statement(request):
     if request.query_params.get("fmt") == "csv":
         return csv_response(data["income"] + data["expense"], "income_statement")
     return Response(data)
+
+
+@api_view(["GET"])
+def balance_sheet(request):
+    """Assets, liabilities and equity as at one date.
+
+    A branch slice is a sub-book, not the institution's balance sheet: capital and
+    facility entries carry no branch, so they are absent from it. The response says
+    which branch it covers so the page can label it honestly.
+    """
+    data = gl.balance_sheet(parse_date(request, "as_of", date.today()),
+                            parse_int(request, "branch_id"))
+    if request.query_params.get("fmt") == "csv":
+        return csv_response(data["assets"] + data["liabilities"] + data["equity"],
+                            "balance_sheet")
+    # Through a serializer so money renders as a decimal string; a bare dict of
+    # Decimals comes out as JSON floats and loses cents.
+    return Response(BalanceSheetSerializer(data).data)
+
+
+@api_view(["GET"])
+def reconciliation(request):
+    """Every ledger account that claims to equal a sub-ledger, checked against it.
+
+    This, not the balance sheet's `balanced` flag, is the report to read before
+    trusting a set of numbers: a balanced sheet follows from balanced entries, while
+    these identities can genuinely break.
+    """
+    data = gl.reconciliation(parse_date(request, "as_of"))
+    if request.query_params.get("fmt") == "csv":
+        return csv_response(data["rows"], "reconciliation")
+    return Response(ReconciliationSerializer(data).data)
 
 
 @api_view(["POST"])

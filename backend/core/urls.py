@@ -6,6 +6,7 @@ from .views import (
     auth,
     borrowers,
     charges,
+    funding,
     groups,
     ledger,
     loans,
@@ -107,6 +108,21 @@ urlpatterns = [
     re_path(r"^provisions/(?P<run_id>\d+)/reverse/?$", provisions.reverse),
     re_path(r"^provisions/(?P<run_id>\d+)/?$", provisions.provision_detail),
 
+    # ---- funding and capital (the literal paths must precede the numeric id routes)
+    re_path(r"^funding/summary/?$", funding.summary),
+    re_path(r"^funding/accrue-interest/?$", funding.accrue),
+    re_path(r"^funding/capital/?$", funding.capital),
+    re_path(r"^funding/capital/(?P<txn_id>\d+)/reverse/?$", funding.reverse_capital),
+    re_path(r"^funding/facilities/?$", funding.facilities),
+    re_path(r"^funding/facilities/(?P<facility_id>\d+)/drawdown/?$", funding.drawdown),
+    re_path(r"^funding/facilities/(?P<facility_id>\d+)/repay/?$", funding.repay),
+    re_path(r"^funding/facilities/(?P<facility_id>\d+)/interest/?$", funding.pay_interest),
+    re_path(r"^funding/facilities/(?P<facility_id>\d+)/fee/?$", funding.charge_fee),
+    re_path(r"^funding/facilities/(?P<facility_id>\d+)/close/?$", funding.close),
+    re_path(r"^funding/facilities/(?P<facility_id>\d+)/transactions/(?P<txn_id>\d+)/reverse/?$",
+            funding.reverse_movement),
+    re_path(r"^funding/facilities/(?P<facility_id>\d+)/?$", funding.facility_detail),
+
     # ---- accounting periods (the literal path must precede the year-month route)
     re_path(r"^periods/status/?$", periods.status),
     re_path(r"^periods/?$", periods.register),
@@ -120,6 +136,8 @@ urlpatterns = [
     re_path(r"^ledger/accounts/(?P<account_id>\d+)/?$", ledger.account_detail),
     re_path(r"^ledger/journal/?$", ledger.journal),
     re_path(r"^ledger/trial-balance/?$", ledger.trial_balance),
+    re_path(r"^ledger/balance-sheet/?$", ledger.balance_sheet),
+    re_path(r"^ledger/reconciliation/?$", ledger.reconciliation),
     re_path(r"^ledger/income-statement/?$", ledger.income_statement),
     re_path(r"^ledger/rebuild/?$", ledger.rebuild),
 

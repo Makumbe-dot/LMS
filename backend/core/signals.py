@@ -13,7 +13,13 @@ underneath them.
 from django.db.models.signals import post_save, pre_save
 from django.dispatch import receiver
 
-from .models import JournalEntry, SavingsTransaction, Transaction
+from .models import (
+    CapitalTransaction,
+    FacilityTransaction,
+    JournalEntry,
+    SavingsTransaction,
+    Transaction,
+)
 
 
 # ---------------------------------------------------------------- period guards
@@ -73,3 +79,21 @@ def post_savings_to_ledger(sender, instance, created, **kwargs):
     from .services.ledger import post_savings_transaction
 
     post_savings_transaction(instance)
+
+
+@receiver(post_save, sender=FacilityTransaction, dispatch_uid="core.post_facility_to_ledger")
+def post_facility_to_ledger(sender, instance, created, **kwargs):
+    if not created:
+        return
+    from .services.ledger import post_facility_transaction
+
+    post_facility_transaction(instance)
+
+
+@receiver(post_save, sender=CapitalTransaction, dispatch_uid="core.post_capital_to_ledger")
+def post_capital_to_ledger(sender, instance, created, **kwargs):
+    if not created:
+        return
+    from .services.ledger import post_capital_transaction
+
+    post_capital_transaction(instance)

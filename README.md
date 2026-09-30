@@ -67,6 +67,13 @@ to the provision already carried and posts only the **movement** (Dr 5100 Impair
 Provision, or the reverse). The provision carried is tracked per loan, released the moment a loan
 is written off, and swept when a loan leaves the book. Running a period twice posts nothing.
 
+**Funding and capital** — shareholders' capital, and the funder facilities the book is lent from:
+drawdowns, principal repayments, fees, and borrowing interest **accrued monthly** to a liability
+account. Every outflow is refused if there is not the cash for it, so the bank account cannot be
+driven negative. A **balance sheet** with retained earnings derived from income less expense, and a
+**reconciliation report** that checks all nine ledger accounts against the sub-ledgers they claim to
+equal.
+
 **Period close** — a month can be **closed to further postings**, with the trial balance it was
 signed off on frozen onto the period. Anything dated into a closed month is refused at the model
 layer, so no code path can slip past it. Months close in order and only forwards, which makes "the
@@ -253,10 +260,16 @@ The individual commands, if you would rather schedule them separately:
 
 ```powershell
 cd backend
-..\.venv\Scripts\python.exe manage.py run_penalties [--as-of 2026-09-30]
+..\.venv\Scripts\python.exe manage.py run_penalties [--as-of 2026-09-30] [--skip-closed]
 ..\.venv\Scripts\python.exe manage.py send_reminders [--send] [--days-before 5]
-..\.venv\Scripts\python.exe manage.py run_savings_interest [--dormant-after 6]
+..\.venv\Scripts\python.exe manage.py run_savings_interest [--dormant-after 6] [--skip-closed]
+..\.venv\Scripts\python.exe manage.py accrue_borrowing_interest [--as-of 2026-09-30] [--skip-closed]
+..\.venv\Scripts\python.exe manage.py run_provisions [--as-of 2026-09-30] [--dry-run] [--force]
 ```
+
+The three monthly steps — savings interest, borrowing interest and the provision — run on the 1st
+only; the nightly script skips them on every other night rather than calling a command that would
+be a no-op.
 
 The same work is available over the API: `POST /api/reports/run-penalties`,
 `POST /api/notifications/generate` and `POST /api/savings/run-interest`. Savings interest is
@@ -332,14 +345,16 @@ backend/                        Django project
       imports.py                bulk repayment CSV: parse, validate, commit
       notifications.py          reminder and arrears message generation, outbox
       provisioning.py           booking the IFRS 9 expected credit loss movement
+      funding.py                capital, funder facilities, borrowing interest, the cash guard
       periods.py                period close, and the guard that refuses a closed date
       reports.py                dashboard, PAR, collections due, loan book, statement,
                                 IFRS 9 provisioning, performance, payroll deductions
     templates/core/             the printable loan agreement
     views/                      auth, borrowers, products, charges, loans, groups, savings,
-                                ledger, provisions, periods, reports, org
+                                ledger, funding, provisions, periods, reports, org
     management/commands/        seed, run_penalties, run_savings_interest, run_provisions,
-                                send_reminders, close_period, reopen_period
+                                accrue_borrowing_interest, send_reminders, close_period,
+                                reopen_period
     tests/                      the test suite
 frontend/                       React + Vite single-page app
   src/
@@ -348,15 +363,15 @@ frontend/                       React + Vite single-page app
     components/ Layout, GlobalSearch, DataTable, Modal, Toast, GroupedBars, HBars,
                 LoanTable, ui.jsx
     pages/      Login, Dashboard, Borrowers, Groups, Loans, Savings, Collections, Arrears,
-                Payroll, BulkImport, Notifications, Transactions, Ledger, Performance,
+                Payroll, BulkImport, Notifications, Transactions, Ledger, Funding, Performance,
                 Provisioning, Periods, Products, Charges, Users, Settings, Account, Audit
     styles.css  design tokens, light and dark themes
 sql/
   01_create_database.sql        create the LMS database (run first)
   02_app_login.sql              optional SQL login and a read-only analyst login
   03_reporting_views.sql        loan-book views, arrears ageing, indexes
-  04_reporting_views_v2.sql     savings, groups, ledger and charge views, plus
-                                usp_reconcile_ledger
+  04_reporting_views_v2.sql     savings, groups, ledger, charge, funding and balance-sheet
+                                views, plus usp_reconcile_ledger and its ten checks
 scripts/
   run_nightly_jobs.ps1          the nightly batch, with a dated log
   register_scheduled_task.ps1   register (or remove) that batch in Task Scheduler
@@ -414,11 +429,77 @@ The test suite asserts the invariant directly — after a lifecycle of disbursem
 penalty accrual, waiver and write-off, the trial balance balances and account 1100 equals the sum
 of `principal_outstanding` across active loans.
 
-The same reconciliation is available in SSMS, for the morning of a board meeting:
+Four posting sources raise entries: loan transactions, savings movements, facility movements and
+capital movements. They share one `_raise_entry` helper, so the rules that matter — drop zero lines,
+refuse an unbalanced entry, refuse one whose accounts are missing — are written once rather than
+once per source. `ledger._sources()` is the table `backfill` sweeps, so a new source cannot be
+half-added and leave its account silently short after a Rebuild.
+
+**Read the Reconciliation tab, not the balanced flag.** A trial balance that balances, and a balance
+sheet where assets equal liabilities plus equity, both follow automatically from entries where every
+debit has a credit. They are arithmetic, not evidence. `GET /api/ledger/reconciliation` checks the
+claims that can genuinely break — nine accounts against the sub-ledgers they are supposed to equal:
+
+| Account | Equals |
+|---|---|
+| 1100 Loans receivable | principal outstanding on active loans |
+| 1300 Penalties receivable | penalties outstanding on active loans |
+| 1400 Charges receivable | charges outstanding on active loans |
+| 1900 Provision for credit losses | provision held across every loan |
+| 2000 Client funds payable | savings balances |
+| 2100 Funder borrowings | principal outstanding on funding facilities |
+| 2110 Accrued interest on borrowings | interest accrued and unpaid on facilities |
+| 3100 Share capital | capital injected less capital returned |
+| 3200 Distributions | dividends paid |
+
+A migration, a hand-edit in SSMS, or a service that moves a balance without posting all show up
+there. `manage.py seed` prints the result at the end of every run, and the same reconciliation is
+available in SSMS for the morning of a board meeting:
 
 ```sql
 EXEC dbo.usp_reconcile_ledger;
 ```
+
+## Funding and capital
+
+Nothing modelled where the money to lend came from, so account 1000 went negative as soon as
+disbursements outran collections and no balance sheet could be drawn. Capital and facilities fix
+that:
+
+```powershell
+cd backend
+..\.venv\Scripts\python.exe manage.py accrue_borrowing_interest [--as-of 2026-09-30] [--facility FAC-000001]
+```
+
+or the **Funding and capital** page. Two asymmetries with the loan book are deliberate:
+
+- **Borrowing interest is accrued monthly** to account 2110, while loan interest is recognised only
+  when collected. An unrecognised asset is prudent; an unrecognised liability is not, and a board
+  pack that understates what is owed to a funder is the failure this exists to prevent. The accrual
+  **catches up every month missed**, one at a time — accruing a single month after a scheduler was
+  down for a quarter would silently lose two months of a real debt, and the 2110 check would still
+  read OK because both sides would be wrong together.
+- **An interest payment never splits between the liability and the expense.** Paying more than has
+  accrued is refused, with the accrual command in the message. Expensing the unaccrued remainder is
+  what double-counts a period: pay on the 1st before anything has accrued, and the month-end accrual
+  then charges the same period again.
+
+**Cash is guarded.** Every outflow — a principal repayment, an interest payment, a fee, a return of
+capital, a dividend — is refused if it would take account 1000 below zero. A dividend also needs the
+equity for it. A slice that exists to stop cash going negative must not be the thing that puts it
+there.
+
+Retained earnings (3000) is **derived**, never posted: nothing writes a year-end closing entry, so
+the balance sheet computes income less expense since inception and folds in any manual posting to
+3000. Closing income and expense to 3000 is deliberately out of scope — `income_statement` derives
+the surplus from journal lines over a date range, so a closing entry would double-count it.
+
+Three simplifications worth knowing, each of which removed a place for a bug to live: there is no
+funder table (`funder_name` is a snapshot on the facility, as `LoanCharge.name` is on a loan); a
+facility has a `closed_on` date rather than a four-state machine, which is where a "fully repaid
+revolving facility can never be drawn again" bug would otherwise sit; and an arrangement fee is its
+own movement rather than a component netted off a drawdown, which produces the identical ledger and
+the identical cash with none of the special cases.
 
 It checks loans receivable, penalties receivable, charges receivable, client funds and the credit
 loss provision against their sub-ledgers, and that debits equal credits. Any mismatch raises an
