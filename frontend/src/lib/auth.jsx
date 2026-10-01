@@ -2,26 +2,60 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 
 import * as api from './api'
 
-const AuthContext = createContext(null)
+// Exported so a test can render a page as a given role without the provider
+// fetching anything. Application code should use useAuth().
+export const AuthContext = createContext(null)
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
   const [status, setStatus] = useState(api.getToken() ? 'loading' : 'anonymous')
 
-  const signOut = useCallback(() => {
-    api.setToken(null)
+  /** Drop the local session. Used when the server has already refused us. */
+  const forget = useCallback(() => {
+    api.setTokens(null)
     setUser(null)
     setStatus('anonymous')
   }, [])
 
-  // A 401 from anywhere in the app drops straight back to the sign-in screen.
-  useEffect(() => {
-    api.setUnauthorizedHandler(signOut)
-  }, [signOut])
+  /**
+   * Sign out properly: tell the server to retire the refresh token, then forget it.
+   *
+   * The call is awaited but its failure is ignored — a network error must not
+   * leave someone stuck signed in at a shared counter machine. The server-side
+   * revocation is what makes the refresh token unusable afterwards; clearing
+   * localStorage alone would leave a working token on the device.
+   */
+  const signOut = useCallback(async () => {
+    const refreshToken = api.getRefreshToken()
+    if (refreshToken) {
+      try {
+        await api.post('/api/auth/logout', { refresh_token: refreshToken })
+      } catch {
+        // Already expired, or the server is unreachable. Sign out regardless.
+      }
+    }
+    forget()
+  }, [forget])
 
-  // Resume an existing session on a page reload.
+  /** End every session on every device. */
+  const signOutEverywhere = useCallback(async () => {
+    try {
+      await api.post('/api/auth/sign-out-everywhere')
+    } finally {
+      forget()
+    }
+  }, [forget])
+
+  // A 401 that survived a token refresh means the session is over for good.
   useEffect(() => {
-    if (!api.getToken()) return
+    api.setUnauthorizedHandler(forget)
+  }, [forget])
+
+  // Resume an existing session on a page reload. The access token has very likely
+  // expired by now — it only lasts half an hour — so this relies on api.js
+  // renewing it transparently rather than bouncing to the sign-in screen.
+  useEffect(() => {
+    if (!api.getToken() && !api.getRefreshToken()) return
     let live = true
     api
       .get('/api/auth/me')
@@ -31,16 +65,16 @@ export function AuthProvider({ children }) {
         setStatus('signed-in')
       })
       .catch(() => {
-        if (live) signOut()
+        if (live) forget()
       })
     return () => {
       live = false
     }
-  }, [signOut])
+  }, [forget])
 
   const signIn = useCallback(async (username, password) => {
     const data = await api.login(username, password)
-    api.setToken(data.access_token)
+    api.setTokens(data)
     setUser(data.user)
     setStatus('signed-in')
     return data.user
@@ -52,10 +86,11 @@ export function AuthProvider({ children }) {
       status,
       signIn,
       signOut,
+      signOutEverywhere,
       /** can('admin', 'loan_officer') - true when the signed-in role is one of these. */
       can: (...roles) => Boolean(user && roles.includes(user.role)),
     }),
-    [user, status, signIn, signOut],
+    [user, status, signIn, signOut, signOutEverywhere],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

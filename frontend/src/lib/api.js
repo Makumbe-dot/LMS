@@ -2,11 +2,21 @@
 
 const BASE = import.meta.env.VITE_API_BASE || ''
 const TOKEN_KEY = 'lms_token'
+const REFRESH_KEY = 'lms_refresh'
 
 export const getToken = () => localStorage.getItem(TOKEN_KEY)
 export const setToken = (t) => (t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY))
+export const getRefreshToken = () => localStorage.getItem(REFRESH_KEY)
+export const setRefreshToken = (t) =>
+  t ? localStorage.setItem(REFRESH_KEY, t) : localStorage.removeItem(REFRESH_KEY)
 
-/** Called when the API reports the session is no longer valid. AuthProvider sets this. */
+/** Store both halves of a token pair, or clear them. */
+export function setTokens(pair) {
+  setToken(pair?.access_token || null)
+  setRefreshToken(pair?.refresh_token || null)
+}
+
+/** Called when the session is over for good. AuthProvider sets this. */
 let onUnauthorized = () => {}
 export const setUnauthorizedHandler = (fn) => (onUnauthorized = fn)
 
@@ -18,23 +28,77 @@ export class ApiError extends Error {
   }
 }
 
-async function request(path, { method = 'GET', body, signal } = {}) {
+/**
+ * The in-flight refresh, if any.
+ *
+ * Single-flight on purpose. A dashboard fires six requests at once, so when the
+ * access token expires all six come back 401 together. Without this they would
+ * each POST /api/auth/refresh, and because a refresh token is good for exactly one
+ * use — the server rotates and revokes it — the first would succeed and the other
+ * five would be rejected as replays, signing the user out. They all await the same
+ * promise instead.
+ */
+let refreshing = null
+
+async function refreshSession() {
+  const token = getRefreshToken()
+  if (!token) return null
+  if (refreshing) return refreshing
+
+  refreshing = (async () => {
+    try {
+      const res = await fetch(`${BASE}/api/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: token }),
+      })
+      if (!res.ok) return null
+      const pair = await res.json()
+      setTokens(pair)
+      return pair
+    } catch {
+      return null
+    } finally {
+      // Cleared synchronously. JavaScript is single-threaded, so nothing can
+      // observe `refreshing` between this promise settling and the clear: a
+      // request whose 401 arrives after this point SHOULD start a new refresh,
+      // because by then the new token is already stored and the old one spent.
+      refreshing = null
+    }
+  })()
+  return refreshing
+}
+
+async function send(path, { method, headers, body, signal }) {
+  try {
+    return await fetch(BASE + path, { method, headers, signal, body })
+  } catch (err) {
+    if (err.name === 'AbortError') throw err
+    throw new ApiError('Cannot reach the server. Is the Django backend running?', 0)
+  }
+}
+
+async function request(path, { method = 'GET', body, signal, retry = true } = {}) {
   const headers = {}
   const token = getToken()
   if (token) headers.Authorization = `Bearer ${token}`
   if (body !== undefined) headers['Content-Type'] = 'application/json'
+  const payload = body === undefined ? undefined : JSON.stringify(body)
 
-  let res
-  try {
-    res = await fetch(BASE + path, {
-      method,
-      headers,
-      signal,
-      body: body === undefined ? undefined : JSON.stringify(body),
-    })
-  } catch (err) {
-    if (err.name === 'AbortError') throw err
-    throw new ApiError('Cannot reach the server. Is the Django backend running?', 0)
+  let res = await send(path, { method, headers, body: payload, signal })
+
+  if (res.status === 401 && retry && getRefreshToken()) {
+    // The access token has probably just expired. Renew once and replay; a second
+    // 401 means the session is genuinely over.
+    const pair = await refreshSession()
+    if (pair?.access_token) {
+      res = await send(path, {
+        method,
+        headers: { ...headers, Authorization: `Bearer ${pair.access_token}` },
+        body: payload,
+        signal,
+      })
+    }
   }
 
   if (res.status === 401) {
@@ -91,6 +155,18 @@ export async function postForm(path, formData) {
     res = await fetch(BASE + path, { method: 'POST', headers, body: formData })
   } catch {
     throw new ApiError('Cannot reach the server. Is the Django backend running?', 0)
+  }
+  if (res.status === 401 && getRefreshToken()) {
+    // Worth retrying here especially: an upload is the request a user least wants
+    // to lose to an expired token, and the FormData is still in hand.
+    const pair = await refreshSession()
+    if (pair?.access_token) {
+      res = await fetch(BASE + path, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${pair.access_token}` },
+        body: formData,
+      })
+    }
   }
   if (res.status === 401) {
     onUnauthorized()

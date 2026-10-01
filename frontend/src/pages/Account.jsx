@@ -2,13 +2,13 @@ import { useState } from 'react'
 
 import { useToast } from '../components/Toast.jsx'
 import { Field, KeyValues, PageHeader } from '../components/ui.jsx'
-import { post } from '../lib/api.js'
+import { post, setTokens } from '../lib/api.js'
 import { useAuth } from '../lib/auth.jsx'
 import { humanise } from '../lib/format.js'
 import { useOrg } from '../lib/org.jsx'
 
 export default function Account() {
-  const { user } = useAuth()
+  const { user, signOutEverywhere } = useAuth()
   const { orgName, settings } = useOrg()
   const { toast, toastError } = useToast()
   const [form, setForm] = useState({ current_password: '', new_password: '', confirm: '' })
@@ -32,6 +32,10 @@ export default function Account() {
         current_password: form.current_password,
         new_password: form.new_password,
       })
+      // The change ends every session for this user, including this one, so the
+      // server hands back a fresh pair. Storing it is what keeps the person who
+      // just did the right thing from being bounced to the sign-in screen.
+      setTokens(result)
       toast(result.detail)
       setForm({ current_password: '', new_password: '', confirm: '' })
     } catch (err) {
@@ -105,7 +109,38 @@ export default function Account() {
               {busy ? 'Saving…' : 'Change password'}
             </button>
           </div>
+          <p className="muted" style={{ fontSize: 12, marginBottom: 0 }}>
+            Changing your password signs you out everywhere else. This device stays
+            signed in.
+          </p>
         </form>
+      </div>
+
+      <div className="card">
+        <h3>Sessions</h3>
+        <p className="muted" style={{ marginTop: 0 }}>
+          Signing out on this device leaves your other devices signed in. If you have
+          left a session open somewhere you no longer control — a shared counter
+          machine, a lost phone — end them all. It takes effect immediately, not
+          whenever the other device's token expires.
+        </p>
+        <button
+          type="button"
+          className="btn"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true)
+            try {
+              await signOutEverywhere()
+            } catch (err) {
+              toastError(err)
+            } finally {
+              setBusy(false)
+            }
+          }}
+        >
+          Sign out on every device
+        </button>
       </div>
     </>
   )

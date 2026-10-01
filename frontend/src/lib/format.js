@@ -25,7 +25,9 @@ export function fmt(value) {
 }
 
 export const money = (value) => `${currency} ${fmt(value)}`
-export const pct = (value) => `${fmt(value)}%`
+
+/** 12.5 -> "12.50%"; null/blank -> "-", not "-%". */
+export const pct = (value) => (num(value) === null ? '-' : `${fmt(value)}%`)
 
 /** "reducing" -> "Reducing balance" */
 export const rateMethodLabel = (value) =>

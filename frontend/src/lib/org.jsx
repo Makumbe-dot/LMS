@@ -3,7 +3,9 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import { get } from './api.js'
 import { setCurrency } from './format.js'
 
-const OrgContext = createContext(null)
+// Exported for the same reason as AuthContext: a test supplies the value instead
+// of letting the provider fetch. Application code should use useOrg().
+export const OrgContext = createContext(null)
 
 /**
  * Institution-wide reference data: the settings row, the branch list and how far
