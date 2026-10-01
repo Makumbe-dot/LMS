@@ -73,6 +73,12 @@ try {
     if ($AsOf) { $reminderArgs += @('--as-of', $AsOf) }
     if (-not (Invoke-Step 'borrower reminders' $reminderArgs)) { $failures++ }
 
+    # Housekeeping: a revoked-token row stops mattering once the token it names
+    # would have expired anyway. Nothing breaks if this never runs.
+    if (-not (Invoke-Step 'prune expired token revocations' @('manage.py', 'prune_tokens'))) {
+        $failures++
+    }
+
     if (-not $SkipSavingsInterest) {
         # Only on the first of the month: interest is credited once per month and
         # the command would otherwise be a no-op every other night.

@@ -313,6 +313,14 @@ class User(AbstractBaseUser, PermissionsMixin):
     failed_login_attempts = models.IntegerField(default=0)
     locked_until = models.DateTimeField(null=True, blank=True)
 
+    # Every token this user holds carries this number as a claim. Bumping it
+    # invalidates all of them at once, immediately — which is the only way to
+    # recall an access token, since a JWT is checked by signature and cannot be
+    # called back. Bumped on a password change, on being disabled, and by the
+    # "sign out everywhere" action. Costs nothing to check: the authentication
+    # layer already loads this row on every request.
+    token_version = models.IntegerField(default=0)
+
     objects = UserManager()
 
     USERNAME_FIELD = "username"
@@ -337,6 +345,31 @@ class User(AbstractBaseUser, PermissionsMixin):
     @property
     def is_locked(self) -> bool:
         return bool(self.locked_until and self.locked_until > timezone.now())
+
+
+class RevokedToken(models.Model):
+    """One refresh token that has been retired, by its `jti` claim.
+
+    Signing out on one device, and rotation on refresh, both land here. The user's
+    other sessions are untouched — that is the difference between this and bumping
+    `User.token_version`, which ends every session at once.
+
+    Rows are only useful until the token they name would have expired anyway, so
+    `manage.py prune_tokens` clears the old ones. Nothing breaks if it never runs;
+    the table just grows.
+    """
+    jti = models.CharField(max_length=64, unique=True, db_index=True)
+    user = models.ForeignKey("User", on_delete=models.CASCADE, related_name="revoked_tokens")
+    expires_at = models.DateTimeField(db_index=True)
+    revoked_at = models.DateTimeField(default=timezone.now)
+    reason = models.CharField(max_length=80, null=True, blank=True)
+
+    class Meta:
+        db_table = "revoked_tokens"
+        ordering = ["-id"]
+
+    def __str__(self):
+        return f"{self.jti} revoked {self.revoked_at:%Y-%m-%d %H:%M}"
 
 
 # ---------------------------------------------------------------- borrowers

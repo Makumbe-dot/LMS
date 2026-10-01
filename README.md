@@ -87,9 +87,10 @@ history, affordability, current arrears, employment, KYC), with the reason for e
 **Security register** — collateral pledged against a loan: type, description, valuation, reference,
 and release or realisation.
 
-**Security and control** — JWT login, four roles (admin, loan officer, teller, viewer) enforced per
-endpoint, **account lockout after repeated bad passwords**, self-service password change, full
-audit log of every posting and decision, searchable and filterable.
+**Security and control** — JWT login with **renewable sessions and real revocation**, four roles
+(admin, loan officer, teller, viewer) enforced per endpoint, **account lockout after repeated bad
+passwords**, self-service password change, sign out on one device or on all of them, full audit log
+of every posting and decision, searchable and filterable.
 
 **Multi-branch** — staff, borrowers and loans belong to a branch, and the dashboard, provisioning,
 performance and payroll screens all filter by it.
@@ -209,18 +210,39 @@ Everything lives in `backend/.env` (see `backend/.env.example` for development a
 | `DB_TRUSTED_CONNECTION` | `1` for Windows authentication (default), `0` to use `DB_USER`/`DB_PASSWORD`. |
 | `DB_TRUST_SERVER_CERT` | Keep `1` for a local instance — Driver 18 encrypts by default and local instances have self-signed certificates. |
 | `SECRET_KEY` | Change it for anything other than local development. |
-| `ACCESS_TOKEN_EXPIRE_MINUTES` | JWT access-token lifetime, 480 by default. |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | JWT access-token lifetime, 30 by default. This is the window in which a revoked single device keeps working, so raising it weakens revocation; the client renews silently, so lowering it costs nothing but requests. |
+| `REFRESH_TOKEN_EXPIRE_DAYS` | How long a session can be renewed before signing in again, 7 by default. |
 | `SQL_LOG_LEVEL` | Set to `DEBUG` to print every statement the ORM sends to SQL Server. |
 
 ## Tests
 
+One script runs everything that has to pass:
+
 ```powershell
-cd backend
-python manage.py test core
+.\scripts\verify.ps1                      # checks, migrations, both suites, a production build
+.\scripts\verify.ps1 -SkipBackendTests    # the slow one, for a quick loop
 ```
 
-61 tests. They run against a real SQL Server database (`LMS_test`, created and dropped
-automatically), covering:
+Or each piece on its own:
+
+```powershell
+cd backend
+..\.venv\Scripts\python.exe manage.py test                                  # the backend suite
+..\.venv\Scripts\python.exe manage.py makemigrations --check --dry-run core  # nothing unmigrated
+
+cd ..\frontend
+npm test              # the frontend suite
+npm run test:coverage
+```
+
+`.github/workflows/ci.yml` runs the same set on push. It is dormant until this repository has a
+remote — it exists so the suite becomes a gate the moment one is added, rather than something
+someone has to remember.
+
+**The backend suite** runs against a real SQL Server database (`LMS_test`, created and dropped
+automatically) rather than SQLite, because three of the behaviours this code works around are the
+engine's: `bulk_create` returning no primary keys, `select_for_update` compiling to `UPDLOCK`, and a
+case-insensitive default collation. It covers:
 
 - the amortisation engine, both methods — annuity maths, flat-rate levelling, month-end clamping,
   schedules closing to zero and totals landing exactly on the advance;
@@ -230,9 +252,37 @@ automatically), covering:
 - early settlement — the rebate, the refusal of a stale confirmation amount, and closure;
 - bulk import — dry run, commit, bad rows, two rows that would jointly overpay one loan;
 - the message outbox — generation, idempotency, receipts, sending and cancelling;
-- IFRS 9 staging and the settings that drive the rates;
+- IFRS 9 staging, the provision run, its reversal and the repost path;
+- capital, funder facilities, borrowing interest and the cash guard;
+- period close — the guard, the eight pre-close checks, reopening, and the commands;
+- **the reconciliation identities**, asserted as identities rather than as figures, so they keep
+  their meaning as the book changes;
+- **arrears parity** — the SQL definition against the Python one, loan for loan, at four dates
+  across a book put through repayments, penalties, charges, waivers, reversals and a reschedule;
+- **query counts** — each report is run against a book, then against twice the book, and the count
+  must not change. A regression to a query per loan fails the suite rather than merely getting slow;
+- sessions — renewal, rotation, sign-out, and revocation when an account is disabled or a role
+  changes;
 - performance and payroll reports;
 - branches, settings, search, documents, pagination, password change and account lockout.
+
+**The frontend suite** (vitest + Testing Library, jsdom) covers the parts where a bug is invisible
+until someone clicks:
+
+- the API layer's silent token renewal, including the single-flight guard — six simultaneous 401s
+  must produce exactly one refresh, because rotation means the second would be rejected as a replay;
+- the money and date formatters, including that a missing figure renders as `-` and not as `0.00`,
+  and that a negative balance keeps its sign;
+- the Ledger page's shape guards — a tab switched before its data arrives must not read a field the
+  previous payload lacked, which it once did;
+- the arrears page taking its headline total from the response rather than summing the page on
+  screen;
+- the period notice telling the truth about which dates are closed, including the boundary day;
+- the auth provider — that signing out tells the server to retire the token, and that it still
+  signs out locally when the server cannot be reached.
+
+Both suites are in the repository's own idiom: a test asserts the rule, and its name says what
+breaks if the rule does.
 
 ## Scheduled jobs
 
@@ -347,15 +397,17 @@ backend/                        Django project
       provisioning.py           booking the IFRS 9 expected credit loss movement
       funding.py                capital, funder facilities, borrowing interest, the cash guard
       arrears.py                the one set-based arrears definition every report reads
+      tokens.py                 issuing, renewing and revoking sessions
       periods.py                period close, and the guard that refuses a closed date
       reports.py                dashboard, PAR, collections due, loan book, statement,
                                 IFRS 9 provisioning, performance, payroll deductions
     templates/core/             the printable loan agreement
     views/                      auth, borrowers, products, charges, loans, groups, savings,
                                 ledger, funding, provisions, periods, reports, org
+    authentication.py           JWT auth that honours revocation
     management/commands/        seed, run_penalties, run_savings_interest, run_provisions,
                                 accrue_borrowing_interest, send_reminders, close_period,
-                                reopen_period
+                                reopen_period, prune_tokens
     tests/                      the test suite
 frontend/                       React + Vite single-page app
   src/
@@ -366,6 +418,8 @@ frontend/                       React + Vite single-page app
     pages/      Login, Dashboard, Borrowers, Groups, Loans, Savings, Collections, Arrears,
                 Payroll, BulkImport, Notifications, Transactions, Ledger, Funding, Performance,
                 Provisioning, Periods, Products, Charges, Users, Settings, Account, Audit
+    test/       setup.js (jsdom, storage, a loud default fetch) and harness.jsx
+                (renderPage with the providers stubbed, stubApi by path fragment)
     styles.css  design tokens, light and dark themes
 sql/
   01_create_database.sql        create the LMS database (run first)
@@ -373,7 +427,10 @@ sql/
   03_reporting_views.sql        loan-book views, arrears ageing (all eight columns), indexes
   04_reporting_views_v2.sql     savings, groups, ledger, charge, funding and balance-sheet
                                 views, plus usp_reconcile_ledger and its ten checks
+.github/workflows/
+  ci.yml                        both suites on push; dormant until there is a remote
 scripts/
+  verify.ps1                    everything that has to pass before a commit
   run_nightly_jobs.ps1          the nightly batch, with a dated log
   register_scheduled_task.ps1   register (or remove) that batch in Task Scheduler
   backup_database.ps1           verified backup of the database and the documents
@@ -576,6 +633,43 @@ bulk-updates eleven columns — and each extra wide index is maintained on every
 as the new principal; future unearned interest on the old schedule is dropped. The capitalisation is
 posted as its own `capitalisation` transaction — the receivable grows by exactly what interest,
 penalties and charges shed — so the ledger moves with the loan book.
+
+## Sessions and revocation
+
+A JWT is verified by its signature, so the server holds nothing it can call back. That is the appeal
+— no database hit to authenticate — and also the problem: disabling an employee's account does not
+stop the token already in their browser. Login used to hand out a refresh token nothing could use,
+there was no way to sign out, and the access token lasted eight hours, so a dismissed employee kept
+posting for the rest of the working day.
+
+Access tokens now last **30 minutes** and the client renews them silently, so nobody is logged out
+mid-receipt. Two mechanisms cover revocation, and they answer different questions:
+
+| | Ends | How | Immediate? |
+|---|---|---|---|
+| `POST /api/auth/logout` | this session | `RevokedToken`, keyed on the token's `jti` | the refresh token, yes; the access token within 30 min |
+| `POST /api/auth/sign-out-everywhere` | every session, every device | `User.token_version` bumped | yes, on the next request |
+
+The version is carried as a claim and compared on every request by
+`core.authentication.RevocableJWTAuthentication`. That costs no extra query — the authentication
+layer already loads the user row to attach `request.user` — and it is the only way to recall an
+access token. It is bumped automatically when an administrator **disables an account**, **changes
+someone's role** or **resets their password**, and when a user **changes their own password**
+(which hands that device a fresh pair, so doing the right thing does not log you out). Unlocking an
+account deliberately does *not* bump it: unlocking is a favour, not a security event.
+
+Rotation means a refresh token is good for exactly **one** use. The client therefore holds the
+in-flight refresh in a single promise: a dashboard fires six requests at once, so when the access
+token expires all six return 401 together, and without that guard the first would renew and the
+other five would be rejected as replays — signing the user out for loading a page.
+
+`rest_framework_simplejwt.token_blacklist` is deliberately **not** installed: its migration 0008
+alters an int column to bigint, which SQL Server refuses while a unique constraint depends on that
+column. The test database is built by running migrations, so a migration that cannot run on this
+backend would break the entire suite. Revocation lives in `core` instead.
+
+`manage.py prune_tokens` (in the nightly batch) forgets revocations for tokens that have expired
+anyway. Nothing breaks if it never runs; the table just grows by a row per sign-out.
 
 ## Period close
 

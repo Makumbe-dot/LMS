@@ -44,6 +44,12 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "django.contrib.humanize",
     "rest_framework",
+    # NOT rest_framework_simplejwt.token_blacklist: its migration 0008 alters an
+    # int column to bigint, which SQL Server refuses while a unique constraint
+    # depends on that column ("ALTER TABLE ALTER COLUMN token_id failed"). The test
+    # database is built by running migrations, so a migration that cannot run on
+    # this backend would break the entire suite. Revocation is in core instead —
+    # see core.models.RevokedToken and User.token_version.
     "corsheaders",
     "core",
 ]
@@ -126,7 +132,9 @@ AUTH_PASSWORD_VALIDATORS = [
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        # Not simplejwt's own class: this one rejects a token whose version claim
+        # no longer matches the user's, which is what makes revocation immediate.
+        "core.authentication.RevocableJWTAuthentication",
         "rest_framework.authentication.SessionAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
@@ -145,9 +153,17 @@ REST_FRAMEWORK = {
 }
 
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=int(env("ACCESS_TOKEN_EXPIRE_MINUTES", str(60 * 8)))),
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
-    "ROTATE_REFRESH_TOKENS": False,
+    # Thirty minutes, not eight hours. An access token cannot be revoked — it is
+    # checked by signature alone — so its lifetime IS the window in which a
+    # disabled user keeps working. Short is only tolerable because the client
+    # silently renews it; before POST /api/auth/refresh existed, eight hours was
+    # the only thing standing between a teller and being logged out mid-receipt.
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=int(env("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=int(env("REFRESH_TOKEN_EXPIRE_DAYS", "7"))),
+    # Rotation is done by core.views.auth.refresh, which issues a new pair and
+    # revokes the one presented through core.services.tokens. The simplejwt
+    # settings that would do it (ROTATE_REFRESH_TOKENS / BLACKLIST_AFTER_ROTATION)
+    # are only read by simplejwt's own views, which this project does not use.
     "AUTH_HEADER_TYPES": ("Bearer",),
     "USER_ID_FIELD": "id",
     "USER_ID_CLAIM": "user_id",

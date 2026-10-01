@@ -81,6 +81,11 @@ class LoginSerializer(serializers.Serializer):
     password = serializers.CharField(style={"input_type": "password"}, trim_whitespace=False)
 
 
+class RefreshSerializer(serializers.Serializer):
+    """The refresh token, for renewing a session and for signing out."""
+    refresh_token = serializers.CharField()
+
+
 class UserCreateSerializer(serializers.ModelSerializer):
     password = serializers.CharField(min_length=6, write_only=True)
     role = serializers.ChoiceField(choices=Role.choices, default=Role.LOAN_OFFICER)

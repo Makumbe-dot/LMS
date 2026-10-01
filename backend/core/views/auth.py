@@ -10,7 +10,6 @@ from rest_framework.decorators import api_view, permission_classes, throttle_cla
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
-from rest_framework_simplejwt.tokens import RefreshToken
 
 from ..audit import audit
 from ..exceptions import BusinessRuleError, NotFound
@@ -19,10 +18,12 @@ from ..permissions import IsAdmin
 from ..serializers import (
     ChangePasswordSerializer,
     LoginSerializer,
+    RefreshSerializer,
     UserCreateSerializer,
     UserSerializer,
     UserUpdateSerializer,
 )
+from ..services import tokens
 
 
 class LoginThrottle(ScopedRateThrottle):
@@ -83,15 +84,96 @@ def login(request):
         user.save(update_fields=["failed_login_attempts", "locked_until"])
 
     audit(user, "login", "user", user.id)
-    token = RefreshToken.for_user(user)
-    token["role"] = user.role
-    token["sub"] = user.username
-    return Response({
-        "access_token": str(token.access_token),
-        "refresh_token": str(token),
-        "token_type": "bearer",
-        "user": UserSerializer(user).data,
-    })
+    return Response({**tokens.issue(user), "user": UserSerializer(user).data})
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@throttle_classes([LoginThrottle])
+def refresh(request):
+    """Exchange a refresh token for a new pair.
+
+    AllowAny because the whole point is to be callable once the access token has
+    expired; the refresh token is the credential. Throttled on the login scope, so
+    it cannot be used to grind.
+
+    Every reason a session should be over is checked here, because a verified
+    signature is not an answer to "should this person still be signed in": the
+    token may have been revoked, the account may have been disabled or locked, and
+    the user's whole session set may have been ended since.
+    """
+    body = RefreshSerializer(data=request.data)
+    body.is_valid(raise_exception=True)
+
+    try:
+        token = tokens.parse_refresh(body.validated_data["refresh_token"])
+    except tokens.TokenError:
+        return Response({"detail": "Your session has expired. Please sign in again."},
+                        status=status.HTTP_401_UNAUTHORIZED)
+
+    if tokens.is_revoked(token.get("jti")):
+        # Already used or signed out. Rotation means a replayed token is either a
+        # stale client or a stolen one; both get the same answer.
+        return Response({"detail": "This session has been signed out. Please sign in again."},
+                        status=status.HTTP_401_UNAUTHORIZED)
+
+    user = tokens.user_for(token)
+    if user is None or not user.is_active:
+        return Response({"detail": "User account is disabled"},
+                        status=status.HTTP_403_FORBIDDEN)
+    if user.is_locked:
+        return Response({"detail": "This account is locked. Ask an administrator to unlock it."},
+                        status=status.HTTP_403_FORBIDDEN)
+    if token.get(tokens.VERSION_CLAIM) not in (None, user.token_version):
+        return Response({"detail": "This session has been signed out. Please sign in again."},
+                        status=status.HTTP_401_UNAUTHORIZED)
+
+    with transaction.atomic():
+        # Rotate: the presented token is retired as the new pair is issued, so a
+        # refresh token is good for exactly one use.
+        tokens.revoke(token, user, "rotated on refresh")
+        payload = tokens.issue(user)
+    payload["user"] = UserSerializer(user).data
+    return Response(payload)
+
+
+@api_view(["POST"])
+def logout(request):
+    """End this session. The user's other devices stay signed in.
+
+    The access token keeps working until it expires — nothing can recall a signed
+    JWT — which is why its lifetime is thirty minutes rather than eight hours. Use
+    `sign-out-everywhere` when that is not good enough.
+
+    Answers 200 even when the token presented was already unusable: a sign-out that
+    fails leaves the user signed in, which is the worse outcome.
+    """
+    body = RefreshSerializer(data=request.data, partial=True)
+    body.is_valid(raise_exception=True)
+    presented = body.validated_data.get("refresh_token")
+    retired = False
+    if presented:
+        try:
+            retired = tokens.revoke(tokens.parse_refresh(presented), request.user, "signed out")
+        except tokens.TokenError:
+            retired = False
+    audit(request.user, "logout", "user", request.user.id,
+          request.user.username + ("" if retired else " (no usable refresh token presented)"))
+    return Response({"detail": "Signed out.", "refresh_token_retired": retired})
+
+
+@api_view(["POST"])
+def sign_out_everywhere(request):
+    """End every session this user has, on every device, immediately.
+
+    Bumps the token version, so access tokens already in flight are refused on
+    their next request rather than at the end of their thirty minutes.
+    """
+    with transaction.atomic():
+        version = tokens.revoke_all(request.user, "signed out everywhere")
+        audit(request.user, "sign_out_everywhere", "user", request.user.id,
+              f"{request.user.username} (token version now {version})")
+    return Response({"detail": "Signed out on every device. Sign in again to continue."})
 
 
 @api_view(["POST"])
@@ -108,8 +190,17 @@ def change_password(request):
     with transaction.atomic():
         user.set_password(new_password)
         user.save(update_fields=["password"])
+        # A password change that leaves the old sessions working is not a password
+        # change: the usual reason for one is that the old password is compromised.
+        tokens.revoke_all(user, "password changed")
         audit(user, "change_password", "user", user.id, user.username)
-    return Response({"detail": "Password changed. Sign in again on your other devices."})
+    fresh = tokens.issue(user)
+    return Response({
+        "detail": "Password changed. Every other device has been signed out.",
+        # The caller's own token was just invalidated too, so hand back a new pair
+        # rather than bouncing them to the sign-in screen for doing the right thing.
+        **fresh,
+    })
 
 
 @api_view(["GET"])
@@ -154,6 +245,18 @@ def user_detail(request, user_id: int):
             raise NotFound("Branch not found")
         user.branch_id = branch_id
 
+    # Disabling an account, changing someone's role, or resetting their password
+    # must take effect now, not whenever their access token happens to expire.
+    # Without this a dismissed employee keeps posting for up to thirty minutes, and
+    # a demoted one keeps the permissions of the role they just lost.
+    revoke_reasons = []
+    if password:
+        revoke_reasons.append("password reset by an administrator")
+    if data.get("is_active") is False:
+        revoke_reasons.append("account disabled")
+    if data.get("role") and data["role"] != user.role:
+        revoke_reasons.append(f"role changed from {user.role} to {data['role']}")
+
     with transaction.atomic():
         if password:
             user.set_password(password)
@@ -163,6 +266,11 @@ def user_detail(request, user_id: int):
         for key, value in data.items():
             setattr(user, key, value)
         user.save()
+        if revoke_reasons:
+            tokens.revoke_all(user, "; ".join(revoke_reasons))
+
         changed = list(data) + (["password"] if password else []) + (["unlock"] if unlock else [])
-        audit(request.user, "update", "user", user.id, str(changed))
+        audit(request.user, "update", "user", user.id,
+              str(changed) + (f" — sessions ended ({'; '.join(revoke_reasons)})"
+                              if revoke_reasons else ""))
     return Response(UserSerializer(user).data)

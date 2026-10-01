@@ -32,6 +32,7 @@ from .models import (
     ProductCharge,
     ProvisionRun,
     ProvisionRunLine,
+    RevokedToken,
     SavingsAccount,
     SavingsProduct,
     SavingsTransaction,
@@ -303,6 +304,21 @@ class ProvisionRunAdmin(admin.ModelAdmin):
     inlines = [ProvisionRunLineInline]
 
     # Provisions are booked by the run, never by hand.
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(RevokedToken)
+class RevokedTokenAdmin(admin.ModelAdmin):
+    list_display = ("jti", "user", "reason", "revoked_at", "expires_at")
+    list_filter = ("reason",)
+    search_fields = ("jti", "user__username")
+    date_hierarchy = "revoked_at"
+    readonly_fields = [f.name for f in RevokedToken._meta.fields]
+
     def has_add_permission(self, request):
         return False
 

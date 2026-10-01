@@ -21,6 +21,9 @@ from .views import (
 urlpatterns = [
     # ---- auth and users
     re_path(r"^auth/login/?$", auth.login),
+    re_path(r"^auth/refresh/?$", auth.refresh),
+    re_path(r"^auth/logout/?$", auth.logout),
+    re_path(r"^auth/sign-out-everywhere/?$", auth.sign_out_everywhere),
     re_path(r"^auth/me/?$", auth.me),
     re_path(r"^auth/change-password/?$", auth.change_password),
     re_path(r"^users/?$", auth.users),
