@@ -1,5 +1,6 @@
 """Portfolio reports. Every listing report also serves CSV via ?fmt=csv."""
 from datetime import date
+from decimal import Decimal
 
 from django.db import transaction
 from django.db.models import Q
@@ -26,7 +27,7 @@ from ..services import notifications as notify
 from ..services import reports as rpt
 from ..services.amortisation import add_months
 from ..services.penalties import accrue_penalties
-from .helpers import csv_response, paginate, parse_date, parse_int
+from .helpers import csv_response, paginate, paginate_list, parse_date, parse_int
 
 
 def _render(request, rows: list[dict], name: str):
@@ -43,8 +44,29 @@ def dashboard(request):
 
 @api_view(["GET"])
 def par(request):
-    rows = rpt.portfolio_at_risk(parse_date(request, "as_of"), parse_int(request, "branch_id"))
-    return _render(request, rows, "portfolio_at_risk")
+    """Loans in arrears, worst first.
+
+    Paginated when `page` is asked for, and whole otherwise, so the CSV export and
+    any existing caller keep getting the entire book. The totals travel with the
+    page: summing one page's rows in the browser would silently under-report how
+    much is overdue.
+    """
+    as_of = parse_date(request, "as_of")
+    rows = rpt.portfolio_at_risk(as_of, parse_int(request, "branch_id"))
+    if request.query_params.get("fmt") == "csv":
+        return csv_response(rows, "portfolio_at_risk")
+    if "page" not in request.query_params:
+        return Response(rows)
+    return Response(paginate_list(request, rows, extra={
+        "arrears_total": sum((r["arrears_amount"] for r in rows), Decimal("0")),
+        "principal_total": sum((r["principal_outstanding"] for r in rows), Decimal("0")),
+    }))
+
+
+@api_view(["GET"])
+def arrears_ageing(request):
+    rows = rpt.arrears_ageing(parse_date(request, "as_of"), parse_int(request, "branch_id"))
+    return _render(request, rows, "arrears_ageing")
 
 
 @api_view(["GET"])

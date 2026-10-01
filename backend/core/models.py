@@ -732,6 +732,21 @@ class Instalment(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["loan", "number"], name="uq_instalment_loan_number"),
         ]
+        indexes = [
+            # Covers the arrears subquery in services/arrears.py: seek the overdue
+            # range on due_date, then read the eight money columns and the status
+            # without touching the table. One index, not two: this is the hottest
+            # write table in the system — every repayment bulk-updates eleven
+            # columns — and each extra wide index is maintained on every one of
+            # them. It also covers vw_collections_due, which selects status.
+            models.Index(
+                fields=["due_date", "loan"],
+                include=["principal_due", "interest_due", "penalty_due", "charge_due",
+                         "principal_paid", "interest_paid", "penalty_paid", "charge_paid",
+                         "status"],
+                name="ix_inst_due_loan_cover",
+            ),
+        ]
 
     def __str__(self):
         return f"{self.loan_id}/{self.number} due {self.due_date}"
@@ -746,6 +761,13 @@ class Instalment(models.Model):
 
     @property
     def balance(self) -> Decimal:
+        """What this instalment still owes.
+
+        These eight columns are named in three places and all three must agree:
+        here, `core.services.arrears.OVERDUE_BALANCE` (the SQL expression the
+        reports use), and `dbo.vw_loan_book` in sql/04_reporting_views_v2.sql.
+        `core/tests/test_arrears.py` asserts the first two agree loan-for-loan.
+        """
         return self.total_due - self.total_paid
 
 

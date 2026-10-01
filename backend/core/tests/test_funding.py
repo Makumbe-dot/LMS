@@ -400,8 +400,11 @@ class CashGuardTests(FundingBase):
     def test_reversing_an_injection_cannot_drive_share_capital_negative(self):
         injection = svc.inject_capital(None, dec("5000"), "Shareholders")
         svc.return_capital(None, dec("5000"), "Shareholders")
-        # Net capital is zero; reversing the injection would put 3100 at -5000.
-        svc.inject_capital(None, dec("5000"), "Someone else")  # cash for the reversal
+        self.assertEqual(svc.capital_summary()["net_capital"], ZERO)
+        # The cash for the reversal has to come from somewhere that is NOT capital,
+        # or assert_cash refuses first and this proves nothing about 3100.
+        facility = self.facility()
+        svc.drawdown(facility, None, dec("5000"))
 
         with self.assertRaises(Exception) as caught:
             svc.reverse_capital_transaction(injection, None, "Cheque bounced")

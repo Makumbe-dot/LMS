@@ -21,28 +21,29 @@ from ..models import (
     Transaction,
     TxnType,
 )
+from . import arrears as arrears_svc
 from .amortisation import add_months, q
+from .arrears import BUCKETS, bucket_for  # noqa: F401 - re-exported; callers import from here
 from .loans import arrears
 
 ZERO = Decimal("0")
-BUCKETS = [("current", 0, 0), ("1-30", 1, 30), ("31-60", 31, 60), ("61-90", 61, 90),
-           ("91-180", 91, 180), ("180+", 181, 10 ** 6)]
 
 _money = DecimalField(max_digits=18, decimal_places=2)
 
 
-def bucket_for(days: int) -> str:
-    for name, lo, hi in BUCKETS:
-        if lo <= days <= hi:
-            return name
-    return "180+"
+def active_loans(branch_id=None, *, with_schedule: bool = True) -> list[Loan]:
+    """Active loans as model instances.
 
-
-def active_loans(branch_id=None) -> list[Loan]:
+    `with_schedule=False` drops the instalment prefetch, for callers that get their
+    arrears from `services.arrears` instead of by walking the schedule. The prefetch
+    is what made a ten-thousand-loan report a hundred-thousand-row fetch.
+    """
     qs = (Loan.objects
           .filter(status=LoanStatus.ACTIVE)
-          .select_related("borrower", "product", "officer", "branch")
-          .prefetch_related(Prefetch("instalments", queryset=Instalment.objects.order_by("number"))))
+          .select_related("borrower", "product", "officer", "branch"))
+    if with_schedule:
+        qs = qs.prefetch_related(
+            Prefetch("instalments", queryset=Instalment.objects.order_by("number")))
     if branch_id:
         qs = qs.filter(branch_id=branch_id)
     return list(qs)
@@ -56,16 +57,11 @@ def _sum(queryset, expression) -> Decimal:
 
 def dashboard(as_of: date | None = None, branch_id=None) -> dict:
     as_of = as_of or date.today()
-    loans = active_loans(branch_id)
-    outstanding = q(sum((l.total_outstanding for l in loans), ZERO))
-    principal_out = q(sum((l.principal_outstanding for l in loans), ZERO))
-    par30 = ZERO
-    buckets: dict[str, Decimal] = defaultdict(lambda: ZERO)
-    for l in loans:
-        _amt, days = arrears(l, as_of)
-        buckets[bucket_for(days)] += l.principal_outstanding
-        if days > 30:
-            par30 += l.principal_outstanding
+    # One statement over narrow rows, rather than every active loan with its whole
+    # schedule prefetched and walked in Python.
+    book = arrears_svc.totals(as_of, branch_id=branch_id)
+    outstanding = book["total_outstanding"]
+    principal_out = book["principal_outstanding"]
 
     month_start = as_of.replace(day=1)
     next_month = add_months(month_start, 1)
@@ -100,17 +96,17 @@ def dashboard(as_of: date | None = None, branch_id=None) -> dict:
     return {
         "as_of": as_of,
         "borrowers": borrower_scope.count(),
-        "active_loans": len(loans),
+        "active_loans": book["loans"],
         "pending_applications": status_counts.get("pending", 0),
         "portfolio_outstanding": outstanding,
         "principal_outstanding": principal_out,
-        "par_30_amount": q(par30),
-        "par_30_pct": q(par30 / principal_out * 100) if principal_out else ZERO,
+        "par_30_amount": book["par_amount"],
+        "par_30_pct": book["par_pct"],
         "disbursed_this_month": q(disb),
         "collected_this_month": q(coll),
         "due_this_month": q(due),
         "collection_rate_pct": q(coll / due * 100) if due else ZERO,
-        "arrears_buckets": {name: q(buckets[name]) for name, _, _ in BUCKETS},
+        "arrears_buckets": book["buckets"],
         "status_counts": status_counts,
         "monthly_series": monthly_series(as_of, branch_id=branch_id),
     }
@@ -142,23 +138,49 @@ def monthly_series(as_of: date, months: int = 12, branch_id=None) -> list[dict]:
 
 
 def portfolio_at_risk(as_of: date | None = None, branch_id=None) -> list[dict]:
+    """Every active loan in arrears, worst first.
+
+    Filters in SQL and fetches only the loans that are actually overdue, instead of
+    loading the whole active book with its schedules and discarding the performing
+    ones in Python.
+    """
     as_of = as_of or date.today()
+    qs = (Loan.objects
+          .filter(status=LoanStatus.ACTIVE)
+          .filter(arrears_svc.is_overdue(as_of))
+          .select_related("borrower", "product", "officer", "branch"))
+    if branch_id:
+        qs = qs.filter(branch_id=branch_id)
+
     out = []
-    for l in active_loans(branch_id):
-        amt, days = arrears(l, as_of)
-        if amt > 0:
-            out.append({
-                "loan_no": l.loan_no, "loan_id": l.id, "borrower": l.borrower.full_name,
-                "phone": l.borrower.phone, "employer": l.borrower.employer,
-                "officer": l.officer.full_name if l.officer else "-",
-                "branch": l.branch.name if l.branch else "-",
-                "product": l.product.name, "principal_outstanding": l.principal_outstanding,
-                "total_outstanding": l.total_outstanding, "arrears_amount": amt,
-                "days_in_arrears": days, "bucket": bucket_for(days),
-                "penalties_outstanding": l.penalties_outstanding,
-            })
-    out.sort(key=lambda r: -r["days_in_arrears"])
+    for l in arrears_svc.with_arrears(qs, as_of).order_by(*arrears_svc.PAR_ORDER):
+        amt = q(Decimal(l.arrears_amount or 0))
+        days = arrears_svc.days_from(l.oldest_arrears_due, as_of)
+        out.append({
+            "loan_no": l.loan_no, "loan_id": l.id, "borrower": l.borrower.full_name,
+            "phone": l.borrower.phone, "employer": l.borrower.employer,
+            "officer": l.officer.full_name if l.officer else "-",
+            "branch": l.branch.name if l.branch else "-",
+            "product": l.product.name, "principal_outstanding": l.principal_outstanding,
+            "total_outstanding": l.total_outstanding, "arrears_amount": amt,
+            "days_in_arrears": days, "bucket": bucket_for(days),
+            "penalties_outstanding": l.penalties_outstanding,
+        })
     return out
+
+
+def arrears_ageing(as_of: date | None = None, branch_id=None) -> list[dict]:
+    """The ageing table as rows, for CSV and for analysts.
+
+    The same single pass the dashboard chart reads, so the two cannot disagree.
+    """
+    book = arrears_svc.totals(as_of, branch_id=branch_id)
+    return [{
+        "bucket": name,
+        "loans": book["bucket_loans"][name],
+        "principal_outstanding": book["buckets"][name],
+        "arrears_amount": book["bucket_arrears"][name],
+    } for name in arrears_svc.BUCKET_NAMES]
 
 
 def collections_due(start: date, end: date) -> list[dict]:
@@ -173,15 +195,16 @@ def collections_due(start: date, end: date) -> list[dict]:
     } for i in rows]
 
 
-def loan_book() -> list[dict]:
-    loans = (Loan.objects
-             .filter(status__in=[LoanStatus.ACTIVE, LoanStatus.CLOSED, LoanStatus.WRITTEN_OFF])
-             .select_related("borrower", "product")
-             .prefetch_related(Prefetch("instalments", queryset=Instalment.objects.order_by("number")))
-             .order_by("id"))
+def loan_book(as_of: date | None = None) -> list[dict]:
+    as_of = as_of or date.today()
+    qs = (Loan.objects
+          .filter(status__in=[LoanStatus.ACTIVE, LoanStatus.CLOSED, LoanStatus.WRITTEN_OFF])
+          .select_related("borrower", "product")
+          .order_by("id"))
     out = []
-    for l in loans:
-        amt, days = arrears(l)
+    for l in arrears_svc.with_arrears(qs, as_of):
+        amt = q(Decimal(l.arrears_amount or 0))
+        days = arrears_svc.days_from(l.oldest_arrears_due, as_of)
         out.append({
             "loan_no": l.loan_no, "loan_id": l.id, "borrower": l.borrower.full_name,
             "product": l.product.name, "status": l.status,
@@ -244,8 +267,16 @@ def ecl_report(as_of: date | None = None, branch_id=None) -> dict:
                        "provision": ZERO, "provision_required": ZERO}
                for stage in (ECLStage.STAGE_1, ECLStage.STAGE_2, ECLStage.STAGE_3)}
 
-    for loan in active_loans(branch_id):
-        amount, days = arrears(loan, as_of)
+    # No instalment prefetch: staging needs days past due and carrying_amount reads
+    # only the loan's own columns, so the schedule never has to leave the database.
+    ecl_qs = Loan.objects.filter(status=LoanStatus.ACTIVE).select_related(
+        "borrower", "product", "branch")
+    if branch_id:
+        ecl_qs = ecl_qs.filter(branch_id=branch_id)
+
+    for loan in arrears_svc.with_arrears(ecl_qs, as_of):
+        amount = q(Decimal(loan.arrears_amount or 0))
+        days = arrears_svc.days_from(loan.oldest_arrears_due, as_of)
         stage = ecl_stage(days, cfg)
         exposure = loan.total_outstanding
         carrying = carrying_amount(loan)
@@ -310,7 +341,24 @@ def ecl_report(as_of: date | None = None, branch_id=None) -> dict:
 
 
 # ---------------------------------------------------------------- performance
-def _performance_rows(loans, key_fn, label_fn) -> list[dict]:
+def performance_loans(branch_id=None, as_of: date | None = None) -> list[Loan]:
+    """Active loans with their arrears annotated and no schedule fetched."""
+    qs = (Loan.objects
+          .filter(status=LoanStatus.ACTIVE)
+          .select_related("officer", "product", "branch"))
+    if branch_id:
+        qs = qs.filter(branch_id=branch_id)
+    return list(arrears_svc.with_arrears(qs, as_of))
+
+
+def _performance_rows(loans, key_fn, label_fn, as_of: date | None = None) -> list[dict]:
+    """Group loans and sum their arrears.
+
+    `loans` must be annotated by `arrears.with_arrears` — the callers all use
+    `performance_loans()`, which does. Reading it off the annotation is what keeps
+    this from walking every schedule three times over for three reports.
+    """
+    as_of = as_of or date.today()
     groups: dict = {}
     for loan in loans:
         key = key_fn(loan)
@@ -319,7 +367,8 @@ def _performance_rows(loans, key_fn, label_fn) -> list[dict]:
             "total_outstanding": ZERO, "arrears_amount": ZERO, "loans_in_arrears": 0,
             "par_30_amount": ZERO,
         })
-        amount, days = arrears(loan)
+        amount = q(Decimal(loan.arrears_amount or 0))
+        days = arrears_svc.days_from(loan.oldest_arrears_due, as_of)
         row["active_loans"] += 1
         row["principal_outstanding"] += loan.principal_outstanding
         row["total_outstanding"] += loan.total_outstanding
@@ -347,7 +396,7 @@ def _performance_rows(loans, key_fn, label_fn) -> list[dict]:
 def officer_performance(branch_id=None) -> list[dict]:
     """Portfolio and arrears by the officer who originated the loan."""
     rows = _performance_rows(
-        active_loans(branch_id),
+        performance_loans(branch_id),
         key_fn=lambda l: l.officer_id,
         label_fn=lambda l: l.officer.full_name if l.officer else "Unassigned",
     )
@@ -370,7 +419,7 @@ def officer_performance(branch_id=None) -> list[dict]:
 
 def product_performance(branch_id=None) -> list[dict]:
     """Portfolio and arrears by loan product."""
-    loans = active_loans(branch_id)
+    loans = performance_loans(branch_id)
     rows = _performance_rows(loans, key_fn=lambda l: l.product_id,
                              label_fn=lambda l: l.product.name)
     products = {l.product_id: l.product for l in loans}
@@ -382,7 +431,7 @@ def product_performance(branch_id=None) -> list[dict]:
 
 
 def branch_performance() -> list[dict]:
-    loans = active_loans()
+    loans = performance_loans()
     return _performance_rows(
         loans,
         key_fn=lambda l: l.branch_id,
@@ -431,10 +480,16 @@ def employers_with_active_loans(branch_id=None) -> list[dict]:
           .exclude(borrower__employer=""))
     if branch_id:
         qs = qs.filter(branch_id=branch_id)
+    # charges_outstanding is included here on purpose: Loan.total_outstanding
+    # includes it and payroll_deduction's `deduct` is the instalment balance, which
+    # already carries charge_due. Leaving it out made the employer total the one
+    # figure that disagreed with the deduction schedule the employer reconciles
+    # against.
     rows = (qs.values("borrower__employer")
             .annotate(loans=Count("id"),
                       outstanding=Coalesce(Sum(F("principal_outstanding") + F("interest_outstanding")
-                                               + F("penalties_outstanding"), output_field=_money),
+                                               + F("penalties_outstanding")
+                                               + F("charges_outstanding"), output_field=_money),
                                            Value(ZERO, output_field=_money)))
             .order_by("borrower__employer"))
     return [{"employer": r["borrower__employer"], "active_loans": r["loans"],
@@ -475,3 +530,4 @@ def loan_statement(loan: Loan) -> dict:
         "total_outstanding": loan.total_outstanding, "total_paid": loan.total_paid,
         "lines": lines,
     }
+

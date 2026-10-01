@@ -346,6 +346,7 @@ backend/                        Django project
       notifications.py          reminder and arrears message generation, outbox
       provisioning.py           booking the IFRS 9 expected credit loss movement
       funding.py                capital, funder facilities, borrowing interest, the cash guard
+      arrears.py                the one set-based arrears definition every report reads
       periods.py                period close, and the guard that refuses a closed date
       reports.py                dashboard, PAR, collections due, loan book, statement,
                                 IFRS 9 provisioning, performance, payroll deductions
@@ -369,7 +370,7 @@ frontend/                       React + Vite single-page app
 sql/
   01_create_database.sql        create the LMS database (run first)
   02_app_login.sql              optional SQL login and a read-only analyst login
-  03_reporting_views.sql        loan-book views, arrears ageing, indexes
+  03_reporting_views.sql        loan-book views, arrears ageing (all eight columns), indexes
   04_reporting_views_v2.sql     savings, groups, ledger, charge, funding and balance-sheet
                                 views, plus usp_reconcile_ledger and its ten checks
 scripts/
@@ -545,6 +546,31 @@ amount. The borrower repays the full principal.
 *Arrears*: sum of unpaid balances on instalments whose due date has passed; days in arrears count
 from the oldest unpaid due date. PAR>30 is principal outstanding on loans more than 30 days in
 arrears.
+
+That definition is written down in **three** places and all three must agree: `Instalment.balance`
+(the Python property the repayment waterfall uses), `core.services.arrears.OVERDUE_BALANCE` (the SQL
+expression every report uses), and `dbo.vw_loan_book` in sql/04. All eight columns — principal,
+interest, penalty and charge, due and paid. `core/tests/test_arrears.py` asserts the first two agree
+loan-for-loan across a book exercised through repayments, penalties, charges, waivers, reversals and
+a reschedule, at four different dates.
+
+**Reports read arrears from the database, not by walking schedules.** The dashboard, PAR, the loan
+book, the ECL report, the three performance reports, group standing and the loan list used to load
+every active loan with its whole instalment schedule prefetched and iterate it in Python — about
+twelve instalment rows and one model instantiation per loan, per page load. They now annotate two
+correlated subqueries and read the answer off the row. `core.services.arrears` is the only place the
+expression lives, and the same module's `totals()` produces the ageing buckets, the PAR figures and
+the book totals in one pass, so the dashboard chart and the ageing CSV cannot disagree.
+
+The control against sliding back is in the suite, not in a benchmark nobody runs:
+`QueryCountTests` doubles the size of the book and asserts each report's query count does not
+change. It has already caught one real N+1 — the loan list was fetching the officer and the branch
+per row — and it fails rather than merely getting slow if a future change reintroduces one.
+
+`instalments` carries one covering index, `ix_inst_due_loan_cover` on `(due_date, loan_id)`
+INCLUDE-ing the eight money columns and `status`, so the subquery is an index seek that never touches
+the table. One, not two: this is the hottest write table in the system — every repayment
+bulk-updates eleven columns — and each extra wide index is maintained on every one of them.
 
 *Reschedule*: outstanding principal + overdue unpaid interest + penalties + charges are capitalised
 as the new principal; future unearned interest on the old schedule is dropped. The capitalisation is

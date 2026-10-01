@@ -7,6 +7,7 @@ entry at all. Both broke identities the README claims always hold.
 Every test here asserts the identities themselves rather than a figure, so they
 keep their meaning as the book changes.
 """
+from datetime import date
 from decimal import Decimal
 
 from core.models import (
@@ -104,8 +105,11 @@ class ReconciliationTests(LedgerBase):
         self.assert_reconciled("after the reschedule")
 
     def test_a_reschedule_with_nothing_in_arrears_posts_nothing(self):
+        # Disbursed TODAY, so every instalment is in the future whatever the date
+        # the suite runs on. A hardcoded date here silently starts testing the
+        # opposite case once the calendar passes the first due date.
         loan = self.disbursed_loan(self.product, self.borrower,
-                                   disbursement_date="2026-09-01")
+                                   disbursement_date=date.today().isoformat())
         self.admin.post(f"/api/loans/{loan['id']}/reschedule", {"new_term_months": 9},
                         format="json")
         # Nothing was overdue, so there is nothing to capitalise and no entry.

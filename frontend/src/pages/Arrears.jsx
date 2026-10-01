@@ -1,10 +1,11 @@
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import DataTable from '../components/DataTable.jsx'
 import { useToast } from '../components/Toast.jsx'
-import { ErrorBanner, Loading, PageHeader } from '../components/ui.jsx'
-import { downloadCsv } from '../lib/api.js'
-import { fmt, money, num } from '../lib/format.js'
+import { ErrorBanner, Loading, PageHeader, Pager } from '../components/ui.jsx'
+import { downloadCsv, qs } from '../lib/api.js'
+import { fmt, money } from '../lib/format.js'
 import { useApi } from '../lib/useApi.js'
 
 const PATH = '/api/reports/par'
@@ -12,20 +13,27 @@ const PATH = '/api/reports/par'
 export default function Arrears() {
   const navigate = useNavigate()
   const { toastError } = useToast()
-  const { data, error, loading, reload } = useApi(PATH)
+  const [page, setPage] = useState(1)
+  const { data, error, loading, reload } = useApi(`${PATH}${qs({ page, page_size: 50 })}`)
 
-  const rows = data || []
-  const total = rows.reduce((sum, r) => sum + (num(r.arrears_amount) ?? 0), 0)
+  const rows = data?.results || []
+  // The count and the total come from the response, not from summing `rows`:
+  // with paging, a reduce over one page would quietly under-report how much of
+  // the book is overdue — which is the one number this page exists to show.
+  const count = data?.count ?? 0
+  const total = data?.arrears_total
 
   return (
     <>
       <PageHeader
         title="Arrears and portfolio at risk"
-        meta={data ? `${rows.length} loans in arrears, ${money(total)} overdue` : undefined}
+        meta={data ? `${count} loans in arrears, ${money(total)} overdue` : undefined}
       >
         <button type="button" className="btn" onClick={reload}>
           Refresh
         </button>
+        {/* The CSV goes to the bare path with no page, so the export is the whole
+            book rather than whichever page happens to be on screen. */}
         <button
           type="button"
           className="btn"
@@ -39,6 +47,8 @@ export default function Arrears() {
       {loading && !data ? (
         <Loading what="Loading arrears" />
       ) : (
+        <>
+        <Pager meta={data} onPage={setPage} noun="loans" />
         <DataTable
           caption="Portfolio at risk"
           rows={rows}
@@ -87,6 +97,7 @@ export default function Arrears() {
             },
           ]}
         />
+        </>
       )}
     </>
   )

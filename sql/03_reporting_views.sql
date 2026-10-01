@@ -170,13 +170,18 @@ BEGIN
         SELECT
             l.id,
             l.principal_outstanding,
+            /* All EIGHT columns. charge_due/charge_paid were missing here, which
+               made this the one place in the system that could disagree with
+               Instalment.balance, core.services.arrears.OVERDUE_BALANCE and
+               dbo.vw_loan_book about whether a loan was in arrears. */
             days = ISNULL((
                 SELECT MAX(DATEDIFF(day, i.due_date, @as_of))
                 FROM dbo.instalments i
                 WHERE i.loan_id = l.id
                   AND i.due_date < @as_of
-                  AND (i.principal_due + i.interest_due + i.penalty_due
-                     - i.principal_paid - i.interest_paid - i.penalty_paid) > 0
+                  AND (i.principal_due + i.interest_due + i.penalty_due + i.charge_due
+                     - i.principal_paid - i.interest_paid - i.penalty_paid
+                     - i.charge_paid) > 0
             ), 0)
         FROM dbo.loans l
         WHERE l.status = 'active'

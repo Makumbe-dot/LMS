@@ -3,7 +3,7 @@ reverse, waive, write off, reschedule, accrue penalties, statement."""
 from datetime import date
 
 from django.db import transaction
-from django.db.models import Exists, F, OuterRef, Q
+from django.db.models import Q
 from django.template.loader import render_to_string
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes, renderer_classes
@@ -16,7 +16,6 @@ from ..models import (
     Borrower,
     Charge,
     Collateral,
-    Instalment,
     Loan,
     LoanNote,
     LoanProduct,
@@ -49,6 +48,7 @@ from ..serializers import (
     TransactionSerializer,
     WaiverSerializer,
 )
+from ..services import arrears as arrears_svc
 from ..services import charges as chg
 from ..services import loans as svc
 from ..services import repayments as rep
@@ -56,8 +56,8 @@ from ..services.notifications import queue_receipt
 from ..services.penalties import accrue_penalties
 from ..services.reports import loan_statement
 from .helpers import (
+    arrears_from_annotation,
     get_loan_or_404,
-    loan_queryset,
     paginate,
     parse_date,
     parse_int,
@@ -85,7 +85,11 @@ def _validated(serializer_class, request):
 @api_view(["GET", "POST"])
 def loans(request):
     if request.method == "GET":
-        qs = loan_queryset()
+        # No instalment prefetch on the list: arrears is annotated below and the
+        # list serializer renders no schedule. officer and branch ARE selected —
+        # LoanSerializer renders both names, so without them the list ran two extra
+        # queries per row.
+        qs = Loan.objects.select_related("borrower", "product", "officer", "branch")
         status_filter = request.query_params.get("status")
         if status_filter:
             if status_filter not in STATUS_CHOICES:
@@ -108,16 +112,15 @@ def loans(request):
                 raise NotFound(f"Unknown rate method '{rate_method}'")
             qs = qs.filter(rate_method=rate_method)
         if request.query_params.get("in_arrears") == "1":
-            # An instalment whose due date has passed and still has a balance.
-            overdue = (Instalment.objects
-                       .filter(loan_id=OuterRef("pk"), due_date__lt=date.today())
-                       .annotate(bal=(F("principal_due") + F("interest_due") + F("penalty_due")
-                                      - F("principal_paid") - F("interest_paid")
-                                      - F("penalty_paid")))
-                       .filter(bal__gt=0))
-            qs = qs.filter(status=LoanStatus.ACTIVE).filter(Exists(overdue))
-        return Response(paginate(request, qs.order_by("-id"), LoanSerializer,
-                                 transform=with_arrears))
+            # The shared definition, not a hand-rolled copy. The copy that used to
+            # live here omitted charge_due/charge_paid, which happens not to be
+            # reachable today but is exactly how two definitions drift apart.
+            qs = qs.filter(status=LoanStatus.ACTIVE).filter(arrears_svc.is_overdue())
+        # Annotated rather than prefetched: the list serializer does not render the
+        # schedule, so fetching every instalment on the page to compute one number
+        # per loan was pure cost.
+        return Response(paginate(request, arrears_svc.with_arrears(qs).order_by("-id"),
+                                 LoanSerializer, transform=arrears_from_annotation))
 
     # POST - capture an application
     if not IsOfficer().has_permission(request, None):

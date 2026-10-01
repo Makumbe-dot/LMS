@@ -20,8 +20,9 @@ from ..models import (
     LoanStatus,
     OrganisationSetting,
 )
+from . import arrears as arrears_svc
 from .amortisation import q
-from .loans import arrears, next_number
+from .loans import next_number
 
 ZERO = Decimal("0")
 
@@ -71,26 +72,40 @@ def remove_member(group: BorrowerGroup, member: GroupMember) -> GroupMember:
     return member
 
 
-def member_loans(group: BorrowerGroup):
-    """Every loan of every current member, not only loans booked to the group."""
+def member_loans(group: BorrowerGroup, *, with_schedule: bool = True):
+    """Every loan of every current member, not only loans booked to the group.
+
+    `with_schedule=False` for callers that read arrears off a set-based annotation
+    rather than by walking the instalments.
+    """
     borrower_ids = list(group.members.filter(is_active=True).values_list("borrower_id", flat=True))
-    return (Loan.objects
-            .filter(borrower_id__in=borrower_ids)
-            .select_related("borrower", "product")
-            .prefetch_related(Prefetch("instalments", queryset=Instalment.objects.order_by("number")))
-            .order_by("-id"))
+    qs = (Loan.objects
+          .filter(borrower_id__in=borrower_ids)
+          .select_related("borrower", "product")
+          .order_by("-id"))
+    if with_schedule:
+        qs = qs.prefetch_related(
+            Prefetch("instalments", queryset=Instalment.objects.order_by("number")))
+    return qs
 
 
 def standing(group: BorrowerGroup, as_of: date | None = None) -> dict:
-    """What the group owes, and how far behind its worst member is."""
+    """What the group owes, and how far behind its worst member is.
+
+    Reads arrears from the database rather than by walking each member's schedule:
+    `performance()` calls this once per group, so the schedules of every member of
+    every group were being fetched to compute one number each.
+    """
     as_of = as_of or date.today()
-    loans = [l for l in member_loans(group) if l.status == LoanStatus.ACTIVE]
+    loans = [l for l in arrears_svc.with_arrears(
+        member_loans(group, with_schedule=False), as_of) if l.status == LoanStatus.ACTIVE]
 
     outstanding = arrears_amount = ZERO
     worst_days = 0
     behind = []
     for loan in loans:
-        amount, days = arrears(loan, as_of)
+        amount = q(Decimal(loan.arrears_amount or 0))
+        days = arrears_svc.days_from(loan.oldest_arrears_due, as_of)
         outstanding += loan.total_outstanding
         arrears_amount += amount
         if days > worst_days:

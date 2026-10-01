@@ -49,10 +49,11 @@ from ..models import (
     ProvisionRunStatus,
     User,
 )
+from . import arrears as arrears_svc
 from . import ledger, periods
 from .amortisation import month_end, q
 from .loans import arrears, next_number
-from .reports import active_loans, ecl_stage
+from .reports import ecl_stage
 
 ZERO = Decimal("0")
 
@@ -76,9 +77,15 @@ def _rate_for(stage: str, cfg: OrganisationSetting) -> Decimal:
     }[stage]
 
 
-def assess(loan: Loan, cfg: OrganisationSetting, as_of: date) -> dict:
-    """Stage one active loan and work out what it should carry."""
-    _amount, days = arrears(loan, as_of)
+def assess(loan: Loan, cfg: OrganisationSetting, as_of: date,
+           days: int | None = None) -> dict:
+    """Stage one active loan and work out what it should carry.
+
+    `days` is passed in by the run, which reads it off a set-based annotation for
+    the whole book at once. Left out, it falls back to walking this loan's schedule.
+    """
+    if days is None:
+        _amount, days = arrears(loan, as_of)
     stage = ecl_stage(days, cfg)
     rate = _rate_for(stage, cfg)
     carrying = carrying_amount(loan)
@@ -143,8 +150,15 @@ def _gather(cfg: OrganisationSetting, as_of: date) -> tuple[list, int, int]:
     rows = []
     assessed = released = 0
 
-    for loan in active_loans():
-        rows.append((loan, assess(loan, cfg, as_of)))
+    # Days past due for the whole active book in one statement, rather than every
+    # loan's schedule fetched and walked. Staging and carrying_amount read only the
+    # loan's own columns, so nothing else needs the instalments.
+    active = arrears_svc.with_arrears(
+        Loan.objects.filter(status=LoanStatus.ACTIVE)
+        .select_related("borrower", "product", "branch"), as_of)
+    for loan in active:
+        days = arrears_svc.days_from(loan.oldest_arrears_due, as_of)
+        rows.append((loan, assess(loan, cfg, as_of, days=days)))
         assessed += 1
 
     stale = (Loan.objects

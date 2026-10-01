@@ -144,6 +144,7 @@ urlpatterns = [
     # ---- reports
     re_path(r"^reports/dashboard/?$", reports.dashboard),
     re_path(r"^reports/par/?$", reports.par),
+    re_path(r"^reports/arrears-ageing/?$", reports.arrears_ageing),
     re_path(r"^reports/collections-due/?$", reports.collections_due),
     re_path(r"^reports/loan-book/?$", reports.loan_book),
     re_path(r"^reports/transactions/?$", reports.transactions),
