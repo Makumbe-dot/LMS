@@ -18,6 +18,7 @@ import Funding from './pages/Funding.jsx'
 import Groups from './pages/Groups.jsx'
 import Journals from './pages/Journals.jsx'
 import Ledger from './pages/Ledger.jsx'
+import LoanBookImport from './pages/LoanBookImport.jsx'
 import LoanDetail from './pages/LoanDetail.jsx'
 import LoanNew from './pages/LoanNew.jsx'
 import Loans from './pages/Loans.jsx'
@@ -73,6 +74,14 @@ export default function App() {
             element={
               <RequireRole roles={['admin', 'loan_officer', 'teller']}>
                 <BulkImport />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/imports/loan-book"
+            element={
+              <RequireRole roles={['admin']}>
+                <LoanBookImport />
               </RequireRole>
             }
           />

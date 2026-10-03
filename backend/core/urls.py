@@ -186,4 +186,5 @@ urlpatterns = [
     re_path(r"^notifications/cancel/?$", reports.cancel_notifications),
     re_path(r"^notifications/gateway/?$", reports.message_gateway),
     re_path(r"^imports/repayments/?$", reports.bulk_repayments),
+    re_path(r"^imports/loan-book/?$", reports.loan_book_import),
 ]

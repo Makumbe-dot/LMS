@@ -50,6 +50,7 @@ const NAV = [
       { to: '/charges', label: 'Charges' },
       { to: '/users', label: 'Users', roles: ['admin'] },
       { to: '/settings', label: 'Settings', roles: ['admin'] },
+      { to: '/imports/loan-book', label: 'Loan book migration', roles: ['admin'] },
       { to: '/audit', label: 'Audit log', roles: ['admin'] },
       { to: '/account', label: 'My account' },
     ],

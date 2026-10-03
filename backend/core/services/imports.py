@@ -17,7 +17,7 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 
 from django.db import transaction
-from django.db.models import Prefetch
+from django.db.models import Prefetch, Q
 
 from ..exceptions import BusinessRuleError
 from ..models import Instalment, Loan, LoanStatus, PaymentMethod, User
@@ -31,8 +31,10 @@ METHODS = {m.value for m in PaymentMethod}
 
 
 def _loan_for(loan_no: str) -> Loan | None:
+    """By this system's number, or by the number a migrated loan had before: payroll
+    returns keep quoting the old one for months after a cut-over."""
     return (Loan.objects
-            .filter(loan_no__iexact=loan_no)
+            .filter(Q(loan_no__iexact=loan_no) | Q(external_ref__iexact=loan_no))
             .select_related("borrower", "product")
             .prefetch_related(Prefetch("instalments", queryset=Instalment.objects.order_by("number")))
             .first())

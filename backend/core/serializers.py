@@ -420,8 +420,8 @@ class LoanSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Loan
-        fields = ["id", "loan_no", "borrower_id", "borrower_name", "product_id", "product_name",
-                  "officer_id", "officer_name", "branch_id", "branch_name",
+        fields = ["id", "loan_no", "external_ref", "borrower_id", "borrower_name", "product_id",
+                  "product_name", "officer_id", "officer_name", "branch_id", "branch_name",
                   "group_id", "refinanced_from_id",
                   "principal", "interest_rate_pct", "rate_method", "repayment_frequency",
                   "term_months", "purpose", "admin_fee", "insurance_fee", "other_charges",
@@ -594,6 +594,14 @@ class BulkImportSerializer(serializers.Serializer):
     file = serializers.FileField()
     commit = serializers.BooleanField(default=False)
     allow_partial = serializers.BooleanField(default=False)
+
+
+class LoanBookImportSerializer(serializers.Serializer):
+    file = serializers.FileField()
+    commit = serializers.BooleanField(default=False)
+    cutover_date = serializers.DateField(
+        required=False, allow_null=True,
+        help_text="The date the balances are true at; the opening postings carry it")
 
 
 # ---------------------------------------------------------------- groups

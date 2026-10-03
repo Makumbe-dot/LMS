@@ -143,6 +143,7 @@ class TxnType(models.TextChoices):
     WRITE_OFF = "write_off", "Write-off"
     RECOVERY = "recovery", "Recovery after write-off"
     REVERSAL = "reversal", "Reversal"
+    OPENING_BALANCE = "opening_balance", "Opening balance brought forward"
 
 
 class AccountType(models.TextChoices):
@@ -699,6 +700,10 @@ class SavingsTransaction(models.Model):
 # ---------------------------------------------------------------- loans
 class Loan(models.Model):
     loan_no = models.CharField(max_length=20, unique=True, db_index=True)
+    # The number this loan had in the system it was migrated from. Payroll returns
+    # keep quoting it for months after a cut-over, so the bulk importer matches on
+    # it too, and it is what makes re-running a migration file refuse duplicates.
+    external_ref = models.CharField(max_length=40, null=True, blank=True)
     borrower = models.ForeignKey(Borrower, on_delete=models.PROTECT, related_name="loans", db_index=True)
     product = models.ForeignKey(LoanProduct, on_delete=models.PROTECT, related_name="loans")
     officer = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
@@ -784,6 +789,11 @@ class Loan(models.Model):
     class Meta:
         db_table = "loans"
         ordering = ["-id"]
+        constraints = [
+            models.UniqueConstraint(fields=["external_ref"],
+                                    condition=models.Q(external_ref__isnull=False),
+                                    name="uq_loan_external_ref"),
+        ]
 
     def __str__(self):
         return self.loan_no

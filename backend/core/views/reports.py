@@ -19,10 +19,12 @@ from ..serializers import (
     AuditSerializer,
     BulkImportSerializer,
     DashboardSerializer,
+    LoanBookImportSerializer,
     NotificationActionSerializer,
     NotificationSerializer,
 )
 from ..services import imports as imp
+from ..services import loanbook
 from ..services import notifications as notify
 from ..services import reports as rpt
 from ..services.amortisation import add_months
@@ -316,3 +318,38 @@ def bulk_repayments(request):
               f"{result['posted_rows']} postings totalling {result['total_amount']}")
     return Response({"committed": True, **validation, **result},
                     status=status.HTTP_201_CREATED)
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAdmin])
+@parser_classes([MultiPartParser, FormParser])
+def loan_book_import(request):
+    """Bring running loans over from another system: GET the template, POST the file.
+
+    POSTed without `commit` it checks every row and reports what would be brought
+    over; with `commit=true` it imports the lot, or nothing.
+    """
+    if request.method == "GET":
+        from django.http import HttpResponse
+
+        response = HttpResponse(loanbook.TEMPLATE, content_type="text/csv")
+        response["Content-Disposition"] = 'attachment; filename="loan_book_template.csv"'
+        return response
+
+    body = LoanBookImportSerializer(data=request.data)
+    body.is_valid(raise_exception=True)
+    upload = body.validated_data["file"]
+    if upload.size > 5 * 1024 * 1024:
+        raise BusinessRuleError("The file is larger than 5 MB; split it into smaller batches.")
+    cutover = body.validated_data.get("cutover_date") or date.today()
+
+    rows = loanbook.parse(upload.read())
+    validation = loanbook.validate(rows, cutover)
+    if not body.validated_data["commit"]:
+        return Response({"committed": False, **validation})
+
+    result = loanbook.commit(rows, validation, request.user, cutover)
+    audit(request.user, "loan_book_import", "system", None,
+          f"{result['imported_rows']} loans brought over at {cutover.isoformat()}, principal "
+          f"{result['principal_outstanding']}")
+    return Response({"committed": True, **validation, **result}, status=status.HTTP_201_CREATED)

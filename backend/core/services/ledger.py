@@ -266,6 +266,18 @@ def _lines_for(txn: Transaction) -> list[tuple[str, Decimal, Decimal, str]]:
             (CODES["recovery_income"], ZERO, amount, "Recovery on a written-off loan"),
         ]
 
+    if txn.txn_type == TxnType.OPENING_BALANCE:
+        # A loan brought over from another system: the receivables arrive, no cash
+        # moves. The other side is 3900 Opening balances, which an accountant clears
+        # against retained earnings once the migrated book is agreed. Interest is
+        # not brought over, because it is recognised when collected.
+        lines = [(CODES["loans_receivable"], principal, ZERO, "Principal brought forward")]
+        if penalty > 0:
+            lines.append((CODES["penalties_receivable"], penalty, ZERO,
+                          "Penalties brought forward"))
+        lines.append((OPENING_BALANCES, ZERO, q(principal + penalty), "Opening balance"))
+        return lines
+
     # TxnType.FEE is informational: the fee is already inside the disbursement entry.
     return []
 

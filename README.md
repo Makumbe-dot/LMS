@@ -54,6 +54,18 @@ oldest instalment first), cash / bank / mobile money / salary deduction, reversa
 waivers, and **bulk CSV import** with a line-by-line dry run before anything is posted.
 Overpayment is refused.
 
+**Loan book migration** — going live with loans already running elsewhere: one CSV row per loan
+(borrower, product, principal, term, disbursement date, amount paid so far, optional penalties and
+the old system's loan number), checked line by line and then imported all or nothing as at a
+cut-over date. The original schedule is rebuilt from the contract and the payments laid over it
+oldest first, so arrears come out as they would for any loan; a borrower not on the register is
+created from the row. Each loan posts one **opening balance** — principal and penalties against
+**3900 Opening balances**, no cash — so the reconciliation agrees on day one; cash and other
+balances come over by journal against the same account. Penalties arrive as a figure and are only
+charged from the cut-over onwards, never re-accrued for the old system's months. A row whose old
+number was already imported is refused, so a file can be re-run safely, and payroll returns that
+keep quoting the old number still find the loan.
+
 **Fees mid-term** — a charge raised against a running loan is either collected at the counter
 (cash in, the balance untouched) or **added to the loan balance**, where it rides on the next
 unpaid instalment and is recovered ahead of interest.

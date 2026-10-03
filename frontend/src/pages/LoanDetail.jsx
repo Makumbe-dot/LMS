@@ -413,6 +413,7 @@ export default function LoanDetail() {
                 'APR, fees included',
                 loan.apr_pct === null || loan.apr_pct === undefined ? '-' : `${pct(loan.apr_pct)} a year`,
               ],
+              ...(loan.external_ref ? [['Previous system number', loan.external_ref]] : []),
               ['Officer', loan.officer_name || '-'],
               ['Branch', loan.branch_name || '-'],
               ...(loan.group_name ? [['Group', loan.group_name]] : []),

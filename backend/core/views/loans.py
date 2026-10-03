@@ -99,7 +99,8 @@ def loans(request):
         search = request.query_params.get("q")
         if search:
             qs = qs.filter(
-                Q(loan_no__icontains=search) | Q(borrower__first_name__icontains=search)
+                Q(loan_no__icontains=search) | Q(external_ref__icontains=search)
+                | Q(borrower__first_name__icontains=search)
                 | Q(borrower__last_name__icontains=search)
                 | Q(borrower__national_id__icontains=search))
         for param, field in (("branch_id", "branch_id"), ("officer_id", "officer_id"),
