@@ -1,11 +1,17 @@
 """Queue borrower reminders and arrears notices, for Task Scheduler / cron.
 
     python manage.py send_reminders                 queue only
-    python manage.py send_reminders --send          queue, then mark due ones sent
+    python manage.py send_reminders --send          queue, then deliver what is due
     python manage.py send_reminders --as-of 2026-09-30 --days-before 5
+    python manage.py send_reminders --send --limit 50
 
 Idempotent: every message carries a dedupe key, so running it twice in a day
-queues nothing extra.
+queues nothing extra, and a message that failed stays queued for the next run
+until it has had MESSAGE_MAX_ATTEMPTS.
+
+--send DELIVERS through the configured gateway. On a development machine that is
+the console backend, which logs rather than sends — deliberately, so a seeded
+database cannot text real-looking numbers.
 """
 from datetime import date
 
@@ -13,18 +19,20 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
 from core.audit import audit
-from core.services.notifications import generate_reminders, mark_sent
+from core.services.notifications import generate_reminders, send
 
 
 class Command(BaseCommand):
-    help = "Queue instalment reminders and arrears notices for active loans."
+    help = "Queue instalment reminders and arrears notices, and optionally deliver them."
 
     def add_arguments(self, parser):
         parser.add_argument("--as-of", dest="as_of", help="ISO date to run for (default: today)")
         parser.add_argument("--days-before", dest="days_before", type=int,
                            help="Reminder window in days (default: the organisation setting)")
         parser.add_argument("--send", action="store_true",
-                           help="Also mark messages scheduled up to today as sent")
+                           help="Deliver messages scheduled up to today through the gateway")
+        parser.add_argument("--limit", type=int,
+                           help="Deliver at most this many, for a first run on a big queue")
 
     def handle(self, *args, **options):
         as_of = None
@@ -42,8 +50,28 @@ class Command(BaseCommand):
             f"{result['as_of']}: queued {result['reminders_queued']} reminders and "
             f"{result['arrears_notices_queued']} arrears notices"))
 
-        if options["send"]:
-            with transaction.atomic():
-                sent = mark_sent(as_of=as_of)
-                audit(None, "send_notifications", "system", None, str(sent))
-            self.stdout.write(self.style.SUCCESS(f"Marked {sent['sent']} message(s) sent"))
+        if not options["send"]:
+            return
+
+        outcome = send(as_of=as_of, limit=options.get("limit"))
+        audit(None, "send_notifications", "system", None, str(
+            {k: v for k, v in outcome.items() if k != "gateway"}))
+
+        gateway = outcome["gateway"]
+        self.stdout.write(self.style.SUCCESS(
+            f"Delivered {outcome['sent']} of {outcome['attempted']} message(s) "
+            f"via {gateway['sms_backend']}/{gateway['email_backend']}"))
+        if outcome["retrying"]:
+            self.stdout.write(self.style.WARNING(
+                f"{outcome['retrying']} will be retried on the next run "
+                f"(up to {gateway['max_attempts']} attempts)"))
+        if outcome["failed"]:
+            self.stdout.write(self.style.ERROR(
+                f"{outcome['failed']} gave up permanently:"))
+            for line in outcome["errors"]:
+                self.stdout.write(self.style.ERROR(f"  {line}"))
+        if not gateway["sms_delivers"] and not gateway["email_delivers"]:
+            self.stdout.write(self.style.WARNING(
+                "Nothing actually left the building: both backends are "
+                f"'{gateway['sms_backend']}'/'{gateway['email_backend']}'. Set "
+                "MESSAGE_SMS_BACKEND=http and MESSAGE_HTTP_URL to deliver for real."))

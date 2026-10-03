@@ -8,3 +8,5 @@ mssql-django>=2.0
 pyodbc>=5.1
 django-cors-headers>=4.4
 python-dotenv>=1.0
+# The OpenAPI schema at /api/schema and the browsable reference at /api/docs.
+drf-spectacular>=0.28

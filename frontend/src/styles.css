@@ -47,6 +47,12 @@
   --badge-closed-bg:  #e6e9ee;  --badge-closed-fg:  #414c59;
   --badge-bad-bg:     #fbe0dc;  --badge-bad-fg:     #8a2419;
 
+  /* risk rating bands - always paired with the band written out */
+  --risk-low-bg:      #d8f3e4;  --risk-low-fg:      #105434;
+  --risk-medium-bg:   #fff3d6;  --risk-medium-fg:   #7d5100;
+  --risk-high-bg:     #ffe0c2;  --risk-high-fg:     #7a3500;
+  --risk-critical-bg: #f9cdc6;  --risk-critical-fg: #7d1d13;
+
   --shadow: 0 1px 2px rgba(16, 24, 40, 0.05);
   --radius: 8px;
 }
@@ -93,6 +99,11 @@
     --badge-closed-bg:  #272e37;  --badge-closed-fg:  #b3bdc9;
     --badge-bad-bg:     #431f1b;  --badge-bad-fg:     #f59c8e;
 
+    --risk-low-bg:      #12392a;  --risk-low-fg:      #5fd19d;
+    --risk-medium-bg:   #3d2f10;  --risk-medium-fg:   #f0c060;
+    --risk-high-bg:     #4a2810;  --risk-high-fg:     #f6a35e;
+    --risk-critical-bg: #5a1d18;  --risk-critical-fg: #ff9e91;
+
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
   }
 }
@@ -136,6 +147,11 @@
   --badge-closed-bg:  #272e37;  --badge-closed-fg:  #b3bdc9;
   --badge-bad-bg:     #431f1b;  --badge-bad-fg:     #f59c8e;
 
+  --risk-low-bg:      #12392a;  --risk-low-fg:      #5fd19d;
+  --risk-medium-bg:   #3d2f10;  --risk-medium-fg:   #f0c060;
+  --risk-high-bg:     #4a2810;  --risk-high-fg:     #f6a35e;
+  --risk-critical-bg: #5a1d18;  --risk-critical-fg: #ff9e91;
+
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 
@@ -170,6 +186,9 @@ h3 { font-size: 15px; margin: 0 0 12px; }
   position: sticky;
   top: 0;
   height: 100vh;
+  /* Sticky and viewport-high, so a menu taller than the screen must scroll here,
+     or the last items (Audit log, Sign out) can never be reached. */
+  overflow-y: auto;
 }
 .brand {
   font-weight: 700; font-size: 22px; color: #fff;
@@ -388,6 +407,47 @@ dl.kv dd { margin: 0; font-variant-numeric: tabular-nums; }
 .badge.sent { background: var(--badge-active-bg); color: var(--badge-active-fg); }
 .badge.cancelled { background: var(--badge-closed-bg); color: var(--badge-closed-fg); }
 .badge.failed { background: var(--badge-bad-bg); color: var(--badge-bad-fg); }
+.badge.open { background: var(--badge-active-bg); color: var(--badge-active-fg); }
+
+/* ---------------------------------------------------------------- risk register */
+.rating {
+  display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px;
+  font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.rating-low      { background: var(--risk-low-bg);      color: var(--risk-low-fg); }
+.rating-medium   { background: var(--risk-medium-bg);   color: var(--risk-medium-fg); }
+.rating-high     { background: var(--risk-high-bg);     color: var(--risk-high-fg); }
+.rating-critical { background: var(--risk-critical-bg); color: var(--risk-critical-fg); }
+
+.risk-overview { display: grid; grid-template-columns: max-content 1fr; gap: 24px; align-items: start; }
+.heatmap { display: grid; grid-template-columns: auto auto; grid-template-rows: auto auto; gap: 4px 8px; }
+.heatmap-y-title {
+  writing-mode: vertical-rl; transform: rotate(180deg); text-align: center;
+  font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px;
+}
+.heatmap-x-title {
+  grid-column: 2; text-align: center; font-size: 11px; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .5px;
+}
+.heatmap-grid { display: flex; flex-direction: column; gap: 3px; }
+.heatmap-row { display: flex; gap: 3px; align-items: center; }
+.heatmap-y, .heatmap-x {
+  width: 40px; text-align: center; font-size: 11px; color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.heatmap-y { width: 16px; }
+.heatmap-cell {
+  width: 40px; height: 40px; border: 2px solid transparent; border-radius: 4px;
+  font: inherit; font-weight: 700; cursor: pointer; padding: 0;
+}
+.heatmap-cell.empty { opacity: .45; cursor: default; }
+.heatmap-cell.selected { border-color: var(--text); }
+.heatmap-cell:hover:not(:disabled) { filter: brightness(1.06); }
+.risk-text { white-space: pre-wrap; margin: 4px 0 12px; }
+
+@media (max-width: 720px) {
+  .risk-overview { grid-template-columns: 1fr; }
+}
 
 .tag-danger { color: var(--danger); font-weight: 600; }
 .tag-ok { color: var(--ok); font-weight: 600; }

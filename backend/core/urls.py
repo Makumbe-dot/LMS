@@ -15,6 +15,7 @@ from .views import (
     products,
     provisions,
     reports,
+    risks,
     savings,
 )
 
@@ -144,6 +145,14 @@ urlpatterns = [
     re_path(r"^ledger/income-statement/?$", ledger.income_statement),
     re_path(r"^ledger/rebuild/?$", ledger.rebuild),
 
+    # ---- risk register (the literal path must precede the numeric id routes)
+    re_path(r"^risks/summary/?$", risks.summary),
+    re_path(r"^risks/?$", risks.risks),
+    re_path(r"^risks/(?P<risk_id>\d+)/reviews/?$", risks.reviews),
+    re_path(r"^risks/(?P<risk_id>\d+)/close/?$", risks.close),
+    re_path(r"^risks/(?P<risk_id>\d+)/reopen/?$", risks.reopen),
+    re_path(r"^risks/(?P<risk_id>\d+)/?$", risks.risk_detail),
+
     # ---- reports
     re_path(r"^reports/dashboard/?$", reports.dashboard),
     re_path(r"^reports/par/?$", reports.par),
@@ -164,6 +173,8 @@ urlpatterns = [
     re_path(r"^notifications/?$", reports.notifications),
     re_path(r"^notifications/generate/?$", reports.generate_notifications),
     re_path(r"^notifications/send/?$", reports.send_notifications),
+    re_path(r"^notifications/mark-sent/?$", reports.mark_notifications_sent),
     re_path(r"^notifications/cancel/?$", reports.cancel_notifications),
+    re_path(r"^notifications/gateway/?$", reports.message_gateway),
     re_path(r"^imports/repayments/?$", reports.bulk_repayments),
 ]

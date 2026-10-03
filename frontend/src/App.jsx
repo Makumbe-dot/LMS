@@ -27,6 +27,7 @@ import Performance from './pages/Performance.jsx'
 import Periods from './pages/Periods.jsx'
 import Products from './pages/Products.jsx'
 import Provisioning from './pages/Provisioning.jsx'
+import Risks from './pages/Risks.jsx'
 import Savings from './pages/Savings.jsx'
 import Settings from './pages/Settings.jsx'
 import Transactions from './pages/Transactions.jsx'
@@ -82,6 +83,8 @@ export default function App() {
           <Route path="/performance" element={<Performance />} />
           <Route path="/provisioning" element={<Provisioning />} />
           <Route path="/periods" element={<Periods />} />
+
+          <Route path="/risks" element={<Risks />} />
 
           <Route path="/products" element={<Products />} />
           <Route path="/charges" element={<Charges />} />

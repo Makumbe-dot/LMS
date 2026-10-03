@@ -488,6 +488,75 @@ class PasswordAndLockoutTests(FeatureTestBase):
                                     format="json")
         self.assertEqual(response.status_code, 400)
 
+    # ---- the password policy
+    #
+    # AUTH_PASSWORD_VALIDATORS used to be dead configuration: nothing called
+    # validate_password, so a serializer's min_length was the only rule and
+    # CommonPasswordValidator never fired. Each of these would have passed.
+    def test_a_short_password_is_refused(self):
+        response = self.teller.post("/api/auth/change-password", {
+            "current_password": "teller123", "new_password": "short1",
+        }, format="json")
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn("10 characters", response.json()["detail"])
+
+    def test_a_common_password_is_refused(self):
+        response = self.teller.post("/api/auth/change-password", {
+            "current_password": "teller123", "new_password": "password123",
+        }, format="json")
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn("too common", response.json()["detail"].lower())
+
+    def test_an_all_numeric_password_is_refused(self):
+        response = self.teller.post("/api/auth/change-password", {
+            "current_password": "teller123", "new_password": "4815162342",
+        }, format="json")
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn("numeric", response.json()["detail"].lower())
+
+    def test_a_password_too_like_the_username_is_refused(self):
+        response = self.teller.post("/api/auth/change-password", {
+            "current_password": "teller123", "new_password": "tellerxxxx",
+        }, format="json")
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn("similar", response.json()["detail"].lower())
+
+    def test_a_password_too_like_the_full_name_is_refused(self):
+        """full_name, not first_name/last_name — this project's User has the one.
+
+        Django's default attribute list would check two fields that do not exist
+        here and miss the one that does, so the validator has to be told.
+        """
+        from django.contrib.auth.password_validation import validate_password
+        from django.core.exceptions import ValidationError
+
+        teller = User.objects.get(username="teller")
+        with self.assertRaises(ValidationError) as caught:
+            validate_password(teller.full_name.replace(" ", ""), user=teller)
+        self.assertIn("similar", " ".join(caught.exception.messages).lower())
+
+    def test_the_policy_applies_when_an_admin_creates_a_user(self):
+        response = self.admin.post("/api/users", {
+            "username": "newofficer", "full_name": "New Officer",
+            "password": "password", "role": "loan_officer",
+        }, format="json")
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertFalse(User.objects.filter(username="newofficer").exists())
+
+    def test_the_policy_applies_when_an_admin_resets_a_password(self):
+        teller = User.objects.get(username="teller")
+        response = self.admin.patch(f"/api/users/{teller.id}", {"password": "abc"},
+                                    format="json")
+        self.assertEqual(response.status_code, 400, response.content)
+
+    def test_a_password_that_meets_the_policy_is_accepted(self):
+        response = self.admin.post("/api/users", {
+            "username": "newofficer", "full_name": "New Officer",
+            "password": "Zvakanaka-2026", "role": "loan_officer",
+        }, format="json")
+        self.assertEqual(response.status_code, 201, response.content)
+        self.client_for("newofficer", "Zvakanaka-2026")
+
 
 # ---------------------------------------------------------------- documents
 @override_settings(MEDIA_ROOT=tempfile.mkdtemp(prefix="lms-test-media-"))

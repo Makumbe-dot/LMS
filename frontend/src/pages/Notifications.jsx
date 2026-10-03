@@ -12,8 +12,10 @@ const STATUSES = ['queued', 'sent', 'cancelled', 'failed']
 const KINDS = ['reminder', 'arrears', 'receipt', 'welcome']
 
 /**
- * The borrower messaging outbox. Messages are generated here and marked sent;
- * wiring an SMS gateway is a change to the backend alone.
+ * The borrower messaging outbox: generated here, delivered through the configured
+ * gateway. The banner says which gateway, because "is this actually going
+ * anywhere?" is the first thing anyone asks about an outbox — and for most of this
+ * system's life the answer was no.
  */
 export default function Notifications() {
   const { can } = useAuth()
@@ -28,7 +30,9 @@ export default function Notifications() {
 
   const path = `/api/notifications${qs({ status, kind, q: debounced, page, page_size: 25 })}`
   const { data, error, loading, reload } = useApi(path)
+  const gateway = useApi('/api/notifications/gateway')
   const mayAct = can('admin', 'loan_officer')
+  const delivers = gateway.data?.sms_delivers || gateway.data?.email_delivers
 
   const rows = data?.results || []
   const allSelected = rows.length > 0 && selected.length === rows.length
@@ -51,7 +55,7 @@ export default function Notifications() {
     <>
       <PageHeader
         title="Messages"
-        meta="Reminders and arrears notices queued for borrowers. Nothing leaves the system until it is marked sent."
+        meta="Reminders, arrears notices and receipts. Nothing leaves the system until it is sent."
       >
         {mayAct ? (
           <>
@@ -73,10 +77,20 @@ export default function Notifications() {
               type="button"
               className="btn primary"
               disabled={busy}
+              title={
+                delivers
+                  ? 'Hand each message to the gateway'
+                  : 'The gateway is set to log rather than deliver; nothing will reach a borrower'
+              }
               onClick={() =>
                 run(
                   post('/api/notifications/send', selected.length ? { ids: selected } : {}),
-                  (r) => `Marked ${r.sent} message(s) sent`,
+                  (r) => {
+                    const parts = [`${r.sent} sent`]
+                    if (r.retrying) parts.push(`${r.retrying} will be retried`)
+                    if (r.failed) parts.push(`${r.failed} failed`)
+                    return parts.join(', ')
+                  },
                 )
               }
             >
@@ -105,6 +119,27 @@ export default function Notifications() {
           Export CSV
         </button>
       </PageHeader>
+
+      {gateway.data ? (
+        <div className={delivers ? 'hint' : 'banner'} role={delivers ? undefined : 'status'}>
+          {delivers ? (
+            <>
+              <strong>Delivering for real. </strong>
+              SMS via <code>{gateway.data.sms_backend}</code>, email via{' '}
+              <code>{gateway.data.email_backend}</code>. A message that fails is retried on
+              the next run, up to {gateway.data.max_attempts} attempts, then marked failed.
+            </>
+          ) : (
+            <>
+              <strong>Nothing is being delivered. </strong>
+              The gateway is set to <code>{gateway.data.sms_backend}</code>, which logs messages
+              instead of sending them — deliberate on a development machine, so seeded data
+              cannot text real numbers. Set <code>MESSAGE_SMS_BACKEND=http</code> and{' '}
+              <code>MESSAGE_HTTP_URL</code> in <code>backend/.env</code> to deliver.
+            </>
+          )}
+        </div>
+      ) : null}
 
       <div className="row" style={{ marginBottom: 12 }}>
         <select
@@ -209,8 +244,48 @@ export default function Notifications() {
                   </span>
                 ),
               },
-              { key: 'status', header: 'Status', render: (r) => <Badge value={r.status} /> },
-              { key: 'sent', header: 'Sent', render: (r) => dateTime(r.sent_at) },
+              {
+                key: 'status',
+                header: 'Status',
+                render: (r) => (
+                  <>
+                    <Badge value={r.status} />
+                    {r.status === 'queued' && r.attempts > 0 ? (
+                      <span className="muted" title={r.error || ''}>
+                        {' '}
+                        retrying, {r.attempts} attempt{r.attempts === 1 ? '' : 's'}
+                      </span>
+                    ) : null}
+                  </>
+                ),
+              },
+              {
+                key: 'sent',
+                header: 'Sent',
+                render: (r) =>
+                  r.sent_at ? (
+                    <>
+                      {dateTime(r.sent_at)}
+                      {r.provider ? <span className="muted"> via {r.provider}</span> : null}
+                    </>
+                  ) : (
+                    '-'
+                  ),
+              },
+              {
+                key: 'error',
+                header: 'Last error',
+                render: (r) =>
+                  r.error ? (
+                    <span className="tag-danger" title={r.error}
+                          style={{ display: 'inline-block', maxWidth: 260, overflow: 'hidden',
+                                   textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {r.error}
+                    </span>
+                  ) : (
+                    ''
+                  ),
+              },
             ]}
           />
         </>

@@ -179,7 +179,9 @@ def sign_out_everywhere(request):
 @api_view(["POST"])
 def change_password(request):
     """Any signed-in user can change their own password."""
-    body = ChangePasswordSerializer(data=request.data)
+    # The request goes in the context so the password policy can refuse a password
+    # that is the user's own username.
+    body = ChangePasswordSerializer(data=request.data, context={"request": request})
     body.is_valid(raise_exception=True)
     user = request.user
     if not user.check_password(body.validated_data["current_password"]):
@@ -228,7 +230,8 @@ def user_detail(request, user_id: int):
     user = User.objects.filter(pk=user_id).first()
     if not user:
         raise NotFound("User not found")
-    body = UserUpdateSerializer(data=request.data, partial=True)
+    body = UserUpdateSerializer(data=request.data, partial=True,
+                                context={"target_user": user})
     body.is_valid(raise_exception=True)
     data = dict(body.validated_data)
     password = data.pop("password", None)

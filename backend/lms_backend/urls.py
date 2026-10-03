@@ -1,14 +1,17 @@
 """URL routing.
 
-/api/...     the JSON API consumed by the React app
-/admin/      Django admin, handy for poking at SQL Server rows through a UI
-/            the built React SPA (frontend/dist), when it has been built
+/api/...        the JSON API consumed by the React app
+/api/schema     the OpenAPI document, for generating a client
+/api/docs       a browsable reference built from it
+/admin/         Django admin, handy for poking at SQL Server rows through a UI
+/               the built React SPA (frontend/dist), when it has been built
 """
 from django.conf import settings
 from django.contrib import admin
 from django.http import FileResponse, Http404, JsonResponse
 from django.urls import include, path, re_path
 from django.views.static import serve
+from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, SpectacularSwaggerView
 
 
 def health(_request):
@@ -27,6 +30,14 @@ def spa(_request, *_args, **_kwargs):
 
 urlpatterns = [
     path("api/health", health, name="health"),
+    # The schema and the two readers are AllowAny so an integrator can read the
+    # contract without an account. They describe the API; they do not expose it,
+    # and every endpoint they describe still needs a token.
+    path("api/schema", SpectacularAPIView.as_view(permission_classes=[]), name="schema"),
+    path("api/docs", SpectacularSwaggerView.as_view(url_name="schema",
+                                                    permission_classes=[]), name="docs"),
+    path("api/redoc", SpectacularRedocView.as_view(url_name="schema",
+                                                   permission_classes=[]), name="redoc"),
     path("api/", include("core.urls")),
     path("admin/", admin.site.urls),
 ]

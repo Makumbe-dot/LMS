@@ -4,7 +4,11 @@ Money is rendered as a decimal string so cents survive JSON. Read serializers
 add the derived values the UI needs (borrower name on a loan, arrears, the
 totals on an instalment) rather than making the client recompute them.
 """
+from datetime import date
 from decimal import Decimal
+
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 
 from rest_framework import serializers
 
@@ -43,6 +47,11 @@ from .models import (
     ProvisionRunLine,
     ProvisionRunStatus,
     RateMethod,
+    Risk,
+    RiskCategory,
+    RiskReview,
+    RiskStatus,
+    RiskTreatment,
     Role,
     SavingsAccount,
     SavingsProduct,
@@ -86,8 +95,30 @@ class RefreshSerializer(serializers.Serializer):
     refresh_token = serializers.CharField()
 
 
-class UserCreateSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(min_length=6, write_only=True)
+class PasswordPolicyMixin:
+    """Run Django's AUTH_PASSWORD_VALIDATORS on whatever password is being set.
+
+    Without this the setting is dead configuration — nothing in the project called
+    `validate_password`, so a serializer's `min_length` was the only rule that
+    applied and CommonPasswordValidator never fired. "password1" was acceptable.
+
+    The validated user is passed where it is known, so the
+    UserAttributeSimilarityValidator can reject a password that is the username.
+    """
+    password_field = "password"
+
+    def _check_password(self, value, user=None):
+        if value in (None, ""):
+            return value
+        try:
+            validate_password(value, user=user)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(list(exc.messages))
+        return value
+
+
+class UserCreateSerializer(PasswordPolicyMixin, serializers.ModelSerializer):
+    password = serializers.CharField(write_only=True)
     role = serializers.ChoiceField(choices=Role.choices, default=Role.LOAN_OFFICER)
 
     class Meta:
@@ -99,25 +130,40 @@ class UserCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Username already exists")
         return value
 
+    def validate(self, data):
+        # Validated here rather than in validate_password, so the username and
+        # full name are available for the similarity check.
+        self._check_password(data.get("password"),
+                             user=User(username=data.get("username", ""),
+                                       full_name=data.get("full_name", "")))
+        return data
+
     def create(self, validated):
         return User.objects.create_user(**validated)
 
 
-class UserUpdateSerializer(serializers.Serializer):
+class UserUpdateSerializer(PasswordPolicyMixin, serializers.Serializer):
     full_name = serializers.CharField(required=False)
     role = serializers.ChoiceField(choices=Role.choices, required=False)
     is_active = serializers.BooleanField(required=False)
-    password = serializers.CharField(min_length=6, required=False, allow_null=True)
+    password = serializers.CharField(required=False, allow_null=True)
     branch_id = serializers.IntegerField(required=False, allow_null=True)
     phone = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     email = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     unlock = serializers.BooleanField(required=False,
                                       help_text="Clear a lockout from failed sign-ins")
 
+    def validate_password(self, value):
+        return self._check_password(value, user=self.context.get("target_user"))
 
-class ChangePasswordSerializer(serializers.Serializer):
+
+class ChangePasswordSerializer(PasswordPolicyMixin, serializers.Serializer):
     current_password = serializers.CharField()
-    new_password = serializers.CharField(min_length=6)
+    new_password = serializers.CharField()
+
+    def validate_new_password(self, value):
+        return self._check_password(value, user=self.context.get("request") and
+                                    self.context["request"].user)
 
 
 # ---------------------------------------------------------------- borrowers
@@ -504,6 +550,7 @@ class NotificationSerializer(serializers.ModelSerializer):
         model = Notification
         fields = ["id", "borrower_id", "borrower_name", "loan_id", "loan_no", "kind", "channel",
                   "to_address", "subject", "body", "status", "scheduled_for", "sent_at", "error",
+                  "attempts", "last_attempt_at", "provider", "provider_message_id",
                   "created_at"]
 
 
@@ -1020,6 +1067,147 @@ class PeriodCloseSerializer(serializers.Serializer):
 
 
 class PeriodReopenSerializer(serializers.Serializer):
+    reason = serializers.CharField(min_length=10, trim_whitespace=True)
+
+
+# ---------------------------------------------------------------- risk register
+def _rating(likelihood: int, impact: int) -> str:
+    from .services.risks import rating
+
+    return rating(likelihood, impact)
+
+
+class RiskReviewSerializer(serializers.ModelSerializer):
+    reviewed_by_name = serializers.CharField(source="reviewed_by.full_name", read_only=True,
+                                             default=None)
+    residual_score = serializers.SerializerMethodField()
+    residual_rating = serializers.SerializerMethodField()
+
+    class Meta:
+        model = RiskReview
+        fields = ["id", "reviewed_on", "reviewed_by_name", "residual_likelihood",
+                  "residual_impact", "residual_score", "residual_rating", "note",
+                  "next_review_on", "created_at"]
+
+    def get_residual_score(self, obj) -> int:
+        return obj.residual_likelihood * obj.residual_impact
+
+    def get_residual_rating(self, obj) -> str:
+        return _rating(obj.residual_likelihood, obj.residual_impact)
+
+
+class RiskSerializer(serializers.ModelSerializer):
+    """A register row. `can_edit` is attached by the view for the signed-in user, so
+    the client shows Edit and Review exactly where the server would allow them."""
+    owner_name = serializers.CharField(source="owner.full_name", read_only=True, default=None)
+    owner_active = serializers.BooleanField(source="owner.is_active", read_only=True,
+                                            default=False)
+    raised_by_name = serializers.CharField(source="raised_by.full_name", read_only=True,
+                                           default=None)
+    branch_name = serializers.CharField(source="branch.name", read_only=True, default=None)
+    inherent_score = serializers.SerializerMethodField()
+    inherent_rating = serializers.SerializerMethodField()
+    residual_score = serializers.SerializerMethodField()
+    residual_rating = serializers.SerializerMethodField()
+    review_overdue = serializers.SerializerMethodField()
+    action_overdue = serializers.SerializerMethodField()
+    can_edit = serializers.BooleanField(read_only=True, default=False)
+
+    class Meta:
+        model = Risk
+        fields = ["id", "risk_no", "title", "description", "category", "branch_id",
+                  "branch_name", "owner_id", "owner_name", "owner_active", "raised_by_name",
+                  "inherent_likelihood", "inherent_impact", "inherent_score", "inherent_rating",
+                  "controls", "residual_likelihood", "residual_impact", "residual_score",
+                  "residual_rating", "treatment", "action_plan", "action_due",
+                  "action_overdue", "review_every_months", "last_reviewed_on",
+                  "next_review_on", "review_overdue", "status", "closed_on", "closed_reason",
+                  "can_edit", "created_at", "updated_at"]
+
+    def get_inherent_score(self, obj) -> int:
+        return obj.inherent_likelihood * obj.inherent_impact
+
+    def get_inherent_rating(self, obj) -> str:
+        return _rating(obj.inherent_likelihood, obj.inherent_impact)
+
+    def get_residual_score(self, obj) -> int:
+        return obj.residual_likelihood * obj.residual_impact
+
+    def get_residual_rating(self, obj) -> str:
+        return _rating(obj.residual_likelihood, obj.residual_impact)
+
+    def get_review_overdue(self, obj) -> bool:
+        return obj.status == RiskStatus.OPEN and obj.next_review_on < date.today()
+
+    def get_action_overdue(self, obj) -> bool:
+        return (obj.status == RiskStatus.OPEN and bool(obj.action_due)
+                and obj.action_due < date.today())
+
+
+class RiskDetailSerializer(RiskSerializer):
+    reviews = RiskReviewSerializer(many=True, read_only=True)
+
+    class Meta(RiskSerializer.Meta):
+        fields = RiskSerializer.Meta.fields + ["reviews"]
+
+
+_RATING = {"min_value": 1, "max_value": 5}
+
+
+class RiskCreateSerializer(serializers.Serializer):
+    title = serializers.CharField(max_length=200)
+    description = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    category = serializers.ChoiceField(choices=RiskCategory.choices,
+                                       default=RiskCategory.OPERATIONAL)
+    branch = serializers.PrimaryKeyRelatedField(queryset=Branch.objects.all(), required=False,
+                                                allow_null=True)
+    owner = serializers.PrimaryKeyRelatedField(queryset=User.objects.all(), required=False,
+                                               allow_null=True,
+                                               help_text="Defaults to whoever raises it")
+    inherent_likelihood = serializers.IntegerField(**_RATING)
+    inherent_impact = serializers.IntegerField(**_RATING)
+    controls = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    residual_likelihood = serializers.IntegerField(**_RATING)
+    residual_impact = serializers.IntegerField(**_RATING)
+    treatment = serializers.ChoiceField(choices=RiskTreatment.choices,
+                                        default=RiskTreatment.TREAT)
+    action_plan = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    action_due = serializers.DateField(required=False, allow_null=True)
+    review_every_months = serializers.IntegerField(default=3)
+
+
+class RiskUpdateSerializer(serializers.Serializer):
+    """An edit. The residual rating is not here: it changes only through a review."""
+    title = serializers.CharField(max_length=200, required=False)
+    description = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    category = serializers.ChoiceField(choices=RiskCategory.choices, required=False)
+    branch = serializers.PrimaryKeyRelatedField(queryset=Branch.objects.all(), required=False,
+                                                allow_null=True)
+    owner = serializers.PrimaryKeyRelatedField(queryset=User.objects.all(), required=False)
+    inherent_likelihood = serializers.IntegerField(required=False, **_RATING)
+    inherent_impact = serializers.IntegerField(required=False, **_RATING)
+    controls = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    treatment = serializers.ChoiceField(choices=RiskTreatment.choices, required=False)
+    action_plan = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    action_due = serializers.DateField(required=False, allow_null=True)
+    review_every_months = serializers.IntegerField(required=False)
+
+
+class RiskReviewRequestSerializer(serializers.Serializer):
+    residual_likelihood = serializers.IntegerField(**_RATING)
+    residual_impact = serializers.IntegerField(**_RATING)
+    note = serializers.CharField(min_length=10, trim_whitespace=True,
+                                 help_text="What was checked and what changed")
+    reviewed_on = serializers.DateField(required=False, allow_null=True)
+    next_review_on = serializers.DateField(
+        required=False, allow_null=True,
+        help_text="Defaults to the risk's review interval after this review")
+    controls = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    action_plan = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    action_due = serializers.DateField(required=False, allow_null=True)
+
+
+class RiskReasonSerializer(serializers.Serializer):
     reason = serializers.CharField(min_length=10, trim_whitespace=True)
 
 

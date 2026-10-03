@@ -27,6 +27,21 @@ def env_list(key: str, default: str = "") -> list[str]:
     return [p.strip() for p in env(key, default).split(",") if p.strip()]
 
 
+def _pairs(raw: str) -> dict[str, str]:
+    """"a=1|b=2" -> {"a": "1", "b": "2"}.
+
+    Pipe-separated rather than comma, because an SMS gateway's fixed fields
+    routinely contain commas (a sender id, a callback URL with a query string).
+    """
+    out = {}
+    for chunk in raw.split("|"):
+        if "=" in chunk:
+            key, _, value = chunk.partition("=")
+            if key.strip():
+                out[key.strip()] = value.strip()
+    return out
+
+
 # ---------------------------------------------------------------- core
 SECRET_KEY = env("SECRET_KEY", "django-insecure-change-me-in-production")
 DEBUG = env_bool("DEBUG", True)
@@ -44,6 +59,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "django.contrib.humanize",
     "rest_framework",
+    "drf_spectacular",
     # NOT rest_framework_simplejwt.token_blacklist: its migration 0008 alters an
     # int column to bigint, which SQL Server refuses while a unique constraint
     # depends on that column ("ALTER TABLE ALTER COLUMN token_id failed"). The test
@@ -124,10 +140,20 @@ DEFAULT_AUTO_FIELD = "django.db.models.AutoField"
 # ---------------------------------------------------------------- auth
 AUTH_USER_MODEL = "core.User"
 
+# Ten characters, not six, and not the username or a number. This is a system
+# through which money leaves a building; six characters is a few hours of offline
+# guessing. Overridable because an existing deployment's users have to be able to
+# keep signing in until they next change it — the validators only run on a SET.
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
-     "OPTIONS": {"min_length": 6}},
+     "OPTIONS": {"min_length": int(env("PASSWORD_MIN_LENGTH", "10"))}},
     {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
+    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+    # user_attributes is spelled out because this project's User has `full_name`
+    # rather than Django's first_name/last_name, so the default list would check
+    # two fields that do not exist and miss the one that does.
+    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator",
+     "OPTIONS": {"user_attributes": ("username", "full_name", "email")}},
 ]
 
 REST_FRAMEWORK = {
@@ -141,6 +167,7 @@ REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"]
     + (["rest_framework.renderers.BrowsableAPIRenderer"] if DEBUG else []),
     "EXCEPTION_HANDLER": "core.exceptions.detail_exception_handler",
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     # Money stays a string on the wire ("1234.56"), never a float, so cents
     # survive the trip to the browser intact.
     "COERCE_DECIMAL_TO_STRING": True,
@@ -203,6 +230,81 @@ ALLOWED_UPLOAD_TYPES = env_list(
 # Account lockout after repeated bad passwords
 LOGIN_MAX_ATTEMPTS = int(env("LOGIN_MAX_ATTEMPTS", "5"))
 LOGIN_LOCKOUT_MINUTES = int(env("LOGIN_LOCKOUT_MINUTES", "15"))
+
+# ---------------------------------------------------------------- api schema
+SPECTACULAR_SETTINGS = {
+    "TITLE": "Loan Management System API",
+    "DESCRIPTION": (
+        "Borrowers, loans, repayments, savings, a double-entry general ledger, IFRS 9 "
+        "provisioning, funder borrowings and period close.\n\n"
+        "**Money is a decimal string**, never a JSON number — `\"1234.56\"` — so cents "
+        "survive the round trip. Parse it as a decimal, not a float.\n\n"
+        "**Authenticate** with `POST /api/auth/login`, then send `Authorization: Bearer "
+        "<access_token>`. Access tokens last 30 minutes; exchange the refresh token at "
+        "`POST /api/auth/refresh` to renew. A refresh token is good for exactly one use.\n\n"
+        "**409 Conflict** means the date falls in a closed accounting period, which is "
+        "distinct from a 400 validation failure and needs a different response from a "
+        "client: pick another date, or ask an administrator to reopen the period."
+    ),
+    "VERSION": "1.0.0",
+    "SERVE_INCLUDE_SCHEMA": False,
+    # Enum names are generated from the choice values, which collide across models
+    # (several have an `active`); naming them explicitly keeps the generated
+    # clients readable instead of producing Status1, Status2, Status3.
+    "ENUM_NAME_OVERRIDES": {
+        "LoanStatusEnum": "core.models.LoanStatus.choices",
+        "InstalmentStatusEnum": "core.models.InstalmentStatus.choices",
+        "TxnTypeEnum": "core.models.TxnType.choices",
+        "SavingsStatusEnum": "core.models.SavingsStatus.choices",
+        "SavingsTxnTypeEnum": "core.models.SavingsTxnType.choices",
+        "NotificationStatusEnum": "core.models.NotificationStatus.choices",
+        "RoleEnum": "core.models.Role.choices",
+        "AccountTypeEnum": "core.models.AccountType.choices",
+        "PeriodStateEnum": "core.models.PeriodState.choices",
+        "FacilityTxnTypeEnum": "core.models.FacilityTxnType.choices",
+        "CapitalTxnTypeEnum": "core.models.CapitalTxnType.choices",
+    },
+    "COMPONENT_SPLIT_REQUEST": True,
+    "SORT_OPERATIONS": False,
+}
+
+# ---------------------------------------------------------------- messages
+# How borrower reminders, arrears notices and receipts actually leave the
+# building. See core/services/gateways.py.
+#
+# "console" by default on purpose: a development machine running against seeded
+# data must not text real-looking phone numbers. Set MESSAGE_SMS_BACKEND=http and
+# fill in MESSAGE_HTTP_URL to deliver for real.
+MESSAGE_SMS_BACKEND = env("MESSAGE_SMS_BACKEND", "console")
+MESSAGE_EMAIL_BACKEND = env("MESSAGE_EMAIL_BACKEND", "console")
+MESSAGE_MAX_ATTEMPTS = int(env("MESSAGE_MAX_ATTEMPTS", "3"))
+MESSAGE_FILE_PATH = env("MESSAGE_FILE_PATH", "")
+
+# The generic HTTP gateway. Everything a provider needs is configuration, so
+# swapping aggregator is an .env change rather than a code change.
+MESSAGE_HTTP = {
+    "url": env("MESSAGE_HTTP_URL", ""),
+    "method": env("MESSAGE_HTTP_METHOD", "POST"),
+    "format": env("MESSAGE_HTTP_FORMAT", "form"),       # form | json
+    "to_field": env("MESSAGE_HTTP_TO_FIELD", "to"),
+    "body_field": env("MESSAGE_HTTP_BODY_FIELD", "message"),
+    "id_path": env("MESSAGE_HTTP_ID_PATH", ""),          # e.g. SMSMessageData.Recipients.0.messageId
+    "timeout": int(env("MESSAGE_HTTP_TIMEOUT", "20")),
+    # Fixed fields and headers, as "key=value" pairs separated by "|". Kept out of
+    # the URL so an API key never lands in an access log.
+    "extra": _pairs(env("MESSAGE_HTTP_FIELDS", "")),
+    "headers": _pairs(env("MESSAGE_HTTP_HEADERS", "")),
+}
+
+# Email, for the email channel when MESSAGE_EMAIL_BACKEND is "smtp".
+EMAIL_BACKEND = env("EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend")
+EMAIL_HOST = env("EMAIL_HOST", "")
+EMAIL_PORT = int(env("EMAIL_PORT", "587"))
+EMAIL_HOST_USER = env("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = env_bool("EMAIL_USE_TLS", True)
+EMAIL_TIMEOUT = int(env("EMAIL_TIMEOUT", "20"))
+DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", "no-reply@example.com")
 
 # ---------------------------------------------------------------- production
 # These only bite when DEBUG is off, so development is unaffected. Behind a

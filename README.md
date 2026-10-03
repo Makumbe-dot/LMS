@@ -87,6 +87,11 @@ history, affordability, current arrears, employment, KYC), with the reason for e
 **Security register** — collateral pledged against a loan: type, description, valuation, reference,
 and release or realisation.
 
+**Risk register** — the organisation's risks, each with an **owner who keeps it current**: rated
+inherent and residual on a 5 × 5 grid, with controls, a treatment, an action plan and a review
+schedule. Owners record dated reviews, so every change of rating has a reason and a history. A heat
+map, overdue-review tracking and CSV export for the risk committee.
+
 **Security and control** — JWT login with **renewable sessions and real revocation**, four roles
 (admin, loan officer, teller, viewer) enforced per endpoint, **account lockout after repeated bad
 passwords**, self-service password change, sign out on one device or on all of them, full audit log
@@ -264,6 +269,9 @@ case-insensitive default collation. It covers:
 - sessions — renewal, rotation, sign-out, and revocation when an account is disabled or a role
   changes;
 - performance and payroll reports;
+- the risk register — that ownership, not role, decides who may change a risk; that the residual
+  rating moves only through a review and never above the inherent one (in the database too);
+  closure, reopening, the heat map counts, and that the list does not query per risk;
 - branches, settings, search, documents, pagination, password change and account lockout.
 
 **The frontend suite** (vitest + Testing Library, jsdom) covers the parts where a bug is invisible
@@ -357,10 +365,47 @@ BACKUP LOG LMS TO DISK = N'...\LMS-log.trn';   -- then schedule this every 15 mi
 
 ## Sending messages for real
 
-`core/services/notifications.py` generates messages into an outbox and `mark_sent()` flips their
-status. That function is the seam: call your SMS or email provider per message and record success
-or failure there, instead of blanket-marking. Nothing else in the system needs to change, and the
-Messages screen already shows the queue, the failures and a CSV export for a bulk provider.
+Reminders, arrears notices and receipts are generated into an outbox and delivered by
+`core/services/gateways.py`. **It really sends** — the previous version marked the whole queue sent
+in one UPDATE that contacted nobody, so the system reported arrears notices as delivered that no
+borrower had received, which is worse than admitting it cannot send.
+
+Four backends, picked per channel by setting. None is a vendor SDK:
+
+| Backend | What it does |
+|---|---|
+| `console` | Logs the message. **The default**, so a machine running against seeded data cannot text real-looking numbers. |
+| `file` | Appends JSON lines to a file — for a demo, or to hand an aggregator a batch by hand. |
+| `smtp` | Real email through Django's mail backend. No third-party account needed. |
+| `http` | A form or JSON POST, configured entirely by `.env`. |
+
+The HTTP backend is configuration rather than code: the URL, the method, the format, which field
+carries the recipient, which carries the text, any fixed fields and headers, and where the provider's
+message id lives in the response. Africa's Talking, Infobip, Twilio and most African aggregators all
+accept some shape of that, so swapping provider is an `.env` change and adding one is not a new
+dependency. `backend/.env.example` has worked examples for two of them. Fixed fields travel in the
+body, never the URL, so an API key does not land in an access log.
+
+```powershell
+cd backend
+..\.venv\Scripts\python.exe manage.py send_reminders            # queue only
+..\.venv\Scripts\python.exe manage.py send_reminders --send     # queue, then deliver
+..\.venv\Scripts\python.exe manage.py send_reminders --send --limit 50
+```
+
+Delivery is recorded per message: the attempt count, when it was last tried, which provider took it
+and what it called the message. A failure does not stop the batch — one bad phone number must not
+hold up everybody else's receipt — and the distinction that matters is **temporary versus
+permanent**: a 5xx or a timeout is retried on the next run up to `MESSAGE_MAX_ATTEMPTS`, while a
+malformed address or a 4xx is marked failed at once, because retrying it twice more only delays
+someone noticing. A *misconfigured* gateway raises instead of failing the queue, so a missing URL
+cannot mark two hundred messages failed.
+
+The Messages page says in a banner whether anything is actually being delivered, because that is the
+first question anyone asks about an outbox. `POST /api/notifications/mark-sent` still exists for the
+operator who exported the queue and sent it through an aggregator's own console — it records
+`provider = manual` and a note that nothing was delivered from here, so the audit trail does not
+claim otherwise.
 
 ---
 
@@ -399,11 +444,12 @@ backend/                        Django project
       arrears.py                the one set-based arrears definition every report reads
       tokens.py                 issuing, renewing and revoking sessions
       periods.py                period close, and the guard that refuses a closed date
+      risks.py                  the risk register: ownership, ratings, reviews, the heat map
       reports.py                dashboard, PAR, collections due, loan book, statement,
                                 IFRS 9 provisioning, performance, payroll deductions
     templates/core/             the printable loan agreement
     views/                      auth, borrowers, products, charges, loans, groups, savings,
-                                ledger, funding, provisions, periods, reports, org
+                                ledger, funding, provisions, periods, reports, risks, org
     authentication.py           JWT auth that honours revocation
     management/commands/        seed, run_penalties, run_savings_interest, run_provisions,
                                 accrue_borrowing_interest, send_reminders, close_period,
@@ -414,10 +460,10 @@ frontend/                       React + Vite single-page app
     lib/        api.js (fetch + JWT), auth.jsx, org.jsx, periods.jsx, theme.jsx, format.js,
                 useApi.js
     components/ Layout, GlobalSearch, DataTable, Modal, Toast, GroupedBars, HBars,
-                LoanTable, ui.jsx
+                LoanTable, RiskHeatMap, ui.jsx
     pages/      Login, Dashboard, Borrowers, Groups, Loans, Savings, Collections, Arrears,
                 Payroll, BulkImport, Notifications, Transactions, Ledger, Funding, Performance,
-                Provisioning, Periods, Products, Charges, Users, Settings, Account, Audit
+                Provisioning, Periods, Risks, Products, Charges, Users, Settings, Account, Audit
     test/       setup.js (jsdom, storage, a loud default fetch) and harness.jsx
                 (renderPage with the providers stubbed, stubApi by path fragment)
     styles.css  design tokens, light and dark themes
@@ -731,6 +777,53 @@ closed at 09:00 on the 1st does not fail that evening's batch.
 the provision, then close. The provision run is *not* given `--skip-closed`, deliberately: if you
 close September before booking September's provision, the run fails loudly rather than silently
 skipping a month of impairment.
+
+## Risk register
+
+The **Risk register** page (under Governance) holds the organisation's risks. The rule it is built
+around: **whoever owns a risk maintains it.**
+
+| Who | Can |
+|---|---|
+| Anyone signed in | Read the register, the heat map and every risk's history; export it |
+| Admin, loan officer, teller | Raise a risk — they become its owner |
+| **The risk's owner** | Edit it, and record reviews — whatever their role |
+| Administrator | Everything above on any risk; hand a risk to a different owner; close and reopen |
+
+Ownership is the permission, not the role. A teller who owns "cash shortages at the counter"
+maintains that risk and a loan officer who does not own it cannot, and a board member with the
+read-only viewer role can be made accountable for a risk and then keep it current. A risk whose
+owner's account is disabled counts as **unowned** until an administrator reassigns it.
+
+Each risk is rated twice, likelihood × impact on 1–5 scales: **inherent** (before controls) and
+**residual** (after them). Scores band as 1–4 low, 5–9 medium, 10–16 high, 20–25 critical, and the
+register is sorted worst residual first. Neither residual axis may exceed its inherent one —
+controls do not make a risk more likely or worse — and SQL Server refuses it as well as the API.
+
+**The residual rating changes only by recording a review.** An edit cannot touch it. A review
+takes the new rating, a note saying what was checked and what changed, and optionally updated
+controls and plan; it sets the next review from the risk's interval (1, 3, 6 or 12 months). Raising
+a risk writes its first history row, so the history always starts at the original rating and can
+show a committee whether a risk is getting better or worse.
+
+Closing a risk needs an administrator and a reason; a closed risk cannot be edited or reviewed
+until it is reopened, and reopening makes it due for review at once. Every raise, edit, review,
+reassignment, close and reopen is in the audit log.
+
+The API, for anyone integrating:
+
+```
+GET   /api/risks            ?status=open|closed|all  owner=me|none|<id>  overdue=1  rating=high
+                            category=  q=  branch_id=  likelihood=&impact=&basis=residual|inherent
+                            fmt=csv
+POST  /api/risks            raise a risk
+GET   /api/risks/summary    counts, by rating, overdue, mine, unowned, both heat maps
+GET   /api/risks/{id}       a risk with its history
+PATCH /api/risks/{id}       edit (owner or admin; owner changes are admin only)
+POST  /api/risks/{id}/reviews
+POST  /api/risks/{id}/close   {"reason": "..."}   admin
+POST  /api/risks/{id}/reopen  {"reason": "..."}   admin
+```
 
 ## Notes on the SQL Server backend
 

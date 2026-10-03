@@ -115,19 +115,89 @@ def queue_receipt(loan: Loan, amount: Decimal, txn_id: int, txn_date: date) -> N
                   scheduled_for=txn_date, dedupe_key=f"receipt:{txn_id}")
 
 
-def mark_sent(ids: list[int] | None = None, as_of=None) -> dict:
-    """Mark queued messages as sent.
-
-    This is the seam a real SMS or email gateway plugs into: call the provider
-    per message and record success or failure instead of blanket-marking.
-    """
+def due(ids: list[int] | None = None, as_of=None):
+    """Messages the outbox should try to deliver now."""
     qs = Notification.objects.filter(status=NotificationStatus.QUEUED)
     if ids:
-        qs = qs.filter(id__in=ids)
-    else:
-        qs = qs.filter(scheduled_for__lte=as_of or date.today())
-    count = qs.update(status=NotificationStatus.SENT, sent_at=timezone.now())
-    return {"sent": count}
+        return qs.filter(id__in=ids)
+    return qs.filter(scheduled_for__lte=as_of or date.today())
+
+
+def send(ids: list[int] | None = None, as_of=None, limit: int | None = None) -> dict:
+    """Hand each due message to the gateway and record what happened.
+
+    One message at a time, each in its own transaction. The previous version was a
+    single UPDATE marking the whole queue sent without contacting anyone, so the
+    system reported arrears notices as delivered that no borrower had received.
+
+    A failure does not stop the batch: one bad phone number must not hold up
+    everybody else's receipt. A message is retried until MESSAGE_MAX_ATTEMPTS and
+    then marked FAILED, except for a permanent failure — a malformed address, a
+    4xx from the provider — which is marked FAILED at once, because retrying it
+    twice more only delays someone noticing.
+
+    A misconfigured gateway raises instead, because that is not one message's
+    problem and marking a whole queue failed over it would lose the queue.
+    """
+    from . import gateways
+
+    queue = due(ids, as_of).select_related("borrower", "loan").order_by("attempts", "id")
+    if limit:
+        queue = queue[:limit]
+
+    sent = failed = retrying = 0
+    errors: list[str] = []
+    for message in list(queue):
+        backend = gateways.backend_for(message.channel)  # raises if misconfigured
+        result = backend.send(message)
+
+        message.attempts += 1
+        message.last_attempt_at = timezone.now()
+        message.provider = result.provider
+        if result.ok:
+            message.status = NotificationStatus.SENT
+            message.sent_at = timezone.now()
+            message.provider_message_id = result.message_id
+            message.error = None
+            sent += 1
+        else:
+            message.error = result.error
+            if result.permanent or not message.can_retry:
+                message.status = NotificationStatus.FAILED
+                failed += 1
+                errors.append(f"{message.id} to {message.to_address}: {result.error}")
+            else:
+                # Stays QUEUED, so the next run picks it up.
+                retrying += 1
+        message.save(update_fields=["status", "sent_at", "error", "attempts",
+                                    "last_attempt_at", "provider", "provider_message_id"])
+
+    return {
+        "sent": sent,
+        "failed": failed,
+        "retrying": retrying,
+        "attempted": sent + failed + retrying,
+        "errors": errors[:20],
+        "gateway": gateways.describe(),
+    }
+
+
+def mark_sent(ids: list[int] | None = None, as_of=None) -> dict:
+    """Mark messages sent WITHOUT delivering them.
+
+    Kept for the one honest use: an operator who exported the queue and sent it
+    through an aggregator's own web console needs to reconcile the outbox
+    afterwards. It is not the send path — `send()` is — and it records that nothing
+    was delivered from here, so the audit trail does not claim otherwise.
+    """
+    rows = list(due(ids, as_of))
+    for message in rows:
+        message.status = NotificationStatus.SENT
+        message.sent_at = timezone.now()
+        message.provider = "manual"
+        message.error = "Marked sent by hand; not delivered by this system."
+        message.save(update_fields=["status", "sent_at", "provider", "error"])
+    return {"marked_sent": len(rows)}
 
 
 def cancel(ids: list[int]) -> dict:

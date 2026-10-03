@@ -39,6 +39,10 @@ const NAV = [
     ],
   },
   {
+    heading: 'Governance',
+    items: [{ to: '/risks', label: 'Risk register' }],
+  },
+  {
     heading: 'Administration',
     items: [
       { to: '/products', label: 'Products' },

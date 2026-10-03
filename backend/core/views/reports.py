@@ -229,14 +229,49 @@ def generate_notifications(request):
 @api_view(["POST"])
 @permission_classes([IsOfficer])
 def send_notifications(request):
-    """Mark queued messages as sent. This is where a real SMS gateway plugs in."""
+    """Deliver queued messages through the configured gateway.
+
+    Not wrapped in one transaction: each message records its own outcome, and a
+    rollback on the last of two hundred would lose the record of the first
+    hundred and ninety-nine that genuinely went out.
+    """
+    body = NotificationActionSerializer(data=request.data)
+    body.is_valid(raise_exception=True)
+    result = notify.send(body.validated_data.get("ids"), body.validated_data.get("as_of"))
+    audit(request.user, "send_notifications", "system", None,
+          str({k: v for k, v in result.items() if k != "gateway"}))
+    return Response(result)
+
+
+@api_view(["POST"])
+@permission_classes([IsOfficer])
+def mark_notifications_sent(request):
+    """Mark messages sent WITHOUT delivering them.
+
+    For the operator who exported the queue and sent it through an aggregator's
+    own console: the outbox still has to be reconciled afterwards. Recorded as
+    not-delivered-from-here so the audit trail does not claim otherwise.
+    """
     body = NotificationActionSerializer(data=request.data)
     body.is_valid(raise_exception=True)
     with transaction.atomic():
         result = notify.mark_sent(body.validated_data.get("ids"),
                                   body.validated_data.get("as_of"))
-        audit(request.user, "send_notifications", "system", None, str(result))
+        audit(request.user, "mark_notifications_sent", "system", None,
+              f"{result['marked_sent']} message(s) marked sent by hand, not delivered")
     return Response(result)
+
+
+@api_view(["GET"])
+def message_gateway(request):
+    """What would happen to a message right now.
+
+    "Is this actually going anywhere?" is the first question anyone asks about an
+    outbox, and for most of this system's life the answer was no.
+    """
+    from ..services import gateways
+
+    return Response(gateways.describe())
 
 
 @api_view(["POST"])
