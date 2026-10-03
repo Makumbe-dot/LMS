@@ -86,8 +86,8 @@
     <tr><td>Principal advanced</td><td>{{ currency }} {{ loan.principal|floatformat:2|intcomma }}</td></tr>
     <tr><td>Interest rate</td>
         <td>{{ loan.interest_rate_pct|floatformat:3 }}% per month, {{ rate_method }}</td></tr>
-    <tr><td>Term</td><td>{{ loan.term_months }} months</td></tr>
-    <tr><td>Monthly instalment</td>
+    <tr><td>Term</td><td>{{ loan.term_months }} {{ term_unit }}</td></tr>
+    <tr><td>{{ frequency_label }} instalment</td>
         <td><strong>{{ currency }} {{ loan.instalment_amount|floatformat:2|intcomma }}</strong></td></tr>
     <tr><td>Total interest payable</td><td>{{ currency }} {{ loan.total_interest|floatformat:2|intcomma }}</td></tr>
     <tr><td>Total repayable</td><td>{{ currency }} {{ total_repayable|floatformat:2|intcomma }}</td></tr>
@@ -112,8 +112,11 @@
   <ol>
     <li>
       The Borrower shall repay {{ currency }}
-      {{ loan.instalment_amount|floatformat:2|intcomma }} on the
-      {{ payday_ordinal }} day of each month until the loan is repaid in full.
+      {{ loan.instalment_amount|floatformat:2|intcomma }}
+      {% if frequency == "weekly" %}every week{% if first_due %}, starting on {{ first_due|date:"l j F Y" }},{% endif %}
+      {% elif frequency == "fortnightly" %}every second week{% if first_due %}, starting on {{ first_due|date:"l j F Y" }},{% endif %}
+      {% else %}on the {{ payday_ordinal }} day of each month{% endif %}
+      until the loan is repaid in full.
     </li>
     <li>
       Payments are applied first to penalties, then to any charges added to the loan balance,

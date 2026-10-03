@@ -22,6 +22,15 @@ behind, the group does not take on new debt.
 fee; accounts with deposits, withdrawals, reversals, dormancy and closure; a running statement.
 Members' balances are carried as a liability in the ledger, never as income.
 
+**Repayment frequency** — a product repays **monthly, fortnightly or weekly**. The rate stays a
+monthly rate whatever the frequency, and a week carries 12/52 of it, so a year of weekly instalments
+costs the same nominal interest as a year of monthly ones: the frequency changes when the borrower
+pays, not what the product costs. A loan's term is a number of instalments (sixteen weeks, six
+months). A monthly loan's first instalment falls on the borrower's payday; a weekly or fortnightly
+one falls a period after disbursement, moved to the group's meeting day when the borrower is in a
+group. Affordability is always measured on what the instalments come to over a month, because
+salaries are monthly. A loan keeps the frequency it was sold with.
+
 **Loan products** — **reducing-balance or flat-rate** interest, amount and term limits, upfront
 admin and credit-life fees (deducted at disbursement), daily penalty rate, grace days, and a
 maximum instalment-to-salary ratio, plus a **charges catalogue** of additional fees defined once

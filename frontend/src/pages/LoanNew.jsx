@@ -6,7 +6,15 @@ import Scorecard from '../components/Scorecard.jsx'
 import { useToast } from '../components/Toast.jsx'
 import { Check, ErrorBanner, Field, KeyValues, Loading, PageHeader } from '../components/ui.jsx'
 import { post } from '../lib/api.js'
-import { fmt, getCurrency, money, pct, rateMethodLabel } from '../lib/format.js'
+import {
+  fmt,
+  frequencyLabel,
+  getCurrency,
+  money,
+  pct,
+  rateMethodLabel,
+  termUnit,
+} from '../lib/format.js'
 import { useApi } from '../lib/useApi.js'
 
 export default function LoanNew() {
@@ -134,12 +142,13 @@ export default function LoanNew() {
               <option key={p.id} value={p.id}>
                 {p.name} - {p.interest_rate_pct}%/month {p.rate_method === 'flat' ? 'flat' : ''},{' '}
                 {fmt(p.min_amount)} to {fmt(p.max_amount)}, {p.min_term_months}-
-                {p.max_term_months}m
+                {p.max_term_months} {termUnit(p.repayment_frequency)}
               </option>
             ))}
           </Field>
           {product ? (
             <p className="muted" style={{ fontSize: 12, marginTop: -4 }}>
+              {frequencyLabel(product.repayment_frequency)} repayments.{' '}
               {rateMethodLabel(product.rate_method)}
               {product.rate_method === 'flat'
                 ? ' — interest is charged on the original principal for the whole term.'
@@ -160,7 +169,7 @@ export default function LoanNew() {
               hint={product ? `${fmt(product.min_amount)} to ${fmt(product.max_amount)}` : undefined}
             />
             <Field
-              label="Term (months)"
+              label={`Term (${termUnit(product?.repayment_frequency)})`}
               type="number"
               min={product?.min_term_months || 1}
               max={product?.max_term_months || undefined}
@@ -169,7 +178,7 @@ export default function LoanNew() {
               onChange={set('term_months')}
               hint={
                 product
-                  ? `${product.min_term_months} to ${product.max_term_months} months`
+                  ? `${product.min_term_months} to ${product.max_term_months} ${termUnit(product.repayment_frequency)}`
                   : undefined
               }
             />
@@ -223,7 +232,13 @@ export default function LoanNew() {
             <>
               <KeyValues
                 items={[
-                  ['Monthly instalment', <strong key="i">{money(quote.instalment_amount)}</strong>],
+                  [
+                    `${frequencyLabel(quote.repayment_frequency)} instalment`,
+                    <strong key="i">{money(quote.instalment_amount)}</strong>,
+                  ],
+                  ...(quote.repayment_frequency !== 'monthly'
+                    ? [['Over a month', money(quote.monthly_equivalent)]]
+                    : []),
                   ['Method', `${pct(quote.interest_rate_pct)} / month, ${rateMethodLabel(quote.rate_method).toLowerCase()}`],
                   ['Total interest', money(quote.total_interest)],
                   ['Total repayable', money(quote.total_repayable)],
@@ -239,7 +254,7 @@ export default function LoanNew() {
                   ...(quote.affordability_pct !== null
                     ? [
                         [
-                          'Instalment / salary',
+                          'Repayments / salary, a month',
                           <span key="a" className={quote.affordable ? 'tag-ok' : 'tag-danger'}>
                             {pct(quote.affordability_pct)}{' '}
                             {quote.affordable ? '(affordable)' : '(exceeds the product limit)'}

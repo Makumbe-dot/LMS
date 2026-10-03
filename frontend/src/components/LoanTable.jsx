@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 
-import { fmt, num, pct } from '../lib/format.js'
+import { fmt, num, pct, termShort } from '../lib/format.js'
 import DataTable from './DataTable.jsx'
 import { Badge } from './ui.jsx'
 
@@ -29,7 +29,12 @@ export default function LoanTable({ loans, empty = 'No loans' }) {
     },
     { key: 'principal', header: 'Principal', num: true, render: (r) => fmt(r.principal) },
     { key: 'rate', header: 'Rate', num: true, render: (r) => pct(r.interest_rate_pct) },
-    { key: 'term', header: 'Term', num: true, render: (r) => `${r.term_months}m` },
+    {
+      key: 'term',
+      header: 'Term',
+      num: true,
+      render: (r) => termShort(r.term_months, r.repayment_frequency),
+    },
     { key: 'instalment', header: 'Instalment', num: true, render: (r) => fmt(r.instalment_amount) },
     {
       key: 'outstanding',

@@ -6,7 +6,7 @@ refresh_balances(), which is the single place that writes the schedule and the
 loan's running balances back to SQL Server. Callers wrap their work in
 transaction.atomic().
 """
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from django.db import IntegrityError, transaction
@@ -29,9 +29,12 @@ from ..models import (
 )
 from . import charges, periods
 from .amortisation import (
+    MONTHLY,
     add_months,
     annual_percentage_rate,
     build_schedule,
+    monthly_equivalent,
+    nth_due_date,
     q,
     set_day,
     total_interest,
@@ -128,14 +131,49 @@ def _apr(net_advanced: Decimal, rows, start: date) -> Decimal | None:
     return annual_percentage_rate(net_advanced, [(r.due_date, r.instalment) for r in rows], start)
 
 
-def default_first_due(disb: date, payday: int | None) -> date:
-    """First instalment falls on the borrower's next payday at least ~2 weeks after disbursement."""
-    if payday:
-        candidate = set_day(disb, payday)
-        if (candidate - disb).days < 14:
-            candidate = set_day(add_months(disb, 1), payday)
-        return candidate
-    return add_months(disb, 1)
+TERM_UNITS = {"monthly": "months", "fortnightly": "fortnights", "weekly": "weeks"}
+_WEEKDAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+
+
+def _weekday(name: str | None) -> int | None:
+    """Monday = 0, from a group's free-text meeting day ("Friday", "fri"). None if unreadable."""
+    key = (name or "").strip().lower()[:3]
+    return _WEEKDAYS.index(key) if key in _WEEKDAYS else None
+
+
+def meeting_day_of(borrower: Borrower | None) -> str | None:
+    """The meeting day of the group the borrower currently stands behind, if any."""
+    if borrower is None:
+        return None
+    from ..models import GroupMember
+
+    membership = (GroupMember.objects.filter(borrower=borrower, is_active=True)
+                  .select_related("group").first())
+    return membership.group.meeting_day if membership else None
+
+
+def default_first_due(disb: date, payday: int | None, frequency: str = MONTHLY,
+                      meeting_day: str | None = None) -> date:
+    """When the first instalment falls if nobody says otherwise.
+
+    Monthly: the borrower's next payday at least ~2 weeks after disbursement, since
+    a monthly loan is repaid out of a salary. Weekly or fortnightly: one period
+    after disbursement, moved forward to the group's meeting day when the borrower
+    is in a group, since that is where a group loan is repaid.
+    """
+    if frequency == MONTHLY:
+        if payday:
+            candidate = set_day(disb, payday)
+            if (candidate - disb).days < 14:
+                candidate = set_day(add_months(disb, 1), payday)
+            return candidate
+        return add_months(disb, 1)
+
+    candidate = nth_due_date(disb, 1, frequency)
+    weekday = _weekday(meeting_day)
+    if weekday is not None:
+        candidate += timedelta(days=(weekday - candidate.weekday()) % 7)
+    return candidate
 
 
 def validate_terms(product: LoanProduct, principal: Decimal, term: int) -> None:
@@ -145,8 +183,9 @@ def validate_terms(product: LoanProduct, principal: Decimal, term: int) -> None:
         raise BusinessRuleError(
             f"Principal must be between {product.min_amount} and {product.max_amount}")
     if not (product.min_term_months <= term <= product.max_term_months):
+        unit = TERM_UNITS.get(product.repayment_frequency, "instalments")
         raise BusinessRuleError(
-            f"Term must be between {product.min_term_months} and {product.max_term_months} months")
+            f"Term must be between {product.min_term_months} and {product.max_term_months} {unit}")
 
 
 def quote(product: LoanProduct, principal: Decimal, term: int,
@@ -154,24 +193,32 @@ def quote(product: LoanProduct, principal: Decimal, term: int,
     """Indicative pricing and schedule, plus the affordability check."""
     validate_terms(product, principal, term)
     disb = disbursement_date or date.today()
-    first_due = default_first_due(disb, borrower.payday if borrower else None)
+    frequency = product.repayment_frequency
+    first_due = default_first_due(disb, borrower.payday if borrower else None, frequency,
+                                  meeting_day_of(borrower) if frequency != MONTHLY else None)
     rows = build_schedule(principal, product.interest_rate_pct, term, first_due,
-                          product.rate_method)
+                          product.rate_method, frequency)
     admin, ins = _fees(product, principal)
     catalogue = charges.quote_for(product, principal)
     other = q(sum((row["amount"] for row in catalogue), ZERO))
     ti = total_interest(rows)
     fees = q(admin + ins + other)
+    # Salaries are monthly, so a weekly instalment is measured as what it comes to
+    # over a month. Comparing the raw weekly figure would pass a loan that takes
+    # four times the limit.
+    per_month = monthly_equivalent(rows[0].instalment, frequency)
     aff_pct = affordable = None
     if borrower and borrower.net_salary and borrower.net_salary > 0:
-        aff_pct = q(rows[0].instalment / borrower.net_salary * 100)
+        aff_pct = q(per_month / borrower.net_salary * 100)
         affordable = aff_pct <= product.max_instalment_to_salary_pct
     return {
         "principal": q(principal),
         "term_months": term,
+        "repayment_frequency": frequency,
         "interest_rate_pct": product.interest_rate_pct,
         "rate_method": product.rate_method,
         "instalment_amount": rows[0].instalment,
+        "monthly_equivalent": per_month,
         "total_interest": ti,
         "total_repayable": q(principal + ti),
         "admin_fee": admin,
@@ -187,7 +234,7 @@ def quote(product: LoanProduct, principal: Decimal, term: int,
         "affordability_pct": aff_pct,
         "affordable": affordable,
         "schedule": [vars(r) for r in rows],
-        "scorecard": (score_application(borrower, product, principal, term, rows[0].instalment)
+        "scorecard": (score_application(borrower, product, principal, term, per_month)
                       if borrower else None),
     }
 
@@ -247,16 +294,24 @@ def apply(borrower: Borrower, product: LoanProduct, principal: Decimal, term: in
 
     # Joint liability: the group's standing is a fact about this application.
     check_can_borrow(borrower, application_date)
+    if group is None:
+        # A member's loan is the group's exposure whether or not anyone said so
+        # (groups.member_loans counts it either way), so it is booked to the group.
+        from ..models import GroupMember
+
+        membership = GroupMember.objects.filter(borrower=borrower, is_active=True).first()
+        group = membership.group if membership else None
     qt = quote(product, principal, term, application_date, borrower)
     if qt["affordable"] is False:
         raise BusinessRuleError(
-            f"Instalment is {qt['affordability_pct']}% of net salary; "
+            f"Repayments come to {qt['affordability_pct']}% of net salary a month; "
             f"product limit is {product.max_instalment_to_salary_pct}%")
     loan = Loan.objects.create(
         loan_no=next_number("LN"), borrower=borrower, product=product, officer=officer,
         branch_id=borrower.branch_id or getattr(officer, "branch_id", None),
         principal=q(principal), interest_rate_pct=product.interest_rate_pct,
-        rate_method=product.rate_method, term_months=term,
+        rate_method=product.rate_method, repayment_frequency=product.repayment_frequency,
+        term_months=term,
         purpose=purpose, admin_fee=qt["admin_fee"], insurance_fee=qt["insurance_fee"],
         other_charges=qt["other_charges"],
         instalment_amount=qt["instalment_amount"], total_interest=qt["total_interest"],
@@ -306,11 +361,13 @@ def disburse(loan: Loan, user: User, disbursement_date: date | None,
     # Before the schedule is built and written. An application may sit in a closed
     # month — capturing and approving are not postings — but moving the money is.
     periods.assert_open(disb, "This disbursement")
-    first_due = first_instalment_date or default_first_due(disb, loan.borrower.payday)
+    first_due = first_instalment_date or default_first_due(
+        disb, loan.borrower.payday, loan.repayment_frequency,
+        loan.group.meeting_day if loan.group_id else None)
     if first_due <= disb:
         raise BusinessRuleError("First instalment date must be after the disbursement date")
     rows = build_schedule(loan.principal, loan.interest_rate_pct, loan.term_months, first_due,
-                          loan.rate_method)
+                          loan.rate_method, loan.repayment_frequency)
     _create_schedule(loan, rows)
 
     loan.status = LoanStatus.ACTIVE
@@ -599,11 +656,14 @@ def reschedule(loan: Loan, user: User, new_term: int, new_rate: Decimal | None,
 
     new_principal = q(loan.principal_outstanding + capitalised)
     rate = new_rate if new_rate is not None else loan.interest_rate_pct
-    first = first_due or default_first_due(today, loan.borrower.payday)
+    first = first_due or default_first_due(
+        today, loan.borrower.payday, loan.repayment_frequency,
+        loan.group.meeting_day if loan.group_id else None)
     prior_paid = loan.total_paid
 
     loan.instalments.all().delete()
-    rows = build_schedule(new_principal, rate, new_term, first, loan.rate_method)
+    rows = build_schedule(new_principal, rate, new_term, first, loan.rate_method,
+                          loan.repayment_frequency)
     _create_schedule(loan, rows)
 
     loan.principal = new_principal
@@ -636,7 +696,8 @@ def reschedule(loan: Loan, user: User, new_term: int, new_rate: Decimal | None,
         principal_component=capitalised, interest_component=overdue_interest,
         penalty_component=penalties_capitalised, charge_component=charges_capitalised,
         posted_by=user,
-        narration=(f"{narration}: capitalised {new_principal} over {new_term} months at "
+        narration=(f"{narration}: capitalised {new_principal} over {new_term} "
+                   f"{TERM_UNITS.get(loan.repayment_frequency, 'instalments')} at "
                    f"{rate}%/month (previously paid {prior_paid})"),
     )
     return loan

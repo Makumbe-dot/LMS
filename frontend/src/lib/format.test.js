@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'vitest'
 
-import { dateOnly, fmt, humanise, money, num, pct, setCurrency, today } from './format.js'
+import {
+  dateOnly,
+  fmt,
+  humanise,
+  money,
+  num,
+  pct,
+  setCurrency,
+  termShort,
+  termUnit,
+  today,
+} from './format.js'
 
 describe('num', () => {
   it('reads the decimal STRINGS the API sends', () => {
@@ -117,5 +128,20 @@ describe('humanise', () => {
   it('leaves nothing as nothing', () => {
     expect(humanise(null)).toBe('')
     expect(humanise('')).toBe('')
+  })
+})
+
+describe('term units', () => {
+  it('counts a term in the instalments of its frequency', () => {
+    // A weekly loan's term of 16 is sixteen weeks. Labelling it "16 months" would
+    // tell the borrower the loan runs four times longer than it does.
+    expect(termUnit('weekly')).toBe('weeks')
+    expect(termUnit('fortnightly')).toBe('fortnights')
+    expect(termShort(16, 'weekly')).toBe('16w')
+  })
+
+  it('reads a loan with no frequency as monthly, which every older loan is', () => {
+    expect(termUnit(undefined)).toBe('months')
+    expect(termShort(6, null)).toBe('6m')
   })
 })

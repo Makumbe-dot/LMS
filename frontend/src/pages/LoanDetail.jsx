@@ -20,12 +20,14 @@ import {
   dateOnly,
   dateTime,
   fmt,
+  frequencyLabel,
   getCurrency,
   humanise,
   money,
   num,
   pct,
   rateMethodLabel,
+  termUnit,
   today,
 } from '../lib/format.js'
 import { PeriodNotice, useMinPostingDate } from '../lib/periods.jsx'
@@ -59,6 +61,7 @@ function TopUpModal({ loanId, loan, busy, onClose, onApply }) {
     setQuote(null)
     setError('')
   }
+  const product = products.data?.find((p) => String(p.id) === String(form.product_id))
 
   async function preview() {
     setError('')
@@ -106,7 +109,7 @@ function TopUpModal({ loanId, loan, busy, onClose, onApply }) {
           required
         />
         <Field
-          label="New term (months)"
+          label={`New term (${termUnit(product?.repayment_frequency)})`}
           type="number"
           min="1"
           value={form.term_months}
@@ -123,7 +126,10 @@ function TopUpModal({ loanId, loan, busy, onClose, onApply }) {
           <KeyValues
             items={[
               ['New principal', money(quote.new_principal)],
-              ['Monthly instalment', <strong key="i">{money(quote.new_instalment)}</strong>],
+              [
+                `${frequencyLabel(product?.repayment_frequency)} instalment`,
+                <strong key="i">{money(quote.new_instalment)}</strong>,
+              ],
               ['Fees and charges', `−${money(quote.fees)}`],
               ['Net advanced', money(quote.net_disbursed)],
               [
@@ -388,8 +394,11 @@ export default function LoanDetail() {
                 'Rate',
                 `${pct(loan.interest_rate_pct)} per month, ${rateMethodLabel(loan.rate_method).toLowerCase()}`,
               ],
-              ['Term', `${loan.term_months} months`],
-              ['Instalment', money(loan.instalment_amount)],
+              ['Term', `${loan.term_months} ${termUnit(loan.repayment_frequency)}`],
+              [
+                `${frequencyLabel(loan.repayment_frequency)} instalment`,
+                money(loan.instalment_amount),
+              ],
               ['Total interest', money(loan.total_interest)],
               [
                 'Upfront fees',
@@ -1176,12 +1185,13 @@ export default function LoanDetail() {
           </p>
           <div className="grid cols-2">
             <Field
-              label="New term (months)"
+              label={`New term (${termUnit(loan.repayment_frequency)})`}
               type="number"
               min="1"
               name="new_term_months"
               required
               defaultValue={loan.term_months}
+              hint={`${frequencyLabel(loan.repayment_frequency)} instalments, as before`}
             />
             <Field
               label="New rate (%/month)"

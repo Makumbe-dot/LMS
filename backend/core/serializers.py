@@ -350,9 +350,11 @@ class ScorecardSerializer(serializers.Serializer):
 class LoanQuoteSerializer(serializers.Serializer):
     principal = money()
     term_months = serializers.IntegerField()
+    repayment_frequency = serializers.CharField()
     interest_rate_pct = serializers.DecimalField(max_digits=6, decimal_places=3)
     rate_method = serializers.CharField()
     instalment_amount = money()
+    monthly_equivalent = money()
     total_interest = money()
     total_repayable = money()
     admin_fee = money()
@@ -419,8 +421,8 @@ class LoanSerializer(serializers.ModelSerializer):
         fields = ["id", "loan_no", "borrower_id", "borrower_name", "product_id", "product_name",
                   "officer_id", "officer_name", "branch_id", "branch_name",
                   "group_id", "refinanced_from_id",
-                  "principal", "interest_rate_pct", "rate_method", "term_months", "purpose",
-                  "admin_fee", "insurance_fee", "other_charges",
+                  "principal", "interest_rate_pct", "rate_method", "repayment_frequency",
+                  "term_months", "purpose", "admin_fee", "insurance_fee", "other_charges",
                   "instalment_amount", "total_interest", "total_cost_of_credit", "apr_pct",
                   "status",
                   "application_date", "approved_at", "rejection_reason", "disbursement_date",

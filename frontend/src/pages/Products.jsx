@@ -6,7 +6,7 @@ import { useToast } from '../components/Toast.jsx'
 import { Check, ErrorBanner, Field, Loading, PageHeader } from '../components/ui.jsx'
 import { patch, post } from '../lib/api.js'
 import { useAuth } from '../lib/auth.jsx'
-import { fmt, pct, rateMethodLabel } from '../lib/format.js'
+import { fmt, frequencyLabel, pct, rateMethodLabel, termUnit } from '../lib/format.js'
 import { useApi } from '../lib/useApi.js'
 
 const NUMERIC = [
@@ -85,9 +85,15 @@ export default function Products() {
               render: (r) => `${fmt(r.min_amount)} - ${fmt(r.max_amount)}`,
             },
             {
+              key: 'frequency',
+              header: 'Repaid',
+              render: (r) => frequencyLabel(r.repayment_frequency),
+            },
+            {
               key: 'term',
               header: 'Term',
-              render: (r) => `${r.min_term_months} - ${r.max_term_months} m`,
+              render: (r) =>
+                `${r.min_term_months} - ${r.max_term_months} ${termUnit(r.repayment_frequency)}`,
             },
             { key: 'admin', header: 'Admin fee', num: true, render: (r) => pct(r.admin_fee_pct) },
             {
@@ -160,6 +166,17 @@ export default function Products() {
               <option value="flat">Flat rate</option>
             </Field>
             <Field
+              as="select"
+              label="Repaid"
+              name="repayment_frequency"
+              defaultValue={product?.repayment_frequency || 'monthly'}
+              hint="The rate stays per month; a week carries 12/52 of it. Loans keep the frequency they were sold with."
+            >
+              <option value="monthly">Monthly</option>
+              <option value="fortnightly">Fortnightly</option>
+              <option value="weekly">Weekly</option>
+            </Field>
+            <Field
               label="Min amount"
               name="min_amount"
               type="number"
@@ -176,15 +193,16 @@ export default function Products() {
               defaultValue={product?.max_amount ?? 5000}
             />
             <Field
-              label="Min term (months)"
+              label="Min term (instalments)"
               name="min_term_months"
               type="number"
               min="1"
               required
               defaultValue={product?.min_term_months ?? 1}
+              hint="Months, fortnights or weeks, as repaid"
             />
             <Field
-              label="Max term (months)"
+              label="Max term (instalments)"
               name="max_term_months"
               type="number"
               min="1"

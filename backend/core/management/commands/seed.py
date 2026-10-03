@@ -43,6 +43,7 @@ from core.models import (
     ProvisionRun,
     ProvisionRunLine,
     RateMethod,
+    RepaymentFrequency,
     Risk,
     RiskCategory,
     RiskReview,
@@ -55,7 +56,7 @@ from core.models import (
     User,
 )
 from core.services import loans as svc
-from core.services.amortisation import add_months, monthly_instalment, q
+from core.services.amortisation import add_months, instalment_amount, monthly_equivalent, q
 from core.services import funding as funding_svc
 from core.services import groups as group_svc
 from core.services import provisioning as provisioning_svc
@@ -123,6 +124,13 @@ PRODUCTS = [
          min_amount=Decimal("200"), max_amount=Decimal("3000"),
          min_term_months=3, max_term_months=4, admin_fee_pct=Decimal("2"),
          insurance_fee_pct=Decimal("1"), penalty_rate_pct_per_day=Decimal("0.5"), grace_days=3),
+    # Weekly, to exercise the repayment frequencies. Terms are in weeks.
+    dict(code="GRP-WK", name="Group Business Loan",
+         description="Working capital for group members, repaid weekly at the group meeting",
+         interest_rate_pct=Decimal("6"), repayment_frequency=RepaymentFrequency.WEEKLY,
+         min_amount=Decimal("100"), max_amount=Decimal("1500"),
+         min_term_months=8, max_term_months=26, admin_fee_pct=Decimal("2"),
+         insurance_fee_pct=Decimal("1"), penalty_rate_pct_per_day=Decimal("0.5"), grace_days=2),
 ]
 
 FIRST = ["Tatenda", "Chipo", "Farai", "Nyasha", "Kudzai", "Rumbidzai", "Tinashe", "Vimbai",
@@ -339,9 +347,11 @@ class Command(BaseCommand):
             # principal capped by affordability
             max_inst = (borrower.net_salary * product.max_instalment_to_salary_pct / 100
                         * Decimal("0.95"))
-            max_p = min(product.max_amount,
-                        max_inst / monthly_instalment(Decimal(1000), product.interest_rate_pct,
-                                                      term) * 1000)
+            per_thousand = monthly_equivalent(
+                instalment_amount(Decimal(1000), product.interest_rate_pct, term,
+                                  product.rate_method, product.repayment_frequency),
+                product.repayment_frequency)
+            max_p = min(product.max_amount, max_inst / per_thousand * 1000)
             if max_p < product.min_amount:
                 continue
             principal = Decimal(

@@ -33,6 +33,14 @@ class RateMethod(models.TextChoices):
     FLAT = "flat", "Flat rate"
 
 
+class RepaymentFrequency(models.TextChoices):
+    """How often instalments fall. Salary loans are monthly; group loans usually
+    repay at the group's weekly or fortnightly meeting."""
+    MONTHLY = "monthly", "Monthly"
+    FORTNIGHTLY = "fortnightly", "Fortnightly"
+    WEEKLY = "weekly", "Weekly"
+
+
 class NotificationChannel(models.TextChoices):
     SMS = "sms", "SMS"
     EMAIL = "email", "Email"
@@ -463,8 +471,15 @@ class LoanProduct(models.Model):
                                    default=RateMethod.REDUCING,
                                    help_text="Reducing balance charges interest on the outstanding "
                                              "balance; flat rate charges it on the original principal")
+    repayment_frequency = models.CharField(
+        max_length=12, choices=RepaymentFrequency.choices, default=RepaymentFrequency.MONTHLY,
+        help_text="How often instalments fall. The rate stays a monthly rate whatever this is")
     min_amount = models.DecimalField(**MONEY)
     max_amount = models.DecimalField(**MONEY)
+    # Counted in instalments of the product's frequency: months for a monthly
+    # product, weeks for a weekly one. Named for the monthly products the system
+    # began with; renaming the column would touch the SQL views, the API and every
+    # client for no change in meaning on a monthly loan.
     min_term_months = models.IntegerField()
     max_term_months = models.IntegerField()
     admin_fee_pct = models.DecimalField(default=ZERO, help_text="Deducted upfront", **RATE)
@@ -687,6 +702,11 @@ class Loan(models.Model):
     rate_method = models.CharField(max_length=10, choices=RateMethod.choices,
                                    default=RateMethod.REDUCING,
                                    help_text="Snapshot from the product at application")
+    repayment_frequency = models.CharField(max_length=12, choices=RepaymentFrequency.choices,
+                                           default=RepaymentFrequency.MONTHLY,
+                                           help_text="Snapshot from the product at application")
+    # The number of instalments, in the loan's repayment frequency. See the note on
+    # LoanProduct.min_term_months for why it keeps its monthly name.
     term_months = models.IntegerField()
     purpose = models.CharField(max_length=200, null=True, blank=True)
     branch = models.ForeignKey("Branch", on_delete=models.SET_NULL, null=True, blank=True,

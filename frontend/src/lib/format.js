@@ -33,6 +33,22 @@ export const pct = (value) => (num(value) === null ? '-' : `${fmt(value)}%`)
 export const rateMethodLabel = (value) =>
   value === 'flat' ? 'Flat rate' : value === 'reducing' ? 'Reducing balance' : '-'
 
+const TERM_UNITS = { monthly: 'months', fortnightly: 'fortnights', weekly: 'weeks' }
+const TERM_SHORT = { monthly: 'm', fortnightly: 'fn', weekly: 'w' }
+
+/**
+ * The unit a term is counted in. A loan's term is a number of instalments, so a
+ * weekly loan's "16" is sixteen weeks; anything missing is an older monthly loan.
+ */
+export const termUnit = (frequency) => TERM_UNITS[frequency] || 'months'
+
+/** 16, "weekly" -> "16w"; 6, "monthly" -> "6m" */
+export const termShort = (term, frequency) => `${term}${TERM_SHORT[frequency] || 'm'}`
+
+/** "weekly" -> "Weekly" */
+export const frequencyLabel = (frequency) =>
+  ({ monthly: 'Monthly', fortnightly: 'Fortnightly', weekly: 'Weekly' })[frequency] || 'Monthly'
+
 export const bytes = (value) => {
   const n = Number(value) || 0
   if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`

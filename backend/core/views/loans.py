@@ -337,7 +337,10 @@ def agreement(request, loan_id: int):
         if apr is None:
             apr = preview["apr_pct"]
 
-    payday = loan.borrower.payday or 1
+    # The day the monthly instalment falls on: the first instalment's day when there
+    # is one, since an officer may have set it off the borrower's payday.
+    first_due = loan.first_instalment_date or (schedule[0]["due_date"] if schedule else None)
+    payday = first_due.day if first_due else (loan.borrower.payday or 1)
     suffix = ("th" if 11 <= payday % 100 <= 13
               else {1: "st", 2: "nd", 3: "rd"}.get(payday % 10, "th"))
 
@@ -357,6 +360,10 @@ def agreement(request, loan_id: int):
         "collateral": loan.collateral.filter(status="pledged"),
         "schedule": schedule,
         "payday_ordinal": f"{payday}{suffix}",
+        "frequency": loan.repayment_frequency,
+        "frequency_label": loan.get_repayment_frequency_display(),
+        "term_unit": svc.TERM_UNITS.get(loan.repayment_frequency, "instalments"),
+        "first_due": first_due,
     })
     return Response(html)
 

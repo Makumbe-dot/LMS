@@ -34,19 +34,24 @@ def grade_for(score: int) -> str:
 
 
 def _affordability_points(instalment: Decimal, salary: Decimal, cap: Decimal) -> tuple[int, str]:
-    """25 points. How much of the borrower's salary the instalment takes."""
+    """25 points. How much of the borrower's salary the repayments take.
+
+    `instalment` is the MONTHLY equivalent (amortisation.monthly_equivalent), so a
+    weekly loan is measured against a month's salary like any other.
+    """
     if not salary or salary <= 0:
         return 0, "No net salary on file, so affordability cannot be assessed"
     ratio = instalment / salary * 100
+    share = f"Repayments come to {ratio:.1f}% of net salary a month"
     if ratio <= cap / 3:
-        return 25, f"Instalment is {ratio:.1f}% of net salary, well inside the {cap}% limit"
+        return 25, f"{share}, well inside the {cap}% limit"
     if ratio <= cap / 2:
-        return 20, f"Instalment is {ratio:.1f}% of net salary, comfortably inside the {cap}% limit"
+        return 20, f"{share}, comfortably inside the {cap}% limit"
     if ratio <= cap * Decimal("0.75"):
-        return 14, f"Instalment is {ratio:.1f}% of net salary"
+        return 14, share
     if ratio <= cap:
-        return 7, f"Instalment is {ratio:.1f}% of net salary, close to the {cap}% limit"
-    return 0, f"Instalment is {ratio:.1f}% of net salary, above the {cap}% limit"
+        return 7, f"{share}, close to the {cap}% limit"
+    return 0, f"{share}, above the {cap}% limit"
 
 
 def _history_points(borrower) -> tuple[int, str]:

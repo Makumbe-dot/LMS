@@ -1,16 +1,22 @@
-"""Amortisation with monthly instalments, in two flavours.
+"""Amortisation with level instalments, in two flavours.
 
 * **Reducing balance** (annuity): interest is charged on the outstanding balance,
   so the interest share of each instalment falls as the principal is repaid.
 * **Flat rate**: interest is charged on the original principal for the whole
   term and spread evenly, which is simpler to explain and always dearer.
 
+Instalments fall monthly, fortnightly or weekly. Products quote a MONTHLY rate
+whatever the frequency, and the rate per instalment is that monthly rate scaled
+by 12 / periods-a-year: a year of weekly instalments carries the same nominal
+interest as a year of monthly ones, so changing the frequency changes when the
+borrower pays, not what the product costs.
+
 All arithmetic is in Decimal, rounded to cents. The final instalment absorbs
 rounding so the schedule closes to exactly zero.
 """
 from calendar import monthrange
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 
 CENT = Decimal("0.01")
@@ -42,16 +48,48 @@ def month_end(d: date) -> date:
 REDUCING = "reducing"
 FLAT = "flat"
 
+MONTHLY = "monthly"
+FORTNIGHTLY = "fortnightly"
+WEEKLY = "weekly"
+PERIODS_PER_YEAR = {MONTHLY: 12, FORTNIGHTLY: 26, WEEKLY: 52}
 
-def monthly_instalment(principal, monthly_rate_pct, term: int, method: str = REDUCING) -> Decimal:
+
+def period_rate(monthly_rate_pct, frequency: str = MONTHLY) -> Decimal:
+    """The interest rate per instalment period, as a fraction (0.05, not 5)."""
+    return (Decimal(monthly_rate_pct) / Decimal(100)
+            * Decimal(12) / Decimal(PERIODS_PER_YEAR[frequency]))
+
+
+def monthly_equivalent(instalment, frequency: str = MONTHLY) -> Decimal:
+    """What an instalment comes to over an average month. Salaries are monthly, so
+    affordability is always measured against this, never the raw weekly figure."""
+    return q(Decimal(instalment) * PERIODS_PER_YEAR[frequency] / 12)
+
+
+def nth_due_date(first_due: date, n: int, frequency: str = MONTHLY) -> date:
+    """The due date n instalments after the first (n = 0 is the first)."""
+    if frequency == WEEKLY:
+        return first_due + timedelta(weeks=n)
+    if frequency == FORTNIGHTLY:
+        return first_due + timedelta(weeks=2 * n)
+    return add_months(first_due, n)
+
+
+def instalment_amount(principal, monthly_rate_pct, term: int, method: str = REDUCING,
+                      frequency: str = MONTHLY) -> Decimal:
+    """The level instalment over `term` instalments at the product's monthly rate."""
     P = Decimal(principal)
-    r = Decimal(monthly_rate_pct) / Decimal(100)
+    r = period_rate(monthly_rate_pct, frequency)
     if method == FLAT:
         return q((P + P * r * term) / term)
     if r == 0:
         return q(P / term)
     factor = (1 + r) ** term
     return q(P * r * factor / (factor - 1))
+
+
+def monthly_instalment(principal, monthly_rate_pct, term: int, method: str = REDUCING) -> Decimal:
+    return instalment_amount(principal, monthly_rate_pct, term, method, MONTHLY)
 
 
 @dataclass
@@ -66,16 +104,18 @@ class Row:
 
 
 def build_schedule(principal, monthly_rate_pct, term: int, first_due: date,
-                   method: str = REDUCING) -> list[Row]:
+                   method: str = REDUCING, frequency: str = MONTHLY) -> list[Row]:
+    """`term` instalments of the given frequency, the first falling on `first_due`."""
     if method == FLAT:
-        return _flat_schedule(principal, monthly_rate_pct, term, first_due)
-    return _reducing_schedule(principal, monthly_rate_pct, term, first_due)
+        return _flat_schedule(principal, monthly_rate_pct, term, first_due, frequency)
+    return _reducing_schedule(principal, monthly_rate_pct, term, first_due, frequency)
 
 
-def _reducing_schedule(principal, monthly_rate_pct, term: int, first_due: date) -> list[Row]:
+def _reducing_schedule(principal, monthly_rate_pct, term: int, first_due: date,
+                       frequency: str = MONTHLY) -> list[Row]:
     P = q(Decimal(principal))
-    r = Decimal(monthly_rate_pct) / Decimal(100)
-    inst = monthly_instalment(P, monthly_rate_pct, term, REDUCING)
+    r = period_rate(monthly_rate_pct, frequency)
+    inst = instalment_amount(P, monthly_rate_pct, term, REDUCING, frequency)
     rows: list[Row] = []
     bal = P
     for n in range(1, term + 1):
@@ -90,7 +130,7 @@ def _reducing_schedule(principal, monthly_rate_pct, term: int, first_due: date) 
         rows.append(
             Row(
                 number=n,
-                due_date=add_months(first_due, n - 1),
+                due_date=nth_due_date(first_due, n - 1, frequency),
                 opening_balance=bal,
                 principal_due=principal_part,
                 interest_due=interest,
@@ -102,15 +142,16 @@ def _reducing_schedule(principal, monthly_rate_pct, term: int, first_due: date) 
     return rows
 
 
-def _flat_schedule(principal, monthly_rate_pct, term: int, first_due: date) -> list[Row]:
+def _flat_schedule(principal, monthly_rate_pct, term: int, first_due: date,
+                   frequency: str = MONTHLY) -> list[Row]:
     """Interest on the original principal, spread evenly across the term.
 
     Both the principal and the interest legs are levelled; the last instalment
     takes the rounding on each leg, so principal sums to exactly the advance and
-    interest to exactly P x r x n.
+    interest to exactly P x r x n, with r the rate per instalment period.
     """
     P = q(Decimal(principal))
-    r = Decimal(monthly_rate_pct) / Decimal(100)
+    r = period_rate(monthly_rate_pct, frequency)
     total_interest_amount = q(P * r * term)
     principal_each = q(P / term)
     interest_each = q(total_interest_amount / term)
@@ -131,7 +172,7 @@ def _flat_schedule(principal, monthly_rate_pct, term: int, first_due: date) -> l
         rows.append(
             Row(
                 number=n,
-                due_date=add_months(first_due, n - 1),
+                due_date=nth_due_date(first_due, n - 1, frequency),
                 opening_balance=bal,
                 principal_due=principal_part,
                 interest_due=interest,
