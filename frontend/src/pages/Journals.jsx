@@ -412,7 +412,9 @@ export default function Journals() {
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState('')
   const [form, setForm] = useState(null) // 'journal' | 'expense'
-  const [openId, setOpenId] = useState(null)
+  // The journal itself, not its id: after posting, it leaves the "awaiting" list,
+  // and the detail should then show it posted rather than vanish or reappear later.
+  const [open, setOpen] = useState(null)
   const [busy, setBusy] = useState(false)
 
   const path = `/api/journals${qs({ status: tab, page, q: search })}`
@@ -421,7 +423,6 @@ export default function Journals() {
 
   const canPrepare = can('admin', 'loan_officer', 'teller')
   const isAdmin = can('admin')
-  const open = (list.data?.results || []).find((j) => j.id === openId)
 
   async function prepare(body) {
     setBusy(true)
@@ -442,12 +443,11 @@ export default function Journals() {
   async function act(kind, values) {
     setBusy(true)
     try {
-      if (kind === 'post') await post(`/api/journals/${openId}/post`)
-      if (kind === 'reject') await post(`/api/journals/${openId}/reject`, values)
-      if (kind === 'reverse') await post(`/api/journals/${openId}/reverse`, values)
       if (kind === 'withdraw') {
-        await del(`/api/journals/${openId}`)
-        setOpenId(null)
+        await del(`/api/journals/${open.id}`)
+        setOpen(null)
+      } else {
+        setOpen(await post(`/api/journals/${open.id}/${kind}`, values))
       }
       toast(
         {
@@ -512,6 +512,7 @@ export default function Journals() {
               onClick={() => {
                 setTab(t.key)
                 setPage(1)
+                setOpen(null)
               }}
             >
               {t.label}
@@ -540,7 +541,7 @@ export default function Journals() {
           <DataTable
             caption="Manual journals"
             rows={list.data?.results || []}
-            onRowClick={(row) => setOpenId(row.id)}
+            onRowClick={(row) => setOpen(row)}
             empty={
               tab === 'draft'
                 ? 'Nothing awaiting approval'
@@ -583,7 +584,7 @@ export default function Journals() {
           canPost={isAdmin}
           canWithdraw={isAdmin || open.prepared_by_id === user?.id}
           busy={busy}
-          onClose={() => setOpenId(null)}
+          onClose={() => setOpen(null)}
           onAction={act}
         />
       ) : null}

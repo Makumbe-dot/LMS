@@ -107,6 +107,24 @@ describe('Journals', () => {
     ])
   })
 
+  it('shows a journal as posted once it is, rather than closing it or reopening it later', async () => {
+    // Posting takes a journal out of the "awaiting" list. The detail used to vanish
+    // with it, then pop open again when the Posted tab was chosen.
+    stub([DRAFT], {
+      '/post': { ...DRAFT, status: 'posted', status_label: 'Posted', entry_no: 'JE-00000280' },
+    })
+    renderPage(<Journals />, { user: ADMIN })
+    await userEvent.click(await screen.findByText('MJ-000007'))
+    await userEvent.click(screen.getByRole('button', { name: 'Post to the ledger' }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'MJ-000007 — Posted' })
+    expect(within(dialog).getByText('JE-00000280')).toBeInTheDocument()
+
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+    await userEvent.click(screen.getByRole('tab', { name: 'Posted' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
   it('offers Post to an administrator and not to the teller who prepared it', async () => {
     stub()
     const { unmount } = renderPage(<Journals />, { user: TELLER })
