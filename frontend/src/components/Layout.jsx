@@ -4,8 +4,8 @@ import { useAuth } from '../lib/auth.jsx'
 import { humanise } from '../lib/format.js'
 import { useOrg } from '../lib/org.jsx'
 import { useTheme } from '../lib/theme.jsx'
+import { GroupLogos, GroupMark, GroupWordmark } from '../brand/brand.jsx'
 import GlobalSearch from './GlobalSearch.jsx'
-import { HexMark } from './ui.jsx'
 
 const NAV = [
   {
@@ -70,11 +70,12 @@ export default function Layout() {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <div className="brand">
-          <HexMark />
+        {/* the group's wordmark beside the parent company's logo, as on the ERM app */}
+        <div className="brand" title={orgName || undefined}>
+          <GroupMark height={30} />
           <div className="brand-text">
-            <span className="brand-name">LMS</span>
-            <span className="brand-sub">{orgName}</span>
+            <GroupWordmark className="brand-name" />
+            <span className="brand-sub">Loan management</span>
           </div>
         </div>
         <nav aria-label="Main">
@@ -97,6 +98,8 @@ export default function Layout() {
             )
           })}
         </nav>
+        {/* the group's companies */}
+        <GroupLogos height={28} className="sidebar-logos" />
         <div className="userbox">
           <div>{user?.full_name}</div>
           <div className="muted">

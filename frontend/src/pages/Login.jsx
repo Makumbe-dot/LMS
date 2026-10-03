@@ -1,8 +1,12 @@
 import { useState } from 'react'
 
-import { Field, HexMark } from '../components/ui.jsx'
+import { GroupLogos, GroupWordmark } from '../brand/brand.jsx'
 import { useAuth } from '../lib/auth.jsx'
 
+/**
+ * One centred card on the honeycomb page, as on the group's ERM sign-in: the
+ * companies' logos, "Welcome to", the wordmark, then the form.
+ */
 export default function Login() {
   const { signIn, completeSignIn } = useAuth()
   const [username, setUsername] = useState('')
@@ -39,20 +43,28 @@ export default function Login() {
 
   return (
     <div className="login-page">
-      <form className="card login-card" onSubmit={onSubmit}>
-        <div className="login-brand">
-          <HexMark size={36} />
-          <h1 style={{ margin: 0 }}>Loan Management System</h1>
-        </div>
+      <form className="signin-card" onSubmit={onSubmit} aria-labelledby="signin-title">
+        <GroupLogos height={mfaToken ? 64 : 84} className="signin-logos" />
+        <p className="signin-welcome">Welcome to</p>
+        <GroupWordmark as="h1" className="signin-wordmark" id="signin-title" suffix="LMS" />
+
+        {error ? (
+          <p className="signin-err" role="alert">
+            {error}
+          </p>
+        ) : null}
 
         {mfaToken ? (
           <>
-            <p className="muted" style={{ marginTop: 0 }}>
+            <p className="signin-note">
               Enter the six-digit code your authenticator app shows for this account.
             </p>
-            <Field
-              label="Authenticator code"
-              name="code"
+            <label className="signin-label" htmlFor="signin-code">
+              Authenticator code
+            </label>
+            <input
+              id="signin-code"
+              className="signin-input"
               inputMode="numeric"
               autoComplete="one-time-code"
               pattern="[0-9 ]{6,7}"
@@ -62,39 +74,46 @@ export default function Login() {
               value={code}
               onChange={(e) => setCode(e.target.value)}
             />
-            <button className="btn primary" type="submit" disabled={busy} style={{ width: '100%' }}>
+            <button className="btn primary signin-btn" type="submit" disabled={busy}>
               {busy ? 'Checking…' : 'Verify and sign in'}
             </button>
-            <button
-              type="button"
-              className="btn-link"
-              style={{ marginTop: 10 }}
-              onClick={() => {
-                setMfaToken(null)
-                setCode('')
-                setError('')
-              }}
-            >
-              Use a different account
-            </button>
-            <p className="muted" style={{ fontSize: 12 }}>
+            <div className="signin-hint">
+              <button
+                type="button"
+                className="btn-link"
+                onClick={() => {
+                  setMfaToken(null)
+                  setCode('')
+                  setError('')
+                }}
+              >
+                Use a different account
+              </button>
+              <br />
               Lost your phone? An administrator can turn two-factor sign-in off for you on the
               Users page.
-            </p>
+            </div>
           </>
         ) : (
           <>
-            <p className="muted" style={{ marginTop: 0 }}>Sign in to continue</p>
-            <Field
-              label="Username"
+            <label className="signin-label" htmlFor="signin-username">
+              Username
+            </label>
+            <input
+              id="signin-username"
+              className="signin-input"
               name="username"
               autoComplete="username"
               required
               value={username}
               onChange={(e) => setUsername(e.target.value)}
             />
-            <Field
-              label="Password"
+            <label className="signin-label" htmlFor="signin-password">
+              Password
+            </label>
+            <input
+              id="signin-password"
+              className="signin-input"
               type="password"
               name="password"
               autoComplete="current-password"
@@ -102,26 +121,18 @@ export default function Login() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
-
-            <button className="btn primary" type="submit" disabled={busy} style={{ width: '100%' }}>
+            <button className="btn primary signin-btn" type="submit" disabled={busy}>
               {busy ? 'Signing in…' : 'Sign in'}
             </button>
+            <div className="signin-hint">
+              Forgot your password? Ask your administrator to reset it.
+              <span className="demo">
+                Demo logins after <code>manage.py seed</code>: admin / admin123 · officer /
+                officer123 · teller / teller123 · viewer / viewer123
+              </span>
+            </div>
           </>
         )}
-
-        {error ? (
-          <p className="error" role="alert" style={{ marginBottom: 0 }}>
-            {error}
-          </p>
-        ) : null}
-
-        {!mfaToken ? (
-          <p className="demo">
-            Demo logins after <code>manage.py seed</code>:<br />
-            admin / admin123 &nbsp;·&nbsp; officer / officer123<br />
-            teller / teller123 &nbsp;·&nbsp; viewer / viewer123
-          </p>
-        ) : null}
       </form>
     </div>
   )
