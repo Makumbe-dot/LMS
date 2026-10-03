@@ -158,6 +158,16 @@ map, overdue-review tracking and CSV export for the risk committee.
 passwords**, self-service password change, sign out on one device or on all of them, full audit log
 of every posting and decision, searchable and filterable.
 
+**Two-factor sign-in** — anyone can turn on a second factor from **My account**: an authenticator
+app (Google, Microsoft, Authy…) scanned from a QR code or a typed setup key. With it on, the right
+password returns a five-minute token instead of a session, and only a current six-digit code turns
+that into a sign-in. A code works once; guessing codes counts towards the account lockout like
+guessing passwords; ending every session also ends a half-finished sign-in; turning it off takes the
+password and a code. An abandoned setup changes nothing. A lost phone is an administrator's reset on
+the Users page, or `manage.py reset_mfa <username>` for the last administrator. The codes are plain
+RFC 6238 (SHA-1, six digits, thirty seconds), written out in `core/services/totp.py` rather than
+pulled in as a dependency, and checked against the RFC's own test vectors.
+
 **Multi-branch** — staff, borrowers and loans belong to a branch, and the dashboard, provisioning,
 performance and payroll screens all filter by it.
 

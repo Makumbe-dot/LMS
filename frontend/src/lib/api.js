@@ -211,15 +211,26 @@ export async function downloadCsv(path, fallbackName = 'export') {
   URL.revokeObjectURL(link.href)
 }
 
-/** Login posts JSON and returns { access_token, user }. */
-export async function login(username, password) {
-  const res = await fetch(`${BASE}/api/auth/login`, {
+async function signInRequest(path, body) {
+  const res = await fetch(`${BASE}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify(body),
   })
   const isJson = (res.headers.get('content-type') || '').includes('json')
   const data = isJson ? await res.json() : {}
   if (!res.ok) throw new ApiError(data.detail || 'Sign in failed', res.status)
   return data
 }
+
+/**
+ * Login posts JSON and returns { access_token, refresh_token, user } - or, for an
+ * account with two-factor sign-in on, { mfa_required: true, mfa_token } and no
+ * session until loginVerify is called with a code.
+ */
+export const login = (username, password) =>
+  signInRequest('/api/auth/login', { username, password })
+
+/** The second step: the token from login and the code from the authenticator app. */
+export const loginVerify = (mfaToken, code) =>
+  signInRequest('/api/auth/login/verify', { mfa_token: mfaToken, code })

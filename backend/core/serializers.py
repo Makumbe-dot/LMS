@@ -87,12 +87,27 @@ class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ["id", "username", "full_name", "role", "is_active", "branch_id", "branch_name",
-                  "phone", "email"]
+                  "phone", "email", "mfa_enabled"]
+        read_only_fields = ["mfa_enabled"]
 
 
 class LoginSerializer(serializers.Serializer):
     username = serializers.CharField()
     password = serializers.CharField(style={"input_type": "password"}, trim_whitespace=False)
+
+
+class MfaLoginSerializer(serializers.Serializer):
+    mfa_token = serializers.CharField()
+    code = serializers.CharField(max_length=12)
+
+
+class MfaCodeSerializer(serializers.Serializer):
+    code = serializers.CharField(max_length=12)
+
+
+class MfaDisableSerializer(serializers.Serializer):
+    password = serializers.CharField(trim_whitespace=False)
+    code = serializers.CharField(max_length=12)
 
 
 class RefreshSerializer(serializers.Serializer):
@@ -157,6 +172,8 @@ class UserUpdateSerializer(PasswordPolicyMixin, serializers.Serializer):
     email = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     unlock = serializers.BooleanField(required=False,
                                       help_text="Clear a lockout from failed sign-ins")
+    reset_mfa = serializers.BooleanField(required=False,
+                                         help_text="Turn two-factor sign-in off: a lost phone")
 
     def validate_password(self, value):
         return self._check_password(value, user=self.context.get("target_user"))

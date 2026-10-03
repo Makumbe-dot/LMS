@@ -25,6 +25,10 @@ from .views import (
 urlpatterns = [
     # ---- auth and users
     re_path(r"^auth/login/?$", auth.login),
+    re_path(r"^auth/login/verify/?$", auth.login_verify),
+    re_path(r"^auth/mfa/setup/?$", auth.mfa_setup),
+    re_path(r"^auth/mfa/enable/?$", auth.mfa_enable),
+    re_path(r"^auth/mfa/disable/?$", auth.mfa_disable),
     re_path(r"^auth/refresh/?$", auth.refresh),
     re_path(r"^auth/logout/?$", auth.logout),
     re_path(r"^auth/sign-out-everywhere/?$", auth.sign_out_everywhere),

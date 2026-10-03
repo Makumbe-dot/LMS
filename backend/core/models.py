@@ -379,6 +379,13 @@ class User(AbstractBaseUser, PermissionsMixin):
     # layer already loads this row on every request.
     token_version = models.IntegerField(default=0)
 
+    # Two-factor sign-in with an authenticator app (services/totp.py). The secret
+    # is set when the user starts enrolling and only counts once a code from it has
+    # been confirmed. The last step accepted is kept so a code works exactly once.
+    mfa_secret = models.CharField(max_length=64, null=True, blank=True)
+    mfa_enabled = models.BooleanField(default=False)
+    mfa_last_step = models.BigIntegerField(null=True, blank=True)
+
     objects = UserManager()
 
     USERNAME_FIELD = "username"

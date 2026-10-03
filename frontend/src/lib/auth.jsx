@@ -72,25 +72,46 @@ export function AuthProvider({ children }) {
     }
   }, [forget])
 
-  const signIn = useCallback(async (username, password) => {
-    const data = await api.login(username, password)
+  const accept = useCallback((data) => {
     api.setTokens(data)
     setUser(data.user)
     setStatus('signed-in')
     return data.user
   }, [])
 
+  /**
+   * Resolves to the user, or - when the account has two-factor sign-in on - to
+   * { mfaToken } with nobody signed in yet. The caller then asks for the code and
+   * finishes with completeSignIn.
+   */
+  const signIn = useCallback(
+    async (username, password) => {
+      const data = await api.login(username, password)
+      if (data.mfa_required) return { mfaToken: data.mfa_token }
+      return accept(data)
+    },
+    [accept],
+  )
+
+  const completeSignIn = useCallback(
+    async (mfaToken, code) => accept(await api.loginVerify(mfaToken, code)),
+    [accept],
+  )
+
   const value = useMemo(
     () => ({
       user,
       status,
       signIn,
+      completeSignIn,
       signOut,
       signOutEverywhere,
+      /** Replace the signed-in user's details, e.g. after turning two-factor on. */
+      updateUser: setUser,
       /** can('admin', 'loan_officer') - true when the signed-in role is one of these. */
       can: (...roles) => Boolean(user && roles.includes(user.role)),
     }),
-    [user, status, signIn, signOut, signOutEverywhere],
+    [user, status, signIn, completeSignIn, signOut, signOutEverywhere],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

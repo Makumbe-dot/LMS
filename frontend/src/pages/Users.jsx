@@ -26,6 +26,7 @@ export default function Users() {
         if (body.branch_id) body.branch = Number(body.branch_id)
         delete body.branch_id
         delete body.unlock
+        delete body.reset_mfa
         await post('/api/users', body)
       } else {
         const body = { ...values }
@@ -81,6 +82,18 @@ export default function Users() {
                   <span className="tag-ok">Yes</span>
                 ) : (
                   <span className="tag-danger">No</span>
+                ),
+            },
+            {
+              key: 'mfa',
+              header: 'Two-factor',
+              render: (r) =>
+                r.mfa_enabled ? (
+                  <span className="tag-ok">On</span>
+                ) : r.role === 'viewer' ? (
+                  <span className="muted">Off</span>
+                ) : (
+                  <span className="tag-warn">Off</span>
                 ),
             },
           ]}
@@ -144,6 +157,13 @@ export default function Users() {
                 name="unlock"
                 defaultChecked={false}
               />
+              {user.mfa_enabled ? (
+                <Check
+                  label="Turn two-factor sign-in off (a lost phone): they sign in with the password alone until they set it up again"
+                  name="reset_mfa"
+                  defaultChecked={false}
+                />
+              ) : null}
             </>
           ) : null}
         </FormModal>

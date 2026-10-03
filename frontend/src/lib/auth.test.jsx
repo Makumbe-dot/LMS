@@ -132,6 +132,40 @@ describe('AuthProvider', () => {
     expect(screen.getByTestId('failure')).toHaveTextContent('')
   })
 
+  it('does not sign in on the password alone when the account has two-factor on', async () => {
+    vi.spyOn(api, 'login').mockResolvedValue({ mfa_required: true, mfa_token: 'half' })
+    const verify = vi.spyOn(api, 'loginVerify').mockResolvedValue({
+      access_token: 'a', refresh_token: 'r', user: USER,
+    })
+    let pending = null
+    function TwoStep() {
+      const { status, signIn, completeSignIn } = useAuth()
+      return (
+        <div>
+          <span data-testid="status">{status}</span>
+          <button type="button" onClick={async () => { pending = await signIn('teller', 'x') }}>
+            password
+          </button>
+          <button type="button" onClick={() => completeSignIn(pending.mfaToken, '123456')}>
+            code
+          </button>
+        </div>
+      )
+    }
+    render(<AuthProvider><TwoStep /></AuthProvider>)
+
+    await userEvent.click(screen.getByRole('button', { name: 'password' }))
+    // Nothing stored, nobody signed in: the password was only the first half.
+    expect(pending).toEqual({ mfaToken: 'half' })
+    expect(screen.getByTestId('status')).toHaveTextContent('anonymous')
+    expect(api.getToken()).toBeNull()
+
+    await userEvent.click(screen.getByRole('button', { name: 'code' }))
+    expect(verify).toHaveBeenCalledWith('half', '123456')
+    await waitFor(() => expect(screen.getByTestId('status')).toHaveTextContent('signed-in'))
+    expect(api.getRefreshToken()).toBe('r')
+  })
+
   it('answers can() only for the signed-in role', async () => {
     vi.spyOn(api, 'login').mockResolvedValue({
       access_token: 'a', refresh_token: 'r', user: USER,

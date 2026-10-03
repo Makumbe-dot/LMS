@@ -3,6 +3,7 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.contrib.auth import authenticate
+from django.core import signing
 from django.db import transaction
 from django.utils import timezone
 from rest_framework import status
@@ -13,17 +14,20 @@ from rest_framework.throttling import ScopedRateThrottle
 
 from ..audit import audit
 from ..exceptions import BusinessRuleError, NotFound
-from ..models import Branch, User
+from ..models import Branch, OrganisationSetting, User
 from ..permissions import IsAdmin
 from ..serializers import (
     ChangePasswordSerializer,
     LoginSerializer,
+    MfaCodeSerializer,
+    MfaDisableSerializer,
+    MfaLoginSerializer,
     RefreshSerializer,
     UserCreateSerializer,
     UserSerializer,
     UserUpdateSerializer,
 )
-from ..services import tokens
+from ..services import tokens, totp
 
 
 class LoginThrottle(ScopedRateThrottle):
@@ -78,13 +82,133 @@ def login(request):
     if not user.is_active:
         return Response({"detail": "User account is disabled"}, status=status.HTTP_403_FORBIDDEN)
 
+    if user.mfa_enabled:
+        # The password was right, but the account is not signed in until the code
+        # is. The failure count is left alone until then, so guessing codes counts
+        # towards the lockout like guessing passwords does.
+        return Response({"mfa_required": True, "mfa_token": _mfa_token(user)})
+    return _signed_in(user)
+
+
+MFA_SALT = "lms.mfa-login"
+MFA_TOKEN_SECONDS = 300
+
+
+def _mfa_token(user: User) -> str:
+    """Proof that the password step passed, good for five minutes and one user.
+
+    Carries the token version, so ending every session (or a password change)
+    between the two steps also ends a half-finished sign-in.
+    """
+    return signing.dumps({"uid": user.id, "tv": user.token_version}, salt=MFA_SALT)
+
+
+def _signed_in(user: User) -> Response:
     if user.failed_login_attempts or user.locked_until:
         user.failed_login_attempts = 0
         user.locked_until = None
         user.save(update_fields=["failed_login_attempts", "locked_until"])
-
-    audit(user, "login", "user", user.id)
+    audit(user, "login", "user", user.id, "with an authenticator code" if user.mfa_enabled else None)
     return Response({**tokens.issue(user), "user": UserSerializer(user).data})
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@throttle_classes([LoginThrottle])
+@transaction.atomic
+def login_verify(request):
+    """The second step: the six-digit code from the user's authenticator app."""
+    body = MfaLoginSerializer(data=request.data)
+    body.is_valid(raise_exception=True)
+    try:
+        claim = signing.loads(body.validated_data["mfa_token"], salt=MFA_SALT,
+                              max_age=MFA_TOKEN_SECONDS)
+    except signing.BadSignature:
+        return Response({"detail": "That sign-in has expired. Enter your password again."},
+                        status=status.HTTP_401_UNAUTHORIZED)
+
+    user = User.objects.select_for_update().filter(pk=claim.get("uid")).first()
+    if user is None or not user.is_active:
+        return Response({"detail": "User account is disabled"}, status=status.HTTP_403_FORBIDDEN)
+    if user.is_locked:
+        return Response({"detail": "Too many failed sign-in attempts. Ask an administrator to "
+                                   "unlock the account."}, status=status.HTTP_403_FORBIDDEN)
+    if claim.get("tv") != user.token_version or not user.mfa_enabled:
+        return Response({"detail": "That sign-in has expired. Enter your password again."},
+                        status=status.HTTP_401_UNAUTHORIZED)
+
+    step = totp.verify(user.mfa_secret, body.validated_data["code"], user.mfa_last_step)
+    if step is None:
+        _register_failure(user)
+        return Response({"detail": "That code is not right, or has already been used. Codes "
+                                   "change every thirty seconds."},
+                        status=status.HTTP_401_UNAUTHORIZED)
+    user.mfa_last_step = step
+    user.save(update_fields=["mfa_last_step"])
+    return _signed_in(user)
+
+
+# ---------------------------------------------------------------- two-factor enrolment
+@api_view(["POST"])
+def mfa_setup(request):
+    """Start enrolling: a fresh secret, shown once as a QR code and a setup key.
+
+    It does nothing until `mfa_enable` confirms a code from it, so a setup that is
+    abandoned halfway cannot lock anyone out.
+    """
+    user = request.user
+    if user.mfa_enabled:
+        raise BusinessRuleError("Two-factor sign-in is already on. Turn it off first to move it "
+                                "to a new phone.")
+    user.mfa_secret = totp.new_secret()
+    user.mfa_last_step = None
+    user.save(update_fields=["mfa_secret", "mfa_last_step"])
+    issuer = OrganisationSetting.load().name or "LMS"
+    return Response({"secret": user.mfa_secret,
+                     "otpauth_uri": totp.provisioning_uri(user.mfa_secret, user.username, issuer)})
+
+
+@api_view(["POST"])
+def mfa_enable(request):
+    body = MfaCodeSerializer(data=request.data)
+    body.is_valid(raise_exception=True)
+    user = request.user
+    if user.mfa_enabled:
+        raise BusinessRuleError("Two-factor sign-in is already on")
+    if not user.mfa_secret:
+        raise BusinessRuleError("Start the setup first")
+    step = totp.verify(user.mfa_secret, body.validated_data["code"], user.mfa_last_step)
+    if step is None:
+        raise BusinessRuleError("That code does not match. Check the phone's clock is right and "
+                                "try the code showing now.")
+    with transaction.atomic():
+        user.mfa_enabled = True
+        user.mfa_last_step = step
+        user.save(update_fields=["mfa_enabled", "mfa_last_step"])
+        audit(user, "enable_mfa", "user", user.id, user.username)
+    return Response(UserSerializer(user).data)
+
+
+@api_view(["POST"])
+def mfa_disable(request):
+    """Turning it off takes the password and a current code: both factors, so a
+    browser left signed in is not enough to remove the second one."""
+    body = MfaDisableSerializer(data=request.data)
+    body.is_valid(raise_exception=True)
+    user = request.user
+    if not user.mfa_enabled:
+        raise BusinessRuleError("Two-factor sign-in is not on")
+    if not user.check_password(body.validated_data["password"]):
+        raise BusinessRuleError("Your password is not correct")
+    if totp.verify(user.mfa_secret, body.validated_data["code"], user.mfa_last_step) is None:
+        raise BusinessRuleError("That code is not right, or has already been used")
+    with transaction.atomic():
+        user.mfa_enabled = False
+        user.mfa_secret = None
+        user.mfa_last_step = None
+        user.save(update_fields=["mfa_enabled", "mfa_secret", "mfa_last_step"])
+        audit(user, "disable_mfa", "user", user.id, user.username)
+    return Response(UserSerializer(user).data)
 
 
 @api_view(["POST"])
@@ -236,6 +360,7 @@ def user_detail(request, user_id: int):
     data = dict(body.validated_data)
     password = data.pop("password", None)
     unlock = data.pop("unlock", False)
+    reset_mfa = data.pop("reset_mfa", False)
     branch_id = data.pop("branch_id", "missing")
 
     if user == request.user and data.get("is_active") is False:
@@ -266,13 +391,20 @@ def user_detail(request, user_id: int):
         if unlock:
             user.locked_until = None
             user.failed_login_attempts = 0
+        if reset_mfa:
+            # A lost phone. The user signs in with their password alone until they
+            # set up a new one; the audit row is the record that it was turned off.
+            user.mfa_enabled = False
+            user.mfa_secret = None
+            user.mfa_last_step = None
         for key, value in data.items():
             setattr(user, key, value)
         user.save()
         if revoke_reasons:
             tokens.revoke_all(user, "; ".join(revoke_reasons))
 
-        changed = list(data) + (["password"] if password else []) + (["unlock"] if unlock else [])
+        changed = (list(data) + (["password"] if password else []) + (["unlock"] if unlock else [])
+                   + (["two-factor reset"] if reset_mfa else []))
         audit(request.user, "update", "user", user.id,
               str(changed) + (f" — sessions ended ({'; '.join(revoke_reasons)})"
                               if revoke_reasons else ""))
