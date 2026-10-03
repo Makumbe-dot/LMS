@@ -1,6 +1,6 @@
 import { useState } from 'react'
 
-import { Field } from '../components/ui.jsx'
+import { Field, HexMark } from '../components/ui.jsx'
 import { useAuth } from '../lib/auth.jsx'
 
 export default function Login() {
@@ -40,7 +40,10 @@ export default function Login() {
   return (
     <div className="login-page">
       <form className="card login-card" onSubmit={onSubmit}>
-        <h1>Loan Management System</h1>
+        <div className="login-brand">
+          <HexMark size={36} />
+          <h1 style={{ margin: 0 }}>Loan Management System</h1>
+        </div>
 
         {mfaToken ? (
           <>

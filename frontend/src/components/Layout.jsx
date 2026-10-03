@@ -5,6 +5,7 @@ import { humanise } from '../lib/format.js'
 import { useOrg } from '../lib/org.jsx'
 import { useTheme } from '../lib/theme.jsx'
 import GlobalSearch from './GlobalSearch.jsx'
+import { HexMark } from './ui.jsx'
 
 const NAV = [
   {
@@ -69,8 +70,13 @@ export default function Layout() {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <div className="brand">LMS</div>
-        <div className="brand-sub">{orgName}</div>
+        <div className="brand">
+          <HexMark />
+          <div className="brand-text">
+            <span className="brand-name">LMS</span>
+            <span className="brand-sub">{orgName}</span>
+          </div>
+        </div>
         <nav aria-label="Main">
           {NAV.map((group) => {
             const visible = group.items.filter((item) => !item.roles || can(...item.roles))

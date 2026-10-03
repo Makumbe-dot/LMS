@@ -1,6 +1,28 @@
 /* Small presentational pieces shared by every page. */
 import { humanise } from '../lib/format.js'
 
+/** The wordmark's hexagon: one cell of the honeycomb the pages sit on. */
+export function HexMark({ size = 30 }) {
+  return (
+    <svg
+      className="brand-mark"
+      width={size}
+      height={Math.round(size * 1.12)}
+      viewBox="0 0 28 32"
+      aria-hidden="true"
+    >
+      <path d="M14 1.2 26.6 8.5v15L14 30.8 1.4 23.5v-15z" fill="var(--accent)" />
+      <path
+        d="M14 8.6 20.3 12.2v7.6L14 23.4l-6.3-3.6v-7.6z"
+        fill="none"
+        stroke="var(--accent-ink)"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
 export function Badge({ value }) {
   if (value === null || value === undefined || value === '') return <span>-</span>
   return <span className={`badge ${value}`}>{humanise(value)}</span>
