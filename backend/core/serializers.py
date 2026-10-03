@@ -353,6 +353,8 @@ class LoanQuoteSerializer(serializers.Serializer):
     other_charges = money(required=False)
     charges = serializers.ListField(child=serializers.DictField(), required=False)
     net_disbursed = money()
+    total_cost_of_credit = money()
+    apr_pct = serializers.DecimalField(max_digits=10, decimal_places=2, allow_null=True)
     affordability_pct = money(allow_null=True, required=False)
     affordable = serializers.BooleanField(allow_null=True, required=False)
     schedule = ScheduleRowSerializer(many=True)
@@ -401,6 +403,7 @@ class LoanSerializer(serializers.ModelSerializer):
     officer_name = serializers.CharField(source="officer.full_name", read_only=True, default=None)
     branch_name = serializers.CharField(source="branch.name", read_only=True, default=None)
     total_outstanding = money(read_only=True)
+    total_cost_of_credit = money(read_only=True)
     arrears_amount = money(read_only=True, default=Decimal("0"))
     days_in_arrears = serializers.IntegerField(read_only=True, default=0)
 
@@ -411,7 +414,8 @@ class LoanSerializer(serializers.ModelSerializer):
                   "group_id", "refinanced_from_id",
                   "principal", "interest_rate_pct", "rate_method", "term_months", "purpose",
                   "admin_fee", "insurance_fee", "other_charges",
-                  "instalment_amount", "total_interest", "status",
+                  "instalment_amount", "total_interest", "total_cost_of_credit", "apr_pct",
+                  "status",
                   "application_date", "approved_at", "rejection_reason", "disbursement_date",
                   "first_instalment_date", "maturity_date", "closed_at", "principal_outstanding",
                   "interest_outstanding", "penalties_outstanding", "charges_outstanding",

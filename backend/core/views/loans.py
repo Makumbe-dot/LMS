@@ -319,6 +319,7 @@ def agreement(request, loan_id: int):
     loan = get_loan_or_404(loan_id)
     config = OrganisationSetting.load()
     rows = svc.sched(loan)
+    apr = loan.apr_pct
     if rows:
         schedule = [{
             "number": r.number, "due_date": r.due_date, "opening_balance": r.opening_balance,
@@ -331,6 +332,8 @@ def agreement(request, loan_id: int):
         preview = svc.quote(loan.product, loan.principal, loan.term_months,
                             loan.application_date, loan.borrower)
         schedule = preview["schedule"]
+        if apr is None:
+            apr = preview["apr_pct"]
 
     payday = loan.borrower.payday or 1
     suffix = ("th" if 11 <= payday % 100 <= 13
@@ -344,7 +347,9 @@ def agreement(request, loan_id: int):
         "today": date.today(),
         "rate_method": "reducing balance" if loan.rate_method == "reducing" else "flat rate",
         "total_repayable": loan.principal + loan.total_interest,
-        "net_disbursed": loan.principal - loan.admin_fee - loan.insurance_fee - loan.other_charges,
+        "net_disbursed": loan.principal - loan.upfront_fees,
+        "total_cost_of_credit": loan.total_cost_of_credit,
+        "apr": apr,
         "charges": loan.charges.all(),
         "guarantors": loan.borrower.guarantors.all(),
         "collateral": loan.collateral.filter(status="pledged"),

@@ -145,3 +145,59 @@ def _flat_schedule(principal, monthly_rate_pct, term: int, first_due: date) -> l
 
 def total_interest(rows: list[Row]) -> Decimal:
     return q(sum((r.interest_due for r in rows), Decimal("0")))
+
+
+def annual_percentage_rate(net_advanced, payments, start: date) -> Decimal | None:
+    """The yearly rate that discounts the instalments back to what the borrower received.
+
+    `payments` is a list of (due date, amount). The borrower receives `net_advanced`
+    on `start` - the principal less every fee deducted from it - and the APR is the
+    rate r for which
+
+        net_advanced = sum(amount_k / (1 + r) ** (days_k / 365))
+
+    So unlike the monthly nominal rate on the product, it prices the upfront fees in
+    with the interest, and it is comparable across lenders, terms and repayment
+    frequencies. It is a disclosure figure, rounded to two places; nothing posts
+    from it.
+
+    Solved by bisection in Decimal. The present value falls as the rate rises, so
+    bisection cannot miss; it stops once the bracket is a ten-millionth wide, far
+    tighter than the two places shown. Returns None when there is no rate to find:
+    nothing advanced, or nothing to repay beyond it.
+
+    Each discount factor is exp(-t * ln(1 + r)) with the logarithm taken once per
+    trial rate, not once per instalment: a quote is recomputed as the officer types,
+    and a weekly loan has fifty-odd instalments.
+    """
+    from decimal import localcontext
+
+    net = Decimal(net_advanced)
+    if net <= 0:
+        return None
+    with localcontext() as ctx:
+        ctx.prec = 16
+        year = Decimal(365)
+        flows = [(Decimal((due - start).days) / year, Decimal(amount))
+                 for due, amount in payments if amount]
+        if not flows or sum(a for _, a in flows) <= net:
+            return None
+
+        def excess(rate: Decimal) -> Decimal:
+            # Present value of the repayments over what was advanced; falls as rate rises.
+            log_base = (1 + rate).ln()
+            return sum((a * (-(t * log_base)).exp() for t, a in flows), Decimal(0)) - net
+
+        low, high = Decimal(0), Decimal(1)
+        while excess(high) > 0:
+            high *= 2
+            if high > 10_000:  # a million percent: not a loan anyone should be quoting
+                return None
+        tolerance = Decimal("1e-7")
+        while high - low > tolerance:
+            mid = (low + high) / 2
+            if excess(mid) > 0:
+                low = mid
+            else:
+                high = mid
+        return q((low + high) / 2 * 100)

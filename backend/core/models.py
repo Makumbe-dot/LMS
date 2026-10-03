@@ -712,6 +712,11 @@ class Loan(models.Model):
                                         help_text="Total of the catalogue charges on this loan")
     instalment_amount = models.DecimalField(default=ZERO, **MONEY)
     total_interest = models.DecimalField(default=ZERO, **MONEY)
+    # The annual percentage rate disclosed to the borrower: interest AND the upfront
+    # fees, as one yearly rate. Snapshotted at application and recomputed on the real
+    # dates at disbursement, so the agreement shows the figure the borrower signed.
+    # Null when there is no rate to find. See amortisation.annual_percentage_rate.
+    apr_pct = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
 
     status = models.CharField(max_length=20, choices=LoanStatus.choices,
                               default=LoanStatus.PENDING, db_index=True)
@@ -757,6 +762,17 @@ class Loan(models.Model):
                 + (self.interest_outstanding or ZERO)
                 + (self.penalties_outstanding or ZERO)
                 + (self.charges_outstanding or ZERO))
+
+    @property
+    def upfront_fees(self) -> Decimal:
+        """Everything deducted from the advance at disbursement."""
+        return ((self.admin_fee or ZERO) + (self.insurance_fee or ZERO)
+                + (self.other_charges or ZERO))
+
+    @property
+    def total_cost_of_credit(self) -> Decimal:
+        """What the loan costs over the money advanced: contractual interest plus fees."""
+        return (self.total_interest or ZERO) + self.upfront_fees
 
     @property
     def schedule(self):

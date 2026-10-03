@@ -493,6 +493,15 @@ principal and interest legs are spread evenly. The last instalment takes the rou
 so principal sums to exactly the advance and interest to exactly `P * r * n`. At the same quoted
 rate a flat loan always costs the borrower more than a reducing-balance one.
 
+*Cost of credit*: the quote, the loan and the printed agreement all state the **total cost of
+credit** (contractual interest plus every fee deducted at disbursement) and the **APR, fees
+included**: the yearly rate `r` at which the instalments, discounted on their due dates, equal what
+the borrower actually received, `net = Σ instalment_k / (1 + r)^(days_k / 365)`. The monthly
+nominal rate on a product leaves the fees out and does not compound, so it understates the cost; the
+APR is the figure a borrower can compare across lenders, terms and repayment frequencies. It is
+stored on the loan at application, restated on the real dates at disbursement, and is a disclosure
+only: nothing posts from it.
+
 *Early settlement*: outstanding principal, plus interest on instalments that have already fallen
 due, plus penalties. Interest on instalments not yet due has not been earned, so it is rebated
 rather than collected, and the settlement figure sits below the raw total outstanding.

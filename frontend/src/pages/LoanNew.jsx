@@ -197,6 +197,11 @@ export default function LoanNew() {
                   ['Credit life fee', money(quote.insurance_fee)],
                   ...(quote.charges || []).map((c) => [c.name, money(c.amount)]),
                   ['Net disbursed', <strong key="n">{money(quote.net_disbursed)}</strong>],
+                  ['Total cost of credit', money(quote.total_cost_of_credit)],
+                  [
+                    'APR, fees included',
+                    quote.apr_pct === null ? '-' : <strong key="apr">{pct(quote.apr_pct)} a year</strong>,
+                  ],
                   ...(quote.affordability_pct !== null
                     ? [
                         [

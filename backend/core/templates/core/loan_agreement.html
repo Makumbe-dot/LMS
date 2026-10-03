@@ -98,6 +98,12 @@
     {% endfor %}
     <tr><td>Net amount paid to the Borrower</td>
         <td><strong>{{ currency }} {{ net_disbursed|floatformat:2|intcomma }}</strong></td></tr>
+    <tr><td>Total cost of credit (interest and fees)</td>
+        <td><strong>{{ currency }} {{ total_cost_of_credit|floatformat:2|intcomma }}</strong></td></tr>
+    {% if apr is not None %}
+    <tr><td>Annual percentage rate, fees included</td>
+        <td><strong>{{ apr|floatformat:2 }}% a year</strong></td></tr>
+    {% endif %}
     <tr><td>First instalment due</td><td>{{ loan.first_instalment_date|date:"j F Y"|default:"On disbursement" }}</td></tr>
     <tr><td>Final instalment due</td><td>{{ loan.maturity_date|date:"j F Y"|default:"-" }}</td></tr>
   </table>
@@ -110,8 +116,8 @@
       {{ payday_ordinal }} day of each month until the loan is repaid in full.
     </li>
     <li>
-      Payments are applied first to penalties, then to interest, then to principal, oldest
-      instalment first.
+      Payments are applied first to penalties, then to any charges added to the loan balance,
+      then to interest, then to principal, oldest instalment first.
     </li>
     <li>
       The Borrower may settle early at any time. On early settlement, interest on instalments not

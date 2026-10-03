@@ -662,3 +662,67 @@ class AgreementTests(Base):
     def test_it_needs_a_signed_in_user(self):
         loan = self.disbursed_loan(self.product, self.borrower)
         self.assertEqual(APIClient().get(f"/api/loans/{loan['id']}/agreement").status_code, 401)
+
+    def test_the_agreement_discloses_the_total_cost_and_the_apr(self):
+        loan = self.disbursed_loan(self.product, self.borrower)
+        html = self.officer.get(f"/api/loans/{loan['id']}/agreement").content.decode()
+        self.assertIn("Total cost of credit", html)
+        self.assertIn("Annual percentage rate, fees included", html)
+        self.assertIn(f"{dec(loan['apr_pct']):.2f}% a year", html)
+
+    def test_the_agreement_states_the_waterfall_the_code_applies(self):
+        # The borrower signs this. It once omitted charges, which the repayment
+        # waterfall collects second.
+        loan = self.disbursed_loan(self.product, self.borrower)
+        html = self.officer.get(f"/api/loans/{loan['id']}/agreement").content.decode()
+        self.assertIn("first to penalties, then to any charges added to the loan balance", html)
+
+
+# ---------------------------------------------------------------- cost of credit
+class CostOfCreditTests(Base):
+    """What a loan costs, in one figure the borrower can compare. The monthly nominal
+    rate on the product leaves the fees out, so it is never the whole story."""
+
+    def setUp(self):
+        super().setUp()
+        self.product = self.make_product()
+        self.borrower = self.make_borrower()
+
+    def quote(self, **overrides):
+        payload = {"product_id": self.product["id"], "principal": 1000, "term_months": 6}
+        payload.update(overrides)
+        response = self.officer.post("/api/loans/quote", payload, format="json")
+        self.assertEqual(response.status_code, 200, response.content)
+        return response.json()
+
+    def test_the_total_cost_is_the_interest_plus_every_upfront_fee(self):
+        body = self.quote()
+        fees = dec(body["admin_fee"]) + dec(body["insurance_fee"]) + dec(body["other_charges"])
+        self.assertEqual(dec(body["total_cost_of_credit"]), dec(body["total_interest"]) + fees)
+
+    def test_the_apr_counts_the_fees_so_it_sits_above_the_nominal_rate_compounded(self):
+        with_fees = dec(self.quote()["apr_pct"])
+        free = self.make_product(code="T-FREE", name="No fees", admin_fee_pct=0,
+                                 insurance_fee_pct=0)
+        without_fees = dec(self.quote(product_id=free["id"])["apr_pct"])
+        # 5% a month is about 80% a year compounded; 4% off the top adds a lot on
+        # a six-month loan.
+        self.assertGreater(without_fees, dec("75"))
+        self.assertGreater(with_fees, without_fees + dec("10"))
+
+    def test_the_apr_is_stored_at_application_and_restated_at_disbursement(self):
+        response = self.officer.post("/api/loans", {
+            "borrower_id": self.borrower["id"], "product_id": self.product["id"],
+            "principal": 1000, "term_months": 6, "application_date": "2026-03-01",
+        }, format="json")
+        applied = response.json()
+        self.assertIsNotNone(applied["apr_pct"])
+
+        self.admin.post(f"/api/loans/{applied['id']}/approve")
+        # Disbursed a fortnight late: the borrower holds the money for less time
+        # before the first instalment, so the same payments cost more per year.
+        disbursed = self.officer.post(f"/api/loans/{applied['id']}/disburse", {
+            "disbursement_date": "2026-03-15", "first_instalment_date": "2026-03-25",
+        }, format="json").json()
+        self.assertNotEqual(disbursed["apr_pct"], applied["apr_pct"])
+        self.assertEqual(Loan.objects.get(pk=applied["id"]).apr_pct, dec(disbursed["apr_pct"]))

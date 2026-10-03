@@ -347,7 +347,16 @@ export default function LoanDetail() {
               ['Total interest', money(loan.total_interest)],
               [
                 'Upfront fees',
-                money((num(loan.admin_fee) ?? 0) + (num(loan.insurance_fee) ?? 0)),
+                money(
+                  (num(loan.admin_fee) ?? 0) +
+                    (num(loan.insurance_fee) ?? 0) +
+                    (num(loan.other_charges) ?? 0),
+                ),
+              ],
+              ['Total cost of credit', money(loan.total_cost_of_credit)],
+              [
+                'APR, fees included',
+                loan.apr_pct === null || loan.apr_pct === undefined ? '-' : `${pct(loan.apr_pct)} a year`,
               ],
               ['Officer', loan.officer_name || '-'],
               ['Branch', loan.branch_name || '-'],

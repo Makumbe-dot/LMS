@@ -28,7 +28,14 @@ from ..models import (
     User,
 )
 from . import charges, periods
-from .amortisation import add_months, build_schedule, q, set_day, total_interest
+from .amortisation import (
+    add_months,
+    annual_percentage_rate,
+    build_schedule,
+    q,
+    set_day,
+    total_interest,
+)
 from .scoring import score_application, store_on_loan
 
 ZERO = Decimal("0")
@@ -116,6 +123,11 @@ def _fees(product: LoanProduct, principal: Decimal) -> tuple[Decimal, Decimal]:
     return admin, ins
 
 
+def _apr(net_advanced: Decimal, rows, start: date) -> Decimal | None:
+    """The APR of a schedule, fees included. See amortisation.annual_percentage_rate."""
+    return annual_percentage_rate(net_advanced, [(r.due_date, r.instalment) for r in rows], start)
+
+
 def default_first_due(disb: date, payday: int | None) -> date:
     """First instalment falls on the borrower's next payday at least ~2 weeks after disbursement."""
     if payday:
@@ -149,6 +161,7 @@ def quote(product: LoanProduct, principal: Decimal, term: int,
     catalogue = charges.quote_for(product, principal)
     other = q(sum((row["amount"] for row in catalogue), ZERO))
     ti = total_interest(rows)
+    fees = q(admin + ins + other)
     aff_pct = affordable = None
     if borrower and borrower.net_salary and borrower.net_salary > 0:
         aff_pct = q(rows[0].instalment / borrower.net_salary * 100)
@@ -165,7 +178,12 @@ def quote(product: LoanProduct, principal: Decimal, term: int,
         "insurance_fee": ins,
         "other_charges": other,
         "charges": catalogue,
-        "net_disbursed": q(principal - admin - ins - other),
+        "net_disbursed": q(principal - fees),
+        # What the loan costs over and above the money advanced, and the yearly rate
+        # that cost works out to. The monthly nominal rate alone understates both,
+        # because it leaves out the fees taken off the top.
+        "total_cost_of_credit": q(ti + fees),
+        "apr_pct": _apr(q(principal) - fees, rows, disb),
         "affordability_pct": aff_pct,
         "affordable": affordable,
         "schedule": [vars(r) for r in rows],
@@ -209,6 +227,7 @@ def apply(borrower: Borrower, product: LoanProduct, principal: Decimal, term: in
         purpose=purpose, admin_fee=qt["admin_fee"], insurance_fee=qt["insurance_fee"],
         other_charges=qt["other_charges"],
         instalment_amount=qt["instalment_amount"], total_interest=qt["total_interest"],
+        apr_pct=qt["apr_pct"],
         status=LoanStatus.PENDING, application_date=application_date or date.today(),
         refinanced_from=refinanced_from, group=group,
     )
@@ -263,8 +282,12 @@ def disburse(loan: Loan, user: User, disbursement_date: date | None,
     loan.disbursement_date = disb
     loan.first_instalment_date = first_due
     loan.maturity_date = rows[-1].due_date
+    fees = q(loan.admin_fee + loan.insurance_fee + loan.other_charges)
     loan.instalment_amount = rows[0].instalment
     loan.total_interest = total_interest(rows)
+    # Recomputed on the real dates: the application's figure assumed a disbursement
+    # date and a first instalment that may both have moved.
+    loan.apr_pct = _apr(q(loan.principal - fees), rows, disb)
     loan.principal_outstanding = loan.principal
     loan.interest_outstanding = loan.total_interest
     loan.penalties_outstanding = ZERO
@@ -272,11 +295,10 @@ def disburse(loan: Loan, user: User, disbursement_date: date | None,
     loan.total_paid = ZERO
     loan.save(update_fields=[
         "status", "disbursement_date", "first_instalment_date", "maturity_date",
-        "instalment_amount", "total_interest", "principal_outstanding",
+        "instalment_amount", "total_interest", "apr_pct", "principal_outstanding",
         "interest_outstanding", "penalties_outstanding", "charges_outstanding", "total_paid",
     ])
 
-    fees = q(loan.admin_fee + loan.insurance_fee + loan.other_charges)
     db_txn = Transaction.objects.create(
         loan=loan, txn_type=TxnType.DISBURSEMENT, txn_date=disb, amount=q(loan.principal - fees),
         principal_component=loan.principal, method=method, reference=reference, posted_by=user,
@@ -553,6 +575,9 @@ def reschedule(loan: Loan, user: User, new_term: int, new_rate: Decimal | None,
     loan.maturity_date = rows[-1].due_date
     loan.instalment_amount = rows[0].instalment
     loan.total_interest = total_interest(rows)
+    # The new schedule's own rate on the capitalised balance. No fees are taken on a
+    # reschedule, so this is the interest alone, annualised.
+    loan.apr_pct = _apr(new_principal, rows, today)
     loan.principal_outstanding = new_principal
     loan.interest_outstanding = loan.total_interest
     loan.penalties_outstanding = ZERO
@@ -560,8 +585,9 @@ def reschedule(loan: Loan, user: User, new_term: int, new_rate: Decimal | None,
     loan.total_paid = ZERO
     loan.save(update_fields=[
         "principal", "interest_rate_pct", "term_months", "first_instalment_date",
-        "maturity_date", "instalment_amount", "total_interest", "principal_outstanding",
-        "interest_outstanding", "penalties_outstanding", "charges_outstanding", "total_paid",
+        "maturity_date", "instalment_amount", "total_interest", "apr_pct",
+        "principal_outstanding", "interest_outstanding", "penalties_outstanding",
+        "charges_outstanding", "total_paid",
     ])
     # The receivable grows by exactly what the penalty, charge and interest legs
     # shed. Posting this is what keeps 1100, 1300 and 1400 tied to the loan book
