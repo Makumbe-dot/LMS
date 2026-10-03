@@ -7,6 +7,7 @@ import { OrgProvider } from './lib/org.jsx'
 import Account from './pages/Account.jsx'
 import Arrears from './pages/Arrears.jsx'
 import Audit from './pages/Audit.jsx'
+import BankRec from './pages/BankRec.jsx'
 import BorrowerDetail from './pages/BorrowerDetail.jsx'
 import BorrowerForm from './pages/BorrowerForm.jsx'
 import Borrowers from './pages/Borrowers.jsx'
@@ -99,6 +100,7 @@ export default function App() {
           <Route path="/transactions" element={<Transactions />} />
           <Route path="/ledger" element={<Ledger />} />
           <Route path="/journals" element={<Journals />} />
+          <Route path="/bank-reconciliation" element={<BankRec />} />
           <Route path="/funding" element={<Funding />} />
           <Route path="/performance" element={<Performance />} />
           <Route path="/provisioning" element={<Provisioning />} />

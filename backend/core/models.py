@@ -110,6 +110,12 @@ class TillStatus(models.TextChoices):
     VERIFIED = "verified", "Verified"
 
 
+class StatementLineStatus(models.TextChoices):
+    UNMATCHED = "unmatched", "Unmatched"
+    MATCHED = "matched", "Matched"
+    IGNORED = "ignored", "Ignored"
+
+
 class PeriodState(models.TextChoices):
     """A month is either open to postings or closed to them.
 
@@ -1162,6 +1168,69 @@ class TillSession(models.Model):
 
     def __str__(self):
         return f"{self.session_no} {self.teller_id} {self.status}"
+
+
+# ---------------------------------------------------------------- bank reconciliation
+class BankStatement(models.Model):
+    """A bank or mobile-money statement, uploaded to be matched against the ledger.
+
+    Each line is matched to the journal entry that moved the same cash through
+    account 1000. Entries rather than transactions, because every way money moves
+    - a repayment, a savings withdrawal, a facility drawdown, a salary journal -
+    ends in exactly one entry, so one matching rule covers them all. What is left
+    on either side is the reconciliation: lines the books do not know about (a bank
+    charge, an unidentified deposit) and postings the bank has not seen.
+    """
+    statement_no = models.CharField(max_length=20, unique=True, db_index=True)
+    account_name = models.CharField(max_length=120,
+                                    help_text="Which bank or wallet account this is")
+    channel = models.CharField(max_length=20, choices=PaymentMethod.choices,
+                               default=PaymentMethod.BANK_TRANSFER)
+    period_start = models.DateField()
+    period_end = models.DateField()
+    opening_balance = models.DecimalField(null=True, blank=True, max_digits=18, decimal_places=2)
+    closing_balance = models.DecimalField(null=True, blank=True, max_digits=18, decimal_places=2)
+    file_name = models.CharField(max_length=255, null=True, blank=True)
+    uploaded_by = models.ForeignKey("User", on_delete=models.SET_NULL, null=True, blank=True,
+                                    related_name="statements_uploaded")
+    uploaded_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "bank_statements"
+        ordering = ["-period_end", "-id"]
+
+    def __str__(self):
+        return f"{self.statement_no} {self.account_name} {self.period_start}..{self.period_end}"
+
+
+class StatementLine(models.Model):
+    statement = models.ForeignKey(BankStatement, on_delete=models.CASCADE, related_name="lines")
+    line_no = models.IntegerField()
+    txn_date = models.DateField(db_index=True)
+    description = models.CharField(max_length=255, null=True, blank=True)
+    reference = models.CharField(max_length=120, null=True, blank=True)
+    # Signed from the institution's side: positive is money in, negative money out.
+    amount = models.DecimalField(**MONEY)
+    status = models.CharField(max_length=10, choices=StatementLineStatus.choices,
+                              default=StatementLineStatus.UNMATCHED, db_index=True)
+    # One entry, one line: an entry matched twice would hide a missing deposit.
+    journal_entry = models.OneToOneField("JournalEntry", on_delete=models.SET_NULL, null=True,
+                                         blank=True, related_name="statement_line")
+    matched_by = models.ForeignKey("User", on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="statement_lines_matched")
+    matched_at = models.DateTimeField(null=True, blank=True)
+    auto_matched = models.BooleanField(default=False)
+    note = models.TextField(null=True, blank=True)
+
+    class Meta:
+        db_table = "statement_lines"
+        ordering = ["line_no"]
+        constraints = [
+            models.UniqueConstraint(fields=["statement", "line_no"], name="uq_statement_line_no"),
+        ]
+
+    def __str__(self):
+        return f"{self.statement_id}/{self.line_no} {self.amount}"
 
 
 # ---------------------------------------------------------------- provisioning

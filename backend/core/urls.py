@@ -4,6 +4,7 @@ from django.urls import re_path
 
 from .views import (
     auth,
+    bankrec,
     borrowers,
     charges,
     funding,
@@ -147,6 +148,17 @@ urlpatterns = [
     re_path(r"^ledger/reconciliation/?$", ledger.reconciliation),
     re_path(r"^ledger/income-statement/?$", ledger.income_statement),
     re_path(r"^ledger/rebuild/?$", ledger.rebuild),
+
+    # ---- bank and mobile-money reconciliation (line routes before the numeric id ones)
+    re_path(r"^bank-statements/lines/(?P<line_id>\d+)/candidates/?$", bankrec.line_candidates),
+    re_path(r"^bank-statements/lines/(?P<line_id>\d+)/match/?$", bankrec.line_match),
+    re_path(r"^bank-statements/lines/(?P<line_id>\d+)/unmatch/?$", bankrec.line_unmatch),
+    re_path(r"^bank-statements/lines/(?P<line_id>\d+)/ignore/?$", bankrec.line_ignore),
+    re_path(r"^bank-statements/lines/(?P<line_id>\d+)/journal/?$", bankrec.line_journal),
+    re_path(r"^bank-statements/?$", bankrec.statements),
+    re_path(r"^bank-statements/(?P<statement_id>\d+)/auto-match/?$", bankrec.auto_match),
+    re_path(r"^bank-statements/(?P<statement_id>\d+)/outstanding/?$", bankrec.outstanding),
+    re_path(r"^bank-statements/(?P<statement_id>\d+)/?$", bankrec.statement_detail),
 
     # ---- manual journals: expenses, other income, assets, opening balances
     re_path(r"^journals/?$", journals.journals),

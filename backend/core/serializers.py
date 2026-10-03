@@ -15,6 +15,7 @@ from rest_framework import serializers
 from .models import (
     AccountingPeriod,
     AuditLog,
+    BankStatement,
     Borrower,
     CapitalTransaction,
     CapitalTxnType,
@@ -59,6 +60,7 @@ from .models import (
     SavingsProduct,
     SavingsStatus,
     SavingsTransaction,
+    StatementLine,
     TillSession,
     Transaction,
     TxnType,
@@ -885,6 +887,85 @@ class TillCountSerializer(serializers.Serializer):
 
 class NoteSerializer(serializers.Serializer):
     note = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+
+
+# ---------------------------------------------------------------- bank reconciliation
+class StatementLineSerializer(serializers.ModelSerializer):
+    status_label = serializers.CharField(source="get_status_display", read_only=True)
+    entry_no = serializers.CharField(source="journal_entry.entry_no", read_only=True,
+                                     default=None)
+    entry_narration = serializers.CharField(source="journal_entry.narration", read_only=True,
+                                            default=None)
+    entry_date = serializers.DateField(source="journal_entry.entry_date", read_only=True,
+                                       default=None)
+    matched_by_name = serializers.CharField(source="matched_by.full_name", read_only=True,
+                                            default=None)
+
+    class Meta:
+        model = StatementLine
+        fields = ["id", "line_no", "txn_date", "description", "reference", "amount", "status",
+                  "status_label", "journal_entry_id", "entry_no", "entry_narration",
+                  "entry_date", "auto_matched", "matched_by_name", "matched_at", "note"]
+
+
+class BankStatementSerializer(serializers.ModelSerializer):
+    channel_label = serializers.CharField(source="get_channel_display", read_only=True)
+    uploaded_by_name = serializers.CharField(source="uploaded_by.full_name", read_only=True,
+                                             default=None)
+    summary = serializers.SerializerMethodField()
+
+    class Meta:
+        model = BankStatement
+        fields = ["id", "statement_no", "account_name", "channel", "channel_label",
+                  "period_start", "period_end", "opening_balance", "closing_balance",
+                  "file_name", "uploaded_by_name", "uploaded_at", "summary"]
+
+    def get_summary(self, obj) -> dict:
+        from .services.bankrec import summary
+
+        data = summary(obj)
+        return {key: (str(value) if isinstance(value, Decimal) else value)
+                for key, value in data.items()}
+
+
+class BankStatementDetailSerializer(BankStatementSerializer):
+    lines = StatementLineSerializer(many=True, read_only=True)
+
+    class Meta(BankStatementSerializer.Meta):
+        fields = BankStatementSerializer.Meta.fields + ["lines"]
+
+
+class StatementUploadSerializer(serializers.Serializer):
+    file = serializers.FileField()
+    account_name = serializers.CharField(max_length=120)
+    channel = serializers.ChoiceField(choices=[PaymentMethod.BANK_TRANSFER.value,
+                                               PaymentMethod.MOBILE_MONEY.value],
+                                      default=PaymentMethod.BANK_TRANSFER.value)
+    opening_balance = serializers.DecimalField(max_digits=18, decimal_places=2, required=False,
+                                               allow_null=True)
+    closing_balance = serializers.DecimalField(max_digits=18, decimal_places=2, required=False,
+                                               allow_null=True)
+
+
+class StatementEntrySerializer(serializers.Serializer):
+    """A ledger entry as a candidate for, or an outstanding item in, a reconciliation."""
+    id = serializers.IntegerField()
+    entry_no = serializers.CharField()
+    entry_date = serializers.DateField()
+    narration = serializers.CharField()
+    source = serializers.CharField()
+    amount = money(max_digits=18)
+    method = serializers.CharField(allow_null=True)
+    reference = serializers.CharField(allow_null=True)
+    loan_no = serializers.CharField(allow_null=True)
+
+
+class StatementMatchSerializer(serializers.Serializer):
+    entry_id = serializers.IntegerField()
+
+
+class StatementJournalSerializer(serializers.Serializer):
+    account_code = serializers.CharField(max_length=20)
 
 
 # ---------------------------------------------------------------- provisioning

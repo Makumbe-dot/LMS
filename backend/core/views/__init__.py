@@ -1,5 +1,6 @@
 from . import (  # noqa: F401
     auth,
+    bankrec,
     borrowers,
     charges,
     funding,

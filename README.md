@@ -110,6 +110,19 @@ so a journal can never open a reconciliation break. Paying out more than the ban
 a closed month is refused, and a posted journal is reversed rather than deleted. Rebuild re-posts
 journals, so a journal wipe does not quietly drop every salary from the books.
 
+**Bank reconciliation** — a bank or mobile-money statement, exported as CSV (one signed amount
+column or money-in / money-out columns, ISO or day-first dates), is matched line by line against
+the ledger. Each line pairs with the one journal entry that moved exactly the same amount through
+account 1000 — entries rather than transactions, so one rule covers repayments, savings, funding,
+capital and journals. Cash never matches a bank statement (it goes through the tills), a bank
+statement takes bank transfers and payroll deductions, a wallet statement takes mobile money.
+Auto-match pairs a line only when one entry within three days fits, or one whose reference agrees;
+anything ambiguous is left for a person, who sees the candidates and matches by hand. A match is
+never made on a different amount. What is left is the reconciliation: lines the books do not know
+about (**Book it** prepares the journal — a bank charge to 6600, say — which matches once posted) and
+postings the bank has not shown. A statement with opening and closing balances is checked to add
+up, which catches a truncated export.
+
 **Impairment booked, not just reported** — a month-end run compares the IFRS 9 provision required
 to the provision already carried and posts only the **movement** (Dr 5100 Impairment / Cr 1900
 Provision, or the reverse). The provision carried is tracked per loan, released the moment a loan
