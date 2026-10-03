@@ -345,6 +345,14 @@ case-insensitive default collation. It covers:
 - the risk register — that ownership, not role, decides who may change a risk; that the residual
   rating moves only through a review and never above the inherent one (in the database too);
   closure, reopening, the heat map counts, and that the list does not query per risk;
+- repayment frequencies — weekly and fortnightly schedules, the monthly rate scaled per period, the
+  monthly schedule unchanged row for row, the group meeting day, affordability on a month of weekly
+  instalments;
+- the cost of credit — the APR against a textbook case, fees raising it, and the agreement stating it;
+- guarantors per loan, the loan-book migration (arrears, the opening posting, no double penalties,
+  re-running a file), teller tills (expected cash, the count, verification posting the difference,
+  the open-till setting), bank reconciliation (exact matches only, one entry per line, cash never on
+  a bank statement, ambiguity left alone), and two-factor sign-in against the RFC 6238 vectors;
 - branches, settings, search, documents, pagination, password change and account lockout.
 
 **The frontend suite** (vitest + Testing Library, jsdom) covers the parts where a bug is invisible
@@ -493,14 +501,16 @@ backend/                        Django project
   core/
     models.py                   branches, settings, users, borrowers, guarantors, documents,
                                 products, loans, instalments, transactions, notes,
-                                notifications, audit_log, sequences
+                                notifications, manual journals, tills, bank statements,
+                                audit_log, sequences
     serializers.py              request validation and response shaping
     permissions.py              the four-role guard
     exceptions.py               BusinessRuleError + a handler that always returns {"detail": ...}
     audit.py                    audit-trail helper
     admin.py                    Django admin, with postings deliberately read-only
     services/
-      amortisation.py           reducing-balance and flat-rate schedules (Decimal, cent-exact)
+      amortisation.py           reducing-balance and flat-rate schedules, monthly, fortnightly
+                                or weekly (Decimal, cent-exact), and the APR
       loans.py                  quote, apply, approve, reject, disburse, balances, arrears,
                                 early settlement, top-up, reschedule, write-off, recoveries
       repayments.py             waterfall allocation, reversals, waivers
@@ -518,15 +528,21 @@ backend/                        Django project
       tokens.py                 issuing, renewing and revoking sessions
       periods.py                period close, and the guard that refuses a closed date
       risks.py                  the risk register: ownership, ratings, reviews, the heat map
+      journals.py               manual journals: four eyes, control accounts refused
+      loanbook.py               bringing a running loan book over from another system
+      tills.py                  teller tills: expected cash, the count, the difference booked
+      bankrec.py                bank and mobile-money statements matched against the ledger
+      totp.py                   RFC 6238 codes for two-factor sign-in
       reports.py                dashboard, PAR, collections due, loan book, statement,
                                 IFRS 9 provisioning, performance, payroll deductions
     templates/core/             the printable loan agreement
     views/                      auth, borrowers, products, charges, loans, groups, savings,
-                                ledger, funding, provisions, periods, reports, risks, org
+                                ledger, journals, funding, provisions, periods, reports,
+                                risks, tills, bankrec, org
     authentication.py           JWT auth that honours revocation
     management/commands/        seed, run_penalties, run_savings_interest, run_provisions,
                                 accrue_borrowing_interest, send_reminders, close_period,
-                                reopen_period, prune_tokens
+                                reopen_period, prune_tokens, reset_mfa
     tests/                      the test suite
 frontend/                       React + Vite single-page app
   src/
@@ -534,9 +550,10 @@ frontend/                       React + Vite single-page app
                 useApi.js
     components/ Layout, GlobalSearch, DataTable, Modal, Toast, GroupedBars, HBars,
                 LoanTable, RiskHeatMap, ui.jsx
-    pages/      Login, Dashboard, Borrowers, Groups, Loans, Savings, Collections, Arrears,
-                Payroll, BulkImport, Notifications, Transactions, Ledger, Funding, Performance,
-                Provisioning, Periods, Risks, Products, Charges, Users, Settings, Account, Audit
+    pages/      Login, Dashboard, Borrowers, Groups, Loans, Savings, Collections, Till, Arrears,
+                Payroll, BulkImport, LoanBookImport, Notifications, Transactions, Ledger,
+                Journals, BankRec, Funding, Performance, Provisioning, Periods, Risks, Products,
+                Charges, Users, Settings, Account, Audit
     test/       setup.js (jsdom, storage, a loud default fetch) and harness.jsx
                 (renderPage with the providers stubbed, stubApi by path fragment)
     styles.css  design tokens, light and dark themes
@@ -620,6 +637,10 @@ capital movements. They share one `_raise_entry` helper, so the rules that matte
 refuse an unbalanced entry, refuse one whose accounts are missing — are written once rather than
 once per source. `ledger._sources()` is the table `backfill` sweeps, so a new source cannot be
 half-added and leave its account silently short after a Rebuild.
+
+Three more raise entries that stand behind no transaction — the provision run, manual journals and
+verified till differences — so each hangs its entry off its own row and has a repost path that
+`backfill` calls. The cash side of every entry is also what bank reconciliation matches against.
 
 **Read the Reconciliation tab, not the balanced flag.** A trial balance that balances, and a balance
 sheet where assets equal liabilities plus equity, both follow automatically from entries where every
@@ -923,9 +944,18 @@ Three things behave differently from PostgreSQL and are handled explicitly in th
 Note also that identity values keep climbing after `seed --reset` — product and loan ids will not
 restart at 1. Nothing depends on the numbering.
 
-## Extending
+## Not built yet
 
-All straightforward given the structure: flat-rate products (add a `rate_method` to `LoanProduct`
-and a second branch in `amortisation.py`), multi-currency (currency on product and loan, plus a rate
-table), SMS reminders driven by the collections-due report, IFRS 9 staging from the arrears buckets,
-a payroll-deduction file export per employer.
+What is deliberately not here, and why:
+
+- **Interest recognised by the effective interest method.** Interest is recognised when collected
+  and upfront fees go straight to income (see *Ledger recognition*). That is the usual treatment for
+  management accounts in a small lender; statements audited under IFRS 9 would expect interest
+  accrued at the effective rate with integral fees spread over the loan. Changing it rewrites the
+  ledger rule the reconciliation tests protect, so it is an auditor's decision first.
+- **A credit bureau check.** The scorecard reads only this book. A bureau lookup needs a bureau
+  contract and its API.
+- **Multi-currency.** One currency per organisation. It needs a currency on product and loan, a
+  rate table, and a revaluation run.
+- **A public-holiday calendar.** Instalments can fall due on a closed day; the product's grace days
+  already keep that from costing anyone a penalty.
