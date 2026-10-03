@@ -8,6 +8,7 @@ from .views import (
     charges,
     funding,
     groups,
+    journals,
     ledger,
     loans,
     org,
@@ -145,6 +146,13 @@ urlpatterns = [
     re_path(r"^ledger/reconciliation/?$", ledger.reconciliation),
     re_path(r"^ledger/income-statement/?$", ledger.income_statement),
     re_path(r"^ledger/rebuild/?$", ledger.rebuild),
+
+    # ---- manual journals: expenses, other income, assets, opening balances
+    re_path(r"^journals/?$", journals.journals),
+    re_path(r"^journals/(?P<journal_id>\d+)/post/?$", journals.post_journal),
+    re_path(r"^journals/(?P<journal_id>\d+)/reject/?$", journals.reject_journal),
+    re_path(r"^journals/(?P<journal_id>\d+)/reverse/?$", journals.reverse_journal),
+    re_path(r"^journals/(?P<journal_id>\d+)/?$", journals.journal_detail),
 
     # ---- risk register (the literal path must precede the numeric id routes)
     re_path(r"^risks/summary/?$", risks.summary),

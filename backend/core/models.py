@@ -97,6 +97,13 @@ class CapitalTxnType(models.TextChoices):
     REVERSAL = "reversal", "Reversal"
 
 
+class ManualJournalStatus(models.TextChoices):
+    DRAFT = "draft", "Awaiting approval"
+    POSTED = "posted", "Posted"
+    REJECTED = "rejected", "Rejected"
+    REVERSED = "reversed", "Reversed"
+
+
 class PeriodState(models.TextChoices):
     """A month is either open to postings or closed to them.
 
@@ -1008,6 +1015,79 @@ class JournalLine(models.Model):
     def __str__(self):
         side = f"Dr {self.debit}" if self.debit else f"Cr {self.credit}"
         return f"{self.account.code} {side}"
+
+
+class ManualJournal(models.Model):
+    """A journal entry a person writes: for what nothing else in the system posts.
+
+    Salaries, rent, a bank charge, a laptop, an opening balance. Prepared by
+    anyone who handles money and posted only by an administrator, so a journal
+    prepared by anyone else passes through a second pair of hands: an expense
+    payment is the classic way money leaves a lender unnoticed.
+
+    Posting raises one JournalEntry through `ledger.post_manual_entry`, hung off
+    this row the way a provision run's is, rather than adding a fifth source column
+    to JournalEntry. The accounts a sub-ledger reconciles against (1100, 2000 and
+    the rest; see `ledger.CONTROL_ACCOUNTS`) are refused, so a journal can never
+    open a reconciliation break.
+    """
+    journal_no = models.CharField(max_length=20, unique=True, db_index=True)
+    entry_date = models.DateField(db_index=True)
+    narration = models.TextField()
+    reference = models.CharField(max_length=80, null=True, blank=True,
+                                 help_text="Invoice, receipt or payslip number")
+    branch = models.ForeignKey("Branch", on_delete=models.SET_NULL, null=True, blank=True,
+                               related_name="manual_journals")
+    status = models.CharField(max_length=10, choices=ManualJournalStatus.choices,
+                              default=ManualJournalStatus.DRAFT, db_index=True)
+
+    prepared_by = models.ForeignKey("User", on_delete=models.SET_NULL, null=True, blank=True,
+                                    related_name="journals_prepared")
+    prepared_at = models.DateTimeField(default=timezone.now)
+    posted_by = models.ForeignKey("User", on_delete=models.SET_NULL, null=True, blank=True,
+                                  related_name="journals_posted")
+    posted_at = models.DateTimeField(null=True, blank=True)
+    rejected_reason = models.TextField(null=True, blank=True)
+
+    journal_entry = models.OneToOneField("JournalEntry", on_delete=models.SET_NULL, null=True,
+                                         blank=True, related_name="manual_journal")
+    reversal_entry = models.OneToOneField("JournalEntry", on_delete=models.SET_NULL, null=True,
+                                          blank=True, related_name="manual_journal_reversal")
+    reversed_by = models.ForeignKey("User", on_delete=models.SET_NULL, null=True, blank=True,
+                                    related_name="journals_reversed")
+    reversed_at = models.DateTimeField(null=True, blank=True)
+    reversal_reason = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "manual_journals"
+        ordering = ["-id"]
+
+    def __str__(self):
+        return f"{self.journal_no} {self.narration[:40]}"
+
+
+class ManualJournalLine(models.Model):
+    journal = models.ForeignKey(ManualJournal, on_delete=models.CASCADE, related_name="lines")
+    account = models.ForeignKey(LedgerAccount, on_delete=models.PROTECT,
+                                related_name="manual_journal_lines")
+    debit = models.DecimalField(default=ZERO, **MONEY)
+    credit = models.DecimalField(default=ZERO, **MONEY)
+    description = models.CharField(max_length=200, null=True, blank=True)
+
+    class Meta:
+        db_table = "manual_journal_lines"
+        ordering = ["id"]
+        constraints = [
+            # One side or the other, never both and never neither.
+            models.CheckConstraint(
+                condition=(models.Q(debit__gt=0, credit=0) | models.Q(debit=0, credit__gt=0)),
+                name="ck_manual_line_one_side"),
+        ]
+
+    def __str__(self):
+        side = f"Dr {self.debit}" if self.debit else f"Cr {self.credit}"
+        return f"{self.account_id} {side}"
 
 
 # ---------------------------------------------------------------- provisioning

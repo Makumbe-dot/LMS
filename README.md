@@ -76,6 +76,18 @@ raises one balanced journal entry automatically, so loans receivable in the ledg
 principal outstanding on the book. Trial balance, income statement, searchable journal, and a
 rebuild command for a book that predates the ledger.
 
+**Journals and expenses** — what the loan book does not post by itself: salaries, rent, airtime,
+bank charges, equipment, other income and opening balances. The chart of accounts carries operating
+expense accounts (6000–6900), property and equipment, accruals and an opening-balances account.
+**Record an expense** builds the two-line journal for the everyday case; **New journal** takes any
+number of lines and shows whether they balance as they are typed. Anyone who handles money may
+prepare a journal; only an administrator posts one, so a journal prepared by anyone else always
+passes through a second pair of hands. The accounts a sub-ledger is reconciled against (1100, 1300,
+1400, 1900, 2000, 2100, 2110, 3100, 3200) are refused, with the place that posting belongs instead,
+so a journal can never open a reconciliation break. Paying out more than the bank holds is refused,
+a closed month is refused, and a posted journal is reversed rather than deleted. Rebuild re-posts
+journals, so a journal wipe does not quietly drop every salary from the books.
+
 **Impairment booked, not just reported** — a month-end run compares the IFRS 9 provision required
 to the provision already carried and posts only the **movement** (Dr 5100 Impairment / Cr 1900
 Provision, or the reverse). The provision carried is tracked per loan, released the moment a loan
@@ -273,7 +285,9 @@ case-insensitive default collation. It covers:
 - the message outbox — generation, idempotency, receipts, sending and cancelling;
 - IFRS 9 staging, the provision run, its reversal and the repost path;
 - capital, funder facilities, borrowing interest and the cash guard;
-- period close — the guard, the eight pre-close checks, reopening, and the commands;
+- period close — the guard, the nine pre-close checks, reopening, and the commands;
+- manual journals — four eyes, control accounts refused, the cash guard, the closed-month guard,
+  reversal, withdrawal, and that Rebuild re-posts them;
 - **the reconciliation identities**, asserted as identities rather than as figures, so they keep
   their meaning as the book changes;
 - **arrears parity** — the SQL definition against the Python one, loan for loan, at four dates
@@ -788,10 +802,10 @@ when some actually did.
 
 Two pre-close checks cannot be overridden even with force: a month that has not ended, and a month
 with an earlier month still open. Two are blocking but overridable (debits equal credits; every
-transaction that should post has an entry). Three are advisory and never refuse — postings dated
-after the month end, penalties not accrued to the month end, and whether the ledger agrees with the
-loan and savings books as at today. Which checks were overridden is recorded on the period and in
-the audit trail.
+transaction that should post has an entry). Four are advisory and never refuse — postings dated
+after the month end, penalties not accrued to the month end, whether the ledger agrees with the
+loan and savings books as at today, and manual journals dated in the month that are still awaiting
+approval. Which checks were overridden is recorded on the period and in the audit trail.
 
 The nightly script passes `--skip-closed` to the penalty and savings-interest runs, so a month
 closed at 09:00 on the 1st does not fail that evening's batch.

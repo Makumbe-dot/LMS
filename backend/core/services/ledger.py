@@ -83,7 +83,47 @@ DEFAULT_ACCOUNTS = [
     ("5200", "Savings interest expense", AccountType.EXPENSE, "Interest credited to members' savings"),
     ("5300", "Interest on borrowings", AccountType.EXPENSE, "Interest expense on funding facilities, accrued monthly"),
     ("5310", "Facility fees", AccountType.EXPENSE, "Arrangement and commitment fees on funding facilities"),
+    # What a lender spends and owns beyond its loan book, posted by manual journal.
+    # Without these, salaries and rent had nowhere to go and the income statement
+    # showed lending income as if it were profit.
+    ("1500", "Other receivables and prepayments", AccountType.ASSET, "Deposits paid, prepaid rent and other amounts owed to the institution"),
+    ("1600", "Property and equipment", AccountType.ASSET, "Vehicles, computers, furniture, at cost"),
+    ("1690", "Accumulated depreciation", AccountType.ASSET, "Contra-asset; carries a credit balance against 1600"),
+    ("2900", "Accruals and other payables", AccountType.LIABILITY, "Bills received or expenses incurred and not yet paid"),
+    ("3900", "Opening balances", AccountType.EQUITY, "Balances brought forward from a previous system; clear to retained earnings once agreed"),
+    ("4900", "Other income", AccountType.INCOME, "Income outside the loan book, and cash over at the tills"),
+    ("6000", "Staff costs", AccountType.EXPENSE, "Salaries, wages, allowances and statutory contributions"),
+    ("6100", "Rent and premises", AccountType.EXPENSE, "Rent, rates, utilities, security and cleaning"),
+    ("6200", "Transport and travel", AccountType.EXPENSE, "Fuel, vehicle running costs and field travel"),
+    ("6300", "Communication and IT", AccountType.EXPENSE, "Airtime, data, SMS gateway, software and hosting"),
+    ("6400", "Professional fees", AccountType.EXPENSE, "Audit, legal, consulting and regulatory fees"),
+    ("6500", "Office and administration", AccountType.EXPENSE, "Stationery, printing, postage and sundries"),
+    ("6600", "Bank charges", AccountType.EXPENSE, "Bank and mobile-money transaction charges"),
+    ("6700", "Depreciation", AccountType.EXPENSE, "The year's charge against property and equipment"),
+    ("6800", "Cash shortages", AccountType.EXPENSE, "Cash short at the tills, written off on verification"),
+    ("6900", "Other operating expenses", AccountType.EXPENSE, "Anything without a better home; review it monthly"),
 ]
+
+# The accounts a sub-ledger is reconciled against (see `reconciliation`), and where
+# their postings belong instead. A manual journal to any of them would open a break
+# between the ledger and the book that nothing in the system could explain, so
+# `journals` refuses them and names the right place.
+CONTROL_ACCOUNTS = {
+    "1100": "the loan itself (a disbursement, repayment, write-off or reschedule)",
+    "1300": "the loan itself (penalty accrual, waiver or repayment)",
+    "1400": "the loan itself (raise a charge, or take a repayment)",
+    "1900": "the provision run on the Provisioning page",
+    "2000": "the member's savings account (deposit, withdrawal or reversal)",
+    "2100": "the facility on the Funding and capital page",
+    "2110": "the facility on the Funding and capital page",
+    "3100": "a capital movement on the Funding and capital page",
+    "3200": "a dividend on the Funding and capital page",
+}
+
+# Where a till's counted difference goes when a supervisor verifies it.
+CASH_SHORTAGES = "6800"
+OTHER_INCOME = "4900"
+OPENING_BALANCES = "3900"
 
 
 def ensure_chart_of_accounts() -> int:
@@ -602,8 +642,15 @@ def _backfill(limit: int | None = None) -> dict:
     reposted = repost_runs()
     posted += reposted["reposted"]
 
+    # Manual journals likewise stand behind no transaction.
+    from .journals import repost_journals
+
+    journals = repost_journals()
+    posted += journals["reposted"]
+
     return {"posted": posted, "skipped": skipped, "by_source": per_source,
-            "provision_runs_reposted": reposted["reposted"]}
+            "provision_runs_reposted": reposted["reposted"],
+            "manual_journals_reposted": journals["reposted"]}
 
 
 def trial_balance(start=None, end=None, branch_id=None) -> dict:

@@ -16,6 +16,7 @@ import Collections from './pages/Collections.jsx'
 import Dashboard from './pages/Dashboard.jsx'
 import Funding from './pages/Funding.jsx'
 import Groups from './pages/Groups.jsx'
+import Journals from './pages/Journals.jsx'
 import Ledger from './pages/Ledger.jsx'
 import LoanDetail from './pages/LoanDetail.jsx'
 import LoanNew from './pages/LoanNew.jsx'
@@ -79,6 +80,7 @@ export default function App() {
 
           <Route path="/transactions" element={<Transactions />} />
           <Route path="/ledger" element={<Ledger />} />
+          <Route path="/journals" element={<Journals />} />
           <Route path="/funding" element={<Funding />} />
           <Route path="/performance" element={<Performance />} />
           <Route path="/provisioning" element={<Provisioning />} />

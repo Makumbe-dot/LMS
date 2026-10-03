@@ -4,6 +4,7 @@ from . import (  # noqa: F401
     charges,
     funding,
     groups,
+    journals,
     ledger,
     loans,
     org,

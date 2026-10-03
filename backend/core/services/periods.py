@@ -290,6 +290,23 @@ def preflight(year: int, month: int) -> dict:
                              for r in agreement["rows"] if not r["agrees"])),
     })
 
+    # 9. Advisory: journals dated in the month still awaiting approval. Closing over
+    #    them means they can never post on their own date, which is usually not what
+    #    whoever prepared them intended.
+    from .journals import awaiting_approval
+
+    drafts = awaiting_approval(start, end)
+    checks.append({
+        "key": "no_journals_awaiting_approval",
+        "label": "No manual journals dated in the month are awaiting approval",
+        "passed": drafts == 0,
+        "blocking": False,
+        "overridable": False,
+        "detail": ("None" if drafts == 0 else
+                   f"{drafts} awaiting approval — post or reject them on the Journals page, or "
+                   f"they will have to be re-dated after the close"),
+    })
+
     blocking_failures = [c for c in checks if c["blocking"] and not c["passed"]]
     hard_failures = [c for c in blocking_failures if not c["overridable"]]
     return {

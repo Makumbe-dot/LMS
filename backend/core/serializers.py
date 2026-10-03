@@ -32,6 +32,8 @@ from .models import (
     JournalEntry,
     JournalLine,
     LedgerAccount,
+    ManualJournal,
+    ManualJournalLine,
     Guarantor,
     Instalment,
     Loan,
@@ -709,9 +711,19 @@ class TopUpRequestSerializer(serializers.Serializer):
 
 
 class LedgerAccountSerializer(serializers.ModelSerializer):
+    # Where postings to a reconciled account belong instead; null when a manual
+    # journal may use it. Lets the journal form leave those accounts out rather
+    # than offer them and refuse.
+    controlled_by = serializers.SerializerMethodField()
+
     class Meta:
         model = LedgerAccount
-        fields = ["id", "code", "name", "type", "description", "is_active"]
+        fields = ["id", "code", "name", "type", "description", "is_active", "controlled_by"]
+
+    def get_controlled_by(self, obj) -> str | None:
+        from .services.ledger import CONTROL_ACCOUNTS
+
+        return CONTROL_ACCOUNTS.get(obj.code)
 
 
 class JournalLineSerializer(serializers.ModelSerializer):
@@ -740,6 +752,69 @@ class JournalEntrySerializer(serializers.ModelSerializer):
                   "savings_transaction_id", "facility_transaction_id", "capital_transaction_id",
                   "loan_id", "loan_no", "branch_name", "posted_by_name", "total_debit",
                   "total_credit", "lines", "created_at"]
+
+
+# ---------------------------------------------------------------- manual journals
+class ManualJournalLineSerializer(serializers.ModelSerializer):
+    account_code = serializers.CharField(source="account.code", read_only=True)
+    account_name = serializers.CharField(source="account.name", read_only=True)
+    account_type = serializers.CharField(source="account.type", read_only=True)
+
+    class Meta:
+        model = ManualJournalLine
+        fields = ["id", "account_id", "account_code", "account_name", "account_type", "debit",
+                  "credit", "description"]
+
+
+class ManualJournalSerializer(serializers.ModelSerializer):
+    status_label = serializers.CharField(source="get_status_display", read_only=True)
+    prepared_by_name = serializers.CharField(source="prepared_by.full_name", read_only=True,
+                                             default=None)
+    posted_by_name = serializers.CharField(source="posted_by.full_name", read_only=True,
+                                           default=None)
+    reversed_by_name = serializers.CharField(source="reversed_by.full_name", read_only=True,
+                                             default=None)
+    branch_name = serializers.CharField(source="branch.name", read_only=True, default=None)
+    entry_no = serializers.CharField(source="journal_entry.entry_no", read_only=True,
+                                     default=None)
+    reversal_entry_no = serializers.CharField(source="reversal_entry.entry_no", read_only=True,
+                                              default=None)
+    lines = ManualJournalLineSerializer(many=True, read_only=True)
+    total = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ManualJournal
+        fields = ["id", "journal_no", "entry_date", "narration", "reference", "branch_id",
+                  "branch_name", "status", "status_label", "prepared_by_id", "prepared_by_name",
+                  "prepared_at", "posted_by_name", "posted_at", "rejected_reason", "entry_no",
+                  "reversal_entry_no", "reversed_by_name", "reversed_at", "reversal_reason",
+                  "total", "lines", "created_at"]
+
+    def get_total(self, obj) -> str:
+        # From the prefetched lines, so a page of journals is not a query each.
+        return str(sum((line.debit for line in obj.lines.all()), Decimal("0")))
+
+
+class ManualJournalLineInputSerializer(serializers.Serializer):
+    account_id = serializers.IntegerField(required=False, allow_null=True)
+    account_code = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    debit = money(required=False, allow_null=True, min_value=Decimal("0"))
+    credit = money(required=False, allow_null=True, min_value=Decimal("0"))
+    description = serializers.CharField(required=False, allow_null=True, allow_blank=True,
+                                        max_length=200)
+
+
+class ManualJournalCreateSerializer(serializers.Serializer):
+    entry_date = serializers.DateField(required=False, allow_null=True)
+    narration = serializers.CharField()
+    reference = serializers.CharField(required=False, allow_null=True, allow_blank=True,
+                                      max_length=80)
+    branch = serializers.IntegerField(required=False, allow_null=True)
+    lines = ManualJournalLineInputSerializer(many=True)
+
+
+class ReasonSerializer(serializers.Serializer):
+    reason = serializers.CharField(min_length=5, trim_whitespace=True)
 
 
 # ---------------------------------------------------------------- provisioning
