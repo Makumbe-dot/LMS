@@ -645,10 +645,10 @@ class AgreementTests(Base):
         self.assertIn(loan["loan_no"], html)
 
     def test_guarantors_and_security_appear_when_present(self):
-        loan = self.disbursed_loan(self.product, self.borrower)
         self.officer.post(f"/api/borrowers/{self.borrower['id']}/guarantors", {
             "full_name": "Guarantor One", "national_id": "63-999999Z63", "phone": "0779999999",
         }, format="json")
+        loan = self.disbursed_loan(self.product, self.borrower)
         self.officer.post(f"/api/loans/{loan['id']}/collateral", {
             "type": "vehicle", "description": "Toyota Hilux", "estimated_value": "5000.00",
         }, format="json")
@@ -676,6 +676,101 @@ class AgreementTests(Base):
         loan = self.disbursed_loan(self.product, self.borrower)
         html = self.officer.get(f"/api/loans/{loan['id']}/agreement").content.decode()
         self.assertIn("first to penalties, then to any charges added to the loan balance", html)
+
+
+# ---------------------------------------------------------------- guarantors per loan
+class LoanGuarantorTests(Base):
+    """A guarantor agreed to a particular loan, not to everything the borrower ever
+    borrows. The agreement used to list every guarantor on the borrower's file."""
+
+    def setUp(self):
+        super().setUp()
+        self.product = self.make_product()
+        self.borrower = self.make_borrower()
+        self.first = self.add_guarantor("Guarantor One", "63-111111A63")
+        self.second = self.add_guarantor("Guarantor Two", "63-222222B63")
+
+    def add_guarantor(self, name, national_id):
+        response = self.officer.post(f"/api/borrowers/{self.borrower['id']}/guarantors", {
+            "full_name": name, "national_id": national_id, "phone": "0779999999",
+        }, format="json")
+        self.assertEqual(response.status_code, 201, response.content)
+        return response.json()
+
+    def apply(self, **extra):
+        payload = {"borrower_id": self.borrower["id"], "product_id": self.product["id"],
+                   "principal": 1000, "term_months": 6, **extra}
+        response = self.officer.post("/api/loans", payload, format="json")
+        self.assertEqual(response.status_code, 201, response.content)
+        return response.json()
+
+    def guarantor_names(self, loan_id):
+        return [g["full_name"] for g in self.officer.get(f"/api/loans/{loan_id}").json()["guarantors"]]
+
+    def test_an_application_takes_every_guarantor_when_none_are_named(self):
+        loan = self.apply()
+        self.assertEqual(self.guarantor_names(loan["id"]), ["Guarantor One", "Guarantor Two"])
+
+    def test_an_application_can_name_some_of_them(self):
+        loan = self.apply(guarantor_ids=[self.second["id"]])
+        self.assertEqual(self.guarantor_names(loan["id"]), ["Guarantor Two"])
+        html = self.officer.get(f"/api/loans/{loan['id']}/agreement").content.decode()
+        self.assertIn("Guarantor Two", html)
+        self.assertNotIn("Guarantor One", html)
+
+    def test_someone_added_to_the_borrower_later_is_not_on_an_existing_agreement(self):
+        loan = self.disbursed_loan(self.product, self.borrower)
+        self.add_guarantor("Guarantor Three", "63-333333C63")
+        html = self.officer.get(f"/api/loans/{loan['id']}/agreement").content.decode()
+        self.assertIn("Guarantor One", html)
+        self.assertNotIn("Guarantor Three", html)
+
+    def test_a_guarantor_from_another_borrower_is_refused(self):
+        other = self.make_borrower(national_id="63-777777Q63", first_name="Other")
+        theirs = self.officer.post(f"/api/borrowers/{other['id']}/guarantors", {
+            "full_name": "Not Yours", "national_id": "63-888888R63", "phone": "0770000000",
+        }, format="json").json()
+        response = self.officer.post("/api/loans", {
+            "borrower_id": self.borrower["id"], "product_id": self.product["id"],
+            "principal": 1000, "term_months": 6, "guarantor_ids": [theirs["id"]],
+        }, format="json")
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn("not held against", response.json()["detail"])
+
+    def test_guarantors_can_change_until_disbursement_and_not_after(self):
+        loan = self.apply()
+        response = self.officer.put(f"/api/loans/{loan['id']}/guarantors",
+                                    {"guarantor_ids": [self.first["id"]]}, format="json")
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual([g["full_name"] for g in response.json()["guarantors"]],
+                         ["Guarantor One"])
+
+        self.admin.post(f"/api/loans/{loan['id']}/approve")
+        self.officer.post(f"/api/loans/{loan['id']}/disburse",
+                          {"disbursement_date": "2026-03-01"}, format="json")
+        response = self.officer.put(f"/api/loans/{loan['id']}/guarantors",
+                                    {"guarantor_ids": []}, format="json")
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn("before disbursement", response.json()["detail"])
+
+    def test_a_guarantor_behind_a_running_loan_cannot_be_deleted(self):
+        loan = self.disbursed_loan(self.product, self.borrower)
+        response = self.officer.delete(
+            f"/api/borrowers/{self.borrower['id']}/guarantors/{self.first['id']}")
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn(loan["loan_no"], response.json()["detail"])
+
+    def test_a_top_up_carries_the_old_loans_guarantors_over(self):
+        old = self.apply(guarantor_ids=[self.second["id"]])
+        self.admin.post(f"/api/loans/{old['id']}/approve")
+        self.officer.post(f"/api/loans/{old['id']}/disburse",
+                          {"disbursement_date": "2026-03-01"}, format="json")
+        response = self.officer.post(f"/api/loans/{old['id']}/top-up", {
+            "product_id": self.product["id"], "principal": 3000, "term_months": 12,
+        }, format="json")
+        self.assertEqual(response.status_code, 201, response.content)
+        # The old loan's guarantor, not every guarantor on the borrower's file.
+        self.assertEqual(self.guarantor_names(response.json()["id"]), ["Guarantor Two"])
 
 
 # ---------------------------------------------------------------- cost of credit

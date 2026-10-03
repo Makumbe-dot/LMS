@@ -4,7 +4,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import DataTable from '../components/DataTable.jsx'
 import Scorecard from '../components/Scorecard.jsx'
 import { useToast } from '../components/Toast.jsx'
-import { ErrorBanner, Field, KeyValues, Loading, PageHeader } from '../components/ui.jsx'
+import { Check, ErrorBanner, Field, KeyValues, Loading, PageHeader } from '../components/ui.jsx'
 import { post } from '../lib/api.js'
 import { fmt, getCurrency, money, pct, rateMethodLabel } from '../lib/format.js'
 import { useApi } from '../lib/useApi.js'
@@ -28,6 +28,9 @@ export default function LoanNew() {
   const [quote, setQuote] = useState(null)
   const [quoteError, setQuoteError] = useState('')
   const [busy, setBusy] = useState(false)
+  // Which of the borrower's guarantors stand behind this loan. null until the
+  // officer touches a box, meaning "all of them" - the server's default too.
+  const [guarantorIds, setGuarantorIds] = useState(null)
 
   // Default to the first active product once the list arrives.
   useEffect(() => {
@@ -37,11 +40,21 @@ export default function LoanNew() {
   }, [products.data, form.product_id])
 
   const product = products.data?.find((p) => String(p.id) === String(form.product_id))
+  const borrower = borrowers.data?.find((b) => String(b.id) === String(form.borrower_id))
+  const heldGuarantors = borrower?.guarantors || []
+  const chosen = guarantorIds ?? heldGuarantors.map((g) => g.id)
   const set = (key) => (event) => {
     setForm((f) => ({ ...f, [key]: event.target.value }))
+    if (key === 'borrower_id') setGuarantorIds(null)
     setQuote(null)
     setQuoteError('')
   }
+  const toggleGuarantor = (guarantorId) => (event) =>
+    setGuarantorIds(
+      event.target.checked
+        ? [...chosen, guarantorId]
+        : chosen.filter((existing) => existing !== guarantorId),
+    )
 
   async function previewQuote() {
     setQuoteError('')
@@ -73,6 +86,7 @@ export default function LoanNew() {
         principal: form.principal,
         term_months: Number(form.term_months),
         purpose: form.purpose || null,
+        guarantor_ids: chosen,
       })
       toast(`Application ${loan.loan_no} captured`)
       navigate(`/loans/${loan.id}`)
@@ -162,6 +176,26 @@ export default function LoanNew() {
           </div>
 
           <Field label="Purpose" value={form.purpose} onChange={set('purpose')} />
+
+          {borrower ? (
+            <fieldset>
+              <legend>Guarantors of this loan</legend>
+              {heldGuarantors.length === 0 ? (
+                <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>
+                  {borrower.first_name} {borrower.last_name} has no guarantors on file.
+                </p>
+              ) : (
+                heldGuarantors.map((g) => (
+                  <Check
+                    key={g.id}
+                    label={`${g.full_name} (${g.national_id})`}
+                    checked={chosen.includes(g.id)}
+                    onChange={toggleGuarantor(g.id)}
+                  />
+                ))
+              )}
+            </fieldset>
+          ) : null}
 
           <div className="row">
             <button className="btn primary" type="submit" disabled={busy}>

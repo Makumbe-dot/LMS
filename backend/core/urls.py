@@ -101,6 +101,7 @@ urlpatterns = [
     re_path(r"^loans/(?P<loan_id>\d+)/top-up/?$", loans.top_up),
     re_path(r"^loans/(?P<loan_id>\d+)/charges/?$", loans.raise_charge),
     re_path(r"^loans/(?P<loan_id>\d+)/agreement/?$", loans.agreement),
+    re_path(r"^loans/(?P<loan_id>\d+)/guarantors/?$", loans.guarantors),
     re_path(r"^loans/(?P<loan_id>\d+)/collateral/?$", loans.collateral),
     re_path(r"^loans/(?P<loan_id>\d+)/collateral/(?P<collateral_id>\d+)/?$",
             loans.collateral_detail),

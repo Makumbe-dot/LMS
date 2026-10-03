@@ -32,8 +32,13 @@ and attached to whichever products carry them.
 (generates the amortisation schedule, first instalment lands on the borrower's next payday),
 closure on full settlement, **early settlement with an interest rebate**, **top-up / refinance**
 (a new loan that settles the old one out of its own proceeds), reschedule (capitalises arrears into
-a new schedule), write-off, and a **printable loan agreement** with the terms, the schedule, the
-guarantors, the security and signature blocks.
+a new schedule), write-off, and a **printable loan agreement** with the terms, the total cost of
+credit and the APR, the schedule, the guarantors, the security and signature blocks.
+
+**Guarantors per loan** — a guarantor is held on the borrower's file but stands behind a
+*particular* loan: the officer ticks which ones at application (all of them by default), can change
+them until disbursement, and only those are printed on that loan's agreement. A top-up carries the
+old loan's guarantors over. A guarantor behind a running loan cannot be deleted from the file.
 
 **Repayments** — waterfall allocation (penalties, then charges, then interest, then principal,
 oldest instalment first), cash / bank / mobile money / salary deduction, reversals, penalty

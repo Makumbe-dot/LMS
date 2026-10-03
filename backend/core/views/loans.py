@@ -32,6 +32,7 @@ from ..serializers import (
     LoanDecisionSerializer,
     LoanDetailSerializer,
     LoanDisburseSerializer,
+    LoanGuarantorsSerializer,
     LoanNoteSerializer,
     LoanQuoteRequestSerializer,
     LoanChargeSerializer,
@@ -132,7 +133,8 @@ def loans(request):
         raise NotFound("Borrower or product not found")
     with transaction.atomic():
         loan = svc.apply(borrower, product, data["principal"], data["term_months"],
-                         data.get("purpose"), request.user, data.get("application_date"))
+                         data.get("purpose"), request.user, data.get("application_date"),
+                         guarantor_ids=data.get("guarantor_ids"))
         audit(request.user, "apply", "loan", loan.id,
               f"{loan.loan_no} {loan.principal} x {loan.term_months}m for {borrower.full_name}")
     response = loan_response(loan.id)
@@ -351,12 +353,26 @@ def agreement(request, loan_id: int):
         "total_cost_of_credit": loan.total_cost_of_credit,
         "apr": apr,
         "charges": loan.charges.all(),
-        "guarantors": loan.borrower.guarantors.all(),
+        "guarantors": loan.guarantors.all(),
         "collateral": loan.collateral.filter(status="pledged"),
         "schedule": schedule,
         "payday_ordinal": f"{payday}{suffix}",
     })
     return Response(html)
+
+
+# ---------------------------------------------------------------- guarantors
+@api_view(["PUT"])
+@permission_classes([IsOfficer])
+def guarantors(request, loan_id: int):
+    """Set which of the borrower's guarantors stand behind this loan."""
+    data = _validated(LoanGuarantorsSerializer, request)
+    with transaction.atomic():
+        loan = get_loan_or_404(loan_id)
+        chosen = svc.set_guarantors(loan, data["guarantor_ids"])
+        audit(request.user, "set_guarantors", "loan", loan.id,
+              f"{loan.loan_no}: {', '.join(g.full_name for g in chosen) or 'none'}")
+    return detail_response(loan_id)
 
 
 # ---------------------------------------------------------------- collateral

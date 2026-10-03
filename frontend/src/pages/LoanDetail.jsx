@@ -5,8 +5,16 @@ import DataTable from '../components/DataTable.jsx'
 import Modal, { FormModal } from '../components/Modal.jsx'
 import Scorecard from '../components/Scorecard.jsx'
 import { useToast } from '../components/Toast.jsx'
-import { Badge, ErrorBanner, Field, KeyValues, Loading, PageHeader } from '../components/ui.jsx'
-import { del, get, openHtml, patch, post } from '../lib/api.js'
+import {
+  Badge,
+  Check,
+  ErrorBanner,
+  Field,
+  KeyValues,
+  Loading,
+  PageHeader,
+} from '../components/ui.jsx'
+import { del, get, openHtml, patch, post, put } from '../lib/api.js'
 import { useAuth } from '../lib/auth.jsx'
 import {
   dateOnly,
@@ -165,6 +173,44 @@ function TopUpModal({ loanId, loan, busy, onClose, onApply }) {
         </button>
       </div>
     </Modal>
+  )
+}
+
+/** Pick which of the borrower's guarantors stand behind this loan. */
+function GuarantorsModal({ loan, busy, onClose, onSave }) {
+  const borrower = useApi(`/api/borrowers/${loan.borrower_id}`)
+  const linked = new Set((loan.guarantors || []).map((g) => g.id))
+  const held = borrower.data?.guarantors || []
+
+  return (
+    <FormModal
+      title={`Guarantors of ${loan.loan_no}`}
+      submitLabel="Save guarantors"
+      busy={busy}
+      submitDisabled={borrower.loading}
+      onClose={onClose}
+      onSubmit={(values) =>
+        onSave(held.filter((g) => values[`guarantor_${g.id}`]).map((g) => g.id))
+      }
+    >
+      <p className="muted" style={{ marginTop: 0 }}>
+        Tick the guarantors who have agreed to stand behind this loan. Only they are printed on its
+        agreement. To add someone new, add them to the borrower first.
+      </p>
+      {borrower.loading ? <Loading what="Loading the borrower's guarantors" /> : null}
+      <ErrorBanner error={borrower.error} />
+      {!borrower.loading && held.length === 0 ? (
+        <p className="muted">{loan.borrower_name} has no guarantors on file.</p>
+      ) : null}
+      {held.map((g) => (
+        <Check
+          key={g.id}
+          name={`guarantor_${g.id}`}
+          label={`${g.full_name} (${g.national_id})`}
+          defaultChecked={linked.has(g.id)}
+        />
+      ))}
+    </FormModal>
   )
 }
 
@@ -640,6 +686,38 @@ export default function LoanDetail() {
               against {money(loan.total_outstanding)} outstanding.
             </p>
           ) : null}
+
+          <div className="row between" style={{ margin: '20px 0 12px' }}>
+            <h3 style={{ margin: 0 }}>Guarantors of this loan</h3>
+            {isOfficer && ['pending', 'approved'].includes(loan.status) ? (
+              <button
+                type="button"
+                className="btn small"
+                onClick={() => setAction({ kind: 'guarantors' })}
+              >
+                Change guarantors
+              </button>
+            ) : null}
+          </div>
+          <DataTable
+            caption="Guarantors of this loan"
+            rows={loan.guarantors || []}
+            empty="Nobody guarantees this loan"
+            columns={[
+              { key: 'name', header: 'Name', render: (g) => g.full_name },
+              { key: 'id', header: 'National ID', render: (g) => g.national_id },
+              { key: 'phone', header: 'Phone', render: (g) => g.phone },
+              {
+                key: 'relationship',
+                header: 'Relationship',
+                render: (g) => g.relationship_to_borrower || '-',
+              },
+            ]}
+          />
+          <p className="muted" style={{ fontSize: 12, marginBottom: 0 }}>
+            These are the guarantors printed on the agreement. They can be changed until the loan is
+            disbursed; a guarantor added to the borrower later does not stand behind this loan.
+          </p>
         </div>
       ) : tab === 'notes' ? (
         <div className="card">
@@ -871,6 +949,17 @@ export default function LoanDetail() {
             the loan is untouched.
           </p>
         </FormModal>
+      ) : null}
+
+      {action?.kind === 'guarantors' ? (
+        <GuarantorsModal
+          loan={loan}
+          busy={busy}
+          onClose={() => setAction(null)}
+          onSave={(ids) =>
+            run(put(`/api/loans/${id}/guarantors`, { guarantor_ids: ids }), 'Guarantors updated')
+          }
+        />
       ) : null}
 
       {action?.kind === 'collateral' ? (

@@ -192,12 +192,45 @@ def quote(product: LoanProduct, principal: Decimal, term: int,
     }
 
 
+def _borrowers_guarantors(borrower: Borrower, guarantor_ids) -> list:
+    """The borrower's guarantors named by id; every one of them when ids is None."""
+    held = list(borrower.guarantors.all())
+    if guarantor_ids is None:
+        return held
+    wanted = {int(g) for g in guarantor_ids}
+    chosen = [g for g in held if g.id in wanted]
+    unknown = wanted - {g.id for g in chosen}
+    if unknown:
+        raise BusinessRuleError(
+            f"Guarantor(s) {', '.join(str(g) for g in sorted(unknown))} are not held against "
+            f"{borrower.full_name}. Add them to the borrower first.")
+    return chosen
+
+
+def set_guarantors(loan: Loan, guarantor_ids) -> list:
+    """Change who guarantees a loan. Only before the money moves: once disbursed,
+    the guarantors are the ones on the agreement the borrower signed."""
+    if loan.status not in (LoanStatus.PENDING, LoanStatus.APPROVED):
+        raise BusinessRuleError(
+            f"Loan is {loan.status}; guarantors can only be changed before disbursement")
+    chosen = _borrowers_guarantors(loan.borrower, guarantor_ids)
+    loan.guarantors.set(chosen)
+    return chosen
+
+
 def apply(borrower: Borrower, product: LoanProduct, principal: Decimal, term: int,
           purpose: str | None, officer: User, application_date: date | None = None,
-          refinanced_from: Loan | None = None, group=None) -> Loan:
+          refinanced_from: Loan | None = None, group=None, guarantor_ids=None) -> Loan:
+    """Capture an application.
+
+    `guarantor_ids` picks which of the borrower's guarantors stand behind this loan;
+    None means all of them, which is what every loan had before guarantors were
+    held per loan.
+    """
     from .groups import check_can_borrow
 
     validate_terms(product, principal, term)
+    guarantors = _borrowers_guarantors(borrower, guarantor_ids)
     if borrower.is_blacklisted:
         raise BusinessRuleError("Borrower is blacklisted")
     if not borrower.kyc_verified:
@@ -232,6 +265,8 @@ def apply(borrower: Borrower, product: LoanProduct, principal: Decimal, term: in
         refinanced_from=refinanced_from, group=group,
     )
     set_sched(loan, [])
+    if guarantors:
+        loan.guarantors.set(guarantors)
     if qt.get("scorecard"):
         store_on_loan(loan, qt["scorecard"])
     return loan
@@ -505,9 +540,12 @@ def apply_top_up(old_loan: Loan, product: LoanProduct, principal: Decimal, term:
             f"{principal} is not enough to settle {old_loan.loan_no}: "
             f"{preview['net_disbursed']} would be advanced against a settlement figure of "
             f"{preview['settlement_amount']}")
+    # The guarantors of the loan being settled carry over; the officer can change
+    # them before the top-up is disbursed.
     return apply(old_loan.borrower, product, principal, term,
                  purpose or f"Top-up of {old_loan.loan_no}", officer, application_date,
-                 refinanced_from=old_loan, group=old_loan.group)
+                 refinanced_from=old_loan, group=old_loan.group,
+                 guarantor_ids=[g.id for g in old_loan.guarantors.all()])
 
 
 def record_recovery(loan: Loan, user: User, amount: Decimal, txn_date: date | None,

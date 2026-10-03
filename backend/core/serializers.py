@@ -271,6 +271,13 @@ class LoanApplySerializer(serializers.Serializer):
     purpose = serializers.CharField(required=False, allow_null=True, allow_blank=True,
                                     max_length=200)
     application_date = serializers.DateField(required=False, allow_null=True)
+    guarantor_ids = serializers.ListField(
+        child=serializers.IntegerField(), required=False, allow_null=True,
+        help_text="Which of the borrower's guarantors stand behind this loan; omit for all")
+
+
+class LoanGuarantorsSerializer(serializers.Serializer):
+    guarantor_ids = serializers.ListField(child=serializers.IntegerField(), allow_empty=True)
 
 
 class LoanQuoteRequestSerializer(serializers.Serializer):
@@ -450,6 +457,7 @@ class LoanDetailSerializer(LoanSerializer):
     notes = LoanNoteSerializer(many=True, read_only=True)
     collateral = CollateralSerializer(many=True, read_only=True)
     charges = LoanChargeSerializer(many=True, read_only=True)
+    guarantors = GuarantorSerializer(many=True, read_only=True)
     scorecard = serializers.SerializerMethodField()
     group_name = serializers.CharField(source="group.name", read_only=True, default=None)
     refinanced_from_no = serializers.CharField(source="refinanced_from.loan_no", read_only=True,
@@ -457,7 +465,7 @@ class LoanDetailSerializer(LoanSerializer):
 
     class Meta(LoanSerializer.Meta):
         fields = LoanSerializer.Meta.fields + ["schedule", "transactions", "notes", "collateral",
-                                               "charges", "scorecard", "group_name",
+                                               "charges", "guarantors", "scorecard", "group_name",
                                                "refinanced_from_no"]
 
     def get_scorecard(self, obj):

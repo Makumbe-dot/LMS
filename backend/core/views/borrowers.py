@@ -136,6 +136,13 @@ def remove_guarantor(request, borrower_id: int, guarantor_id: int):
     guarantor = Guarantor.objects.filter(pk=guarantor_id, borrower_id=borrower_id).first()
     if guarantor is None:
         raise NotFound("Guarantor not found")
+    # Deleting them would quietly take their name off a running loan's agreement.
+    standing = guarantor.loans.exclude(
+        status__in=[LoanStatus.CLOSED, LoanStatus.REJECTED, LoanStatus.WRITTEN_OFF]).first()
+    if standing:
+        raise BusinessRuleError(
+            f"{guarantor.full_name} guarantees {standing.loan_no}, which is {standing.status}. "
+            f"Take them off that loan first, or wait until it closes.")
     with transaction.atomic():
         name = guarantor.full_name
         guarantor.delete()

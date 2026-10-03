@@ -697,6 +697,11 @@ class Loan(models.Model):
     refinanced_from = models.ForeignKey("self", on_delete=models.SET_NULL, null=True, blank=True,
                                         related_name="refinanced_into",
                                         help_text="The loan this one tops up and settles")
+    # Who stands behind THIS loan. A guarantor is held against the borrower, but
+    # agreed to a particular advance; the agreement used to list every guarantor the
+    # borrower had ever had, including people added after it was signed.
+    guarantors = models.ManyToManyField("Guarantor", blank=True, related_name="loans",
+                                        db_table="loan_guarantors")
     # Which borrowed money funded this advance. Reporting only — it raises no
     # posting and no balance depends on it — but it is what makes "how much of the
     # CBZ line is on-lent" and "cost of funds on this book" answerable. Added now
