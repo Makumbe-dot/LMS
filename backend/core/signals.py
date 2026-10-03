@@ -62,6 +62,30 @@ def guard_journal_period(sender, instance, raw=False, **kwargs):
     _guard_posting_date(instance, raw, instance.entry_date, "This journal entry")
 
 
+# ---------------------------------------------------------------- the till guard
+# Here rather than in each service for the reason the ledger hook is: every way of
+# taking or paying out cash writes one of these two rows, and the next one someone
+# adds should not have to remember. Does nothing unless the setting is on.
+@receiver(pre_save, sender=Transaction, dispatch_uid="core.guard_transaction_till")
+def guard_transaction_till(sender, instance, raw=False, **kwargs):
+    if raw or not instance._state.adding:
+        return
+    from .services.tills import assert_till_open
+
+    assert_till_open(instance.posted_by_id, instance.method,
+                     f"This {instance.get_txn_type_display().lower()}")
+
+
+@receiver(pre_save, sender=SavingsTransaction, dispatch_uid="core.guard_savings_till")
+def guard_savings_till(sender, instance, raw=False, **kwargs):
+    if raw or not instance._state.adding:
+        return
+    from .services.tills import assert_till_open
+
+    assert_till_open(instance.posted_by_id, instance.method,
+                     f"This savings {instance.get_txn_type_display().lower()}")
+
+
 # ---------------------------------------------------------------- the ledger
 @receiver(post_save, sender=Transaction, dispatch_uid="core.post_transaction_to_ledger")
 def post_transaction_to_ledger(sender, instance, created, **kwargs):

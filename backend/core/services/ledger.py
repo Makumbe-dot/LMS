@@ -660,9 +660,16 @@ def _backfill(limit: int | None = None) -> dict:
     journals = repost_journals()
     posted += journals["reposted"]
 
+    # And so do the differences found when a till is verified.
+    from .tills import repost_variances
+
+    tills = repost_variances()
+    posted += tills["reposted"]
+
     return {"posted": posted, "skipped": skipped, "by_source": per_source,
             "provision_runs_reposted": reposted["reposted"],
-            "manual_journals_reposted": journals["reposted"]}
+            "manual_journals_reposted": journals["reposted"],
+            "till_variances_reposted": tills["reposted"]}
 
 
 def trial_balance(start=None, end=None, branch_id=None) -> dict:

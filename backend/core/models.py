@@ -104,6 +104,12 @@ class ManualJournalStatus(models.TextChoices):
     REVERSED = "reversed", "Reversed"
 
 
+class TillStatus(models.TextChoices):
+    OPEN = "open", "Open"
+    COUNTED = "counted", "Counted, awaiting verification"
+    VERIFIED = "verified", "Verified"
+
+
 class PeriodState(models.TextChoices):
     """A month is either open to postings or closed to them.
 
@@ -300,6 +306,11 @@ class OrganisationSetting(models.Model):
     # Joint liability: refuse a new group loan while any member is this far behind.
     # Set to 0 to turn the rule off.
     group_arrears_block_days = models.IntegerField(default=30)
+
+    # When on, nobody can post a cash movement without an open till, so every note
+    # taken or paid out at a counter lands in a count. Off by default, so a book that
+    # has never used tills keeps posting until someone decides to start.
+    require_open_till = models.BooleanField(default=False)
 
     updated_at = models.DateTimeField(default=timezone.now)
 
@@ -1098,6 +1109,59 @@ class ManualJournalLine(models.Model):
     def __str__(self):
         side = f"Dr {self.debit}" if self.debit else f"Cr {self.credit}"
         return f"{self.account_id} {side}"
+
+
+# ---------------------------------------------------------------- tills
+class TillSession(models.Model):
+    """One teller's cash drawer for one stretch of work: opened with a float,
+    counted at close, verified by someone else.
+
+    What the drawer should hold is never typed in. It is the float plus every cash
+    movement the teller posted while the till was open (`services.tills`), so a
+    count can only be compared with what the system itself recorded. A difference
+    found on verification is posted to the ledger - a shortage to 6800, an overage
+    to 4900 - because the cash the ledger says is in the building is not.
+    """
+    session_no = models.CharField(max_length=20, unique=True, db_index=True)
+    teller = models.ForeignKey("User", on_delete=models.PROTECT, related_name="tills")
+    branch = models.ForeignKey("Branch", on_delete=models.SET_NULL, null=True, blank=True,
+                               related_name="tills")
+    business_date = models.DateField(default=date.today, db_index=True)
+    opened_at = models.DateTimeField(default=timezone.now)
+    opening_float = models.DecimalField(default=ZERO, **MONEY)
+    status = models.CharField(max_length=10, choices=TillStatus.choices, default=TillStatus.OPEN,
+                              db_index=True)
+
+    # Snapshotted at the count, so a verified till still explains itself if a
+    # posting inside its window is later reversed.
+    closed_at = models.DateTimeField(null=True, blank=True)
+    cash_in = models.DecimalField(null=True, blank=True, **MONEY)
+    cash_out = models.DecimalField(null=True, blank=True, **MONEY)
+    expected_cash = models.DecimalField(null=True, blank=True, **MONEY)
+    counted_cash = models.DecimalField(null=True, blank=True, **MONEY)
+    variance = models.DecimalField(null=True, blank=True, **MONEY,
+                                   help_text="Counted less expected: negative is a shortage")
+    close_note = models.TextField(null=True, blank=True)
+
+    verified_by = models.ForeignKey("User", on_delete=models.SET_NULL, null=True, blank=True,
+                                    related_name="tills_verified")
+    verified_at = models.DateTimeField(null=True, blank=True)
+    verify_note = models.TextField(null=True, blank=True)
+    variance_entry = models.OneToOneField("JournalEntry", on_delete=models.SET_NULL, null=True,
+                                          blank=True, related_name="till_session")
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "till_sessions"
+        ordering = ["-opened_at", "-id"]
+        constraints = [
+            # A teller has one drawer open at a time, or no count means anything.
+            models.UniqueConstraint(fields=["teller"], condition=models.Q(status="open"),
+                                    name="uq_till_one_open_per_teller"),
+        ]
+
+    def __str__(self):
+        return f"{self.session_no} {self.teller_id} {self.status}"
 
 
 # ---------------------------------------------------------------- provisioning

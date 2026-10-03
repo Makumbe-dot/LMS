@@ -21,6 +21,7 @@ const NAV = [
     heading: 'Collections',
     items: [
       { to: '/collections', label: 'Collections due' },
+      { to: '/till', label: 'Teller till', roles: ['admin', 'loan_officer', 'teller'] },
       { to: '/arrears', label: 'Arrears / PAR' },
       { to: '/payroll', label: 'Payroll deductions' },
       { to: '/imports', label: 'Bulk repayments', roles: ['admin', 'loan_officer', 'teller'] },

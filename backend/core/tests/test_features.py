@@ -422,6 +422,19 @@ class OrganisationTests(FeatureTestBase):
         self.assertEqual(response.status_code, 200, response.content)
         self.assertEqual(OrganisationSetting.load().currency, "ZWL")
 
+    def test_every_setting_the_settings_page_shows_is_saved(self):
+        # The approval limit, minimum score and group arrears rule were on the page
+        # but not in the API, so editing them did nothing and nothing said so.
+        response = self.admin.patch("/api/settings", {
+            "officer_approval_limit": "3500.00", "min_credit_score": 55,
+            "group_arrears_block_days": 14}, format="json")
+        self.assertEqual(response.status_code, 200, response.content)
+        config = OrganisationSetting.load()
+        self.assertEqual(config.officer_approval_limit, Decimal("3500.00"))
+        self.assertEqual(config.min_credit_score, 55)
+        self.assertEqual(config.group_arrears_block_days, 14)
+        self.assertEqual(response.json()["officer_approval_limit"], "3500.00")
+
     def test_settings_stay_a_single_row(self):
         self.admin.patch("/api/settings", {"name": "One"}, format="json")
         self.admin.patch("/api/settings", {"name": "Two"}, format="json")

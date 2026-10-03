@@ -32,6 +32,7 @@ import Provisioning from './pages/Provisioning.jsx'
 import Risks from './pages/Risks.jsx'
 import Savings from './pages/Savings.jsx'
 import Settings from './pages/Settings.jsx'
+import Till from './pages/Till.jsx'
 import Transactions from './pages/Transactions.jsx'
 import Users from './pages/Users.jsx'
 
@@ -67,6 +68,14 @@ export default function App() {
           <Route path="/loans/:id" element={<LoanDetail />} />
 
           <Route path="/collections" element={<Collections />} />
+          <Route
+            path="/till"
+            element={
+              <RequireRole roles={['admin', 'loan_officer', 'teller']}>
+                <Till />
+              </RequireRole>
+            }
+          />
           <Route path="/arrears" element={<Arrears />} />
           <Route path="/payroll" element={<Payroll />} />
           <Route

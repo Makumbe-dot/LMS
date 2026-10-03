@@ -73,6 +73,16 @@ unpaid instalment and is recovered ahead of interest.
 **Penalties** — an end-of-day job accrues late-payment penalties on overdue instalments after the
 grace period. Idempotent, so it can run any number of times a day.
 
+**Teller tills** — each teller opens a till with the float they were handed, counts it at close,
+and someone else verifies the count. What the drawer should hold is never typed in: it is the float
+plus every cash movement the teller posted while it was open (repayments, recoveries, counter
+charges, cash disbursements, savings deposits and withdrawals, and reversals of those), so a count
+is compared with what the system recorded. A short or over count needs a reason before the till
+closes, the teller cannot verify their own, and on verification the difference is posted —
+Dr 6800 Cash shortages / Cr 1000 for a shortage, Dr 1000 / Cr 4900 for an overage — because until it
+is, the ledger claims cash the building does not hold. A setting makes every cash posting need an
+open till; it is off by default so a book that has never used tills keeps posting.
+
 **Collections** — collections-due listing, arrears / PAR, **payroll deduction schedules per
 employer**, **follow-up notes** on a loan (what was tried, what was promised, what is next), and a
 **message outbox** of instalment reminders, arrears notices and repayment receipts.

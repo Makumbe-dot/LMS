@@ -14,4 +14,5 @@ from . import (  # noqa: F401
     reports,
     risks,
     savings,
+    tills,
 )

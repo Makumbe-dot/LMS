@@ -59,6 +59,7 @@ from .models import (
     SavingsProduct,
     SavingsStatus,
     SavingsTransaction,
+    TillSession,
     Transaction,
     TxnType,
     User,
@@ -580,7 +581,11 @@ class OrganisationSettingSerializer(serializers.ModelSerializer):
         model = OrganisationSetting
         fields = ["name", "currency", "address", "phone", "email",
                   "ecl_stage1_pct", "ecl_stage2_pct", "ecl_stage3_pct",
-                  "ecl_stage2_days", "ecl_stage3_days", "reminder_days_before", "updated_at"]
+                  "ecl_stage2_days", "ecl_stage3_days", "reminder_days_before",
+                  # The Settings page has always shown these; the API silently dropped
+                  # them, so an edited approval limit was never saved.
+                  "officer_approval_limit", "min_credit_score", "group_arrears_block_days",
+                  "require_open_till", "updated_at"]
         read_only_fields = ["updated_at"]
 
 
@@ -823,6 +828,63 @@ class ManualJournalCreateSerializer(serializers.Serializer):
 
 class ReasonSerializer(serializers.Serializer):
     reason = serializers.CharField(min_length=5, trim_whitespace=True)
+
+
+# ---------------------------------------------------------------- tills
+class TillMovementSerializer(serializers.Serializer):
+    at = serializers.DateTimeField()
+    kind = serializers.CharField()
+    reference = serializers.CharField()
+    detail = serializers.CharField(allow_blank=True)
+    amount = money()
+
+
+class TillSessionSerializer(serializers.ModelSerializer):
+    teller_name = serializers.CharField(source="teller.full_name", read_only=True)
+    branch_name = serializers.CharField(source="branch.name", read_only=True, default=None)
+    status_label = serializers.CharField(source="get_status_display", read_only=True)
+    verified_by_name = serializers.CharField(source="verified_by.full_name", read_only=True,
+                                             default=None)
+    variance_entry_no = serializers.CharField(source="variance_entry.entry_no", read_only=True,
+                                              default=None)
+
+    class Meta:
+        model = TillSession
+        fields = ["id", "session_no", "teller_id", "teller_name", "branch_name", "business_date",
+                  "opened_at", "opening_float", "status", "status_label", "closed_at", "cash_in",
+                  "cash_out", "expected_cash", "counted_cash", "variance", "close_note",
+                  "verified_by_name", "verified_at", "verify_note", "variance_entry_no"]
+
+
+class TillDetailSerializer(TillSessionSerializer):
+    """A till with its live position: what it should hold now, and why."""
+    position = serializers.SerializerMethodField()
+
+    class Meta(TillSessionSerializer.Meta):
+        fields = TillSessionSerializer.Meta.fields + ["position"]
+
+    def get_position(self, obj) -> dict:
+        from .services.tills import position
+
+        now = position(obj)
+        return {
+            "cash_in": str(now["cash_in"]), "cash_out": str(now["cash_out"]),
+            "expected_cash": str(now["expected_cash"]),
+            "movements": TillMovementSerializer(now["movements"], many=True).data,
+        }
+
+
+class TillOpenSerializer(serializers.Serializer):
+    opening_float = money(min_value=Decimal("0"))
+
+
+class TillCountSerializer(serializers.Serializer):
+    counted_cash = money(min_value=Decimal("0"))
+    note = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+
+
+class NoteSerializer(serializers.Serializer):
+    note = serializers.CharField(required=False, allow_null=True, allow_blank=True)
 
 
 # ---------------------------------------------------------------- provisioning

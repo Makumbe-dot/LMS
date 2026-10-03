@@ -18,6 +18,7 @@ from .views import (
     reports,
     risks,
     savings,
+    tills,
 )
 
 urlpatterns = [
@@ -177,6 +178,13 @@ urlpatterns = [
     re_path(r"^reports/branch-performance/?$", reports.branch_performance),
     re_path(r"^reports/payroll/?$", reports.payroll),
     re_path(r"^reports/employers/?$", reports.employers),
+
+    # ---- teller tills (the literal path must precede the numeric id routes)
+    re_path(r"^tills/current/?$", tills.current),
+    re_path(r"^tills/?$", tills.tills),
+    re_path(r"^tills/(?P<till_id>\d+)/count/?$", tills.count),
+    re_path(r"^tills/(?P<till_id>\d+)/verify/?$", tills.verify),
+    re_path(r"^tills/(?P<till_id>\d+)/?$", tills.till_detail),
 
     # ---- messaging and batch posting
     re_path(r"^notifications/?$", reports.notifications),

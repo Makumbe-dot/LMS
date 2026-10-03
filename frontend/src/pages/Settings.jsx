@@ -13,7 +13,8 @@ const FIELDS = [
   'name', 'currency', 'address', 'phone', 'email',
   'ecl_stage1_pct', 'ecl_stage2_pct', 'ecl_stage3_pct',
   'ecl_stage2_days', 'ecl_stage3_days', 'reminder_days_before',
-  'officer_approval_limit', 'min_credit_score',
+  'officer_approval_limit', 'min_credit_score', 'group_arrears_block_days',
+  'require_open_till',
 ]
 
 export default function Settings() {
@@ -183,7 +184,27 @@ export default function Settings() {
             onChange={set('reminder_days_before')}
             hint="How far ahead instalment reminders are queued"
           />
+          <Field
+            label="Group borrowing blocked after (days in arrears)"
+            type="number"
+            min="0"
+            value={values.group_arrears_block_days}
+            onChange={set('group_arrears_block_days')}
+            hint="While any member is this far behind, the group takes on no new debt. 0 turns it off."
+          />
         </div>
+
+        <h3>Cash</h3>
+        <Check
+          label="Cash postings need an open till"
+          checked={Boolean(values.require_open_till)}
+          onChange={(e) => setValues((v) => ({ ...v, require_open_till: e.target.checked }))}
+        />
+        <p className="muted" style={{ fontSize: 12, marginTop: -4 }}>
+          When on, nobody can take or pay out cash without a till open on the Teller till page, so
+          every note that crosses a counter lands in a count. Bank, mobile-money and payroll
+          postings are never affected.
+        </p>
 
         <div className="row">
           <button className="btn primary" type="submit" disabled={busy}>
