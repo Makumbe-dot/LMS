@@ -17,7 +17,7 @@ from ..serializers import (
     ProvisionRunSerializer,
 )
 from ..services import provisioning as svc
-from .helpers import csv_response, paginate, parse_date
+from .helpers import table_response, wants_table, paginate, parse_date
 
 
 def _run_queryset():
@@ -35,7 +35,7 @@ def provisions(request):
             raise BusinessRuleError(f"Unknown status '{state}'")
         qs = qs.filter(status=state)
 
-    if request.query_params.get("fmt") == "csv":
+    if wants_table(request):
         rows = [{
             "run_no": r.run_no, "period_end": r.period_end, "status": r.status,
             "loans_assessed": r.loans_assessed, "loans_released": r.loans_released,
@@ -46,7 +46,7 @@ def provisions(request):
             "run_by": r.run_by.full_name if r.run_by_id else "",
             "created_at": r.created_at,
         } for r in qs[:5000]]
-        return csv_response(rows, "provision_runs")
+        return table_response(request, rows, "provision_runs")
 
     return Response(paginate(request, qs, ProvisionRunSerializer, default_size=25))
 
@@ -92,7 +92,7 @@ def provision_detail(request, run_id: int):
     if provision_run is None:
         raise NotFound("Provision run not found")
 
-    if request.query_params.get("fmt") == "csv":
+    if wants_table(request):
         rows = [{
             "run_no": provision_run.run_no, "loan_no": line.loan.loan_no,
             "borrower": line.loan.borrower.full_name, "loan_status": line.loan_status,
@@ -101,7 +101,7 @@ def provision_detail(request, run_id: int):
             "rate_pct": line.rate_pct, "provision_required": line.provision_required,
             "provision_before": line.provision_before, "movement": line.movement,
         } for line in provision_run.lines.all()]
-        return csv_response(rows, f"provision_run_{provision_run.run_no}")
+        return table_response(request, rows, f"provision_run_{provision_run.run_no}")
 
     return Response(ProvisionRunDetailSerializer(provision_run).data)
 

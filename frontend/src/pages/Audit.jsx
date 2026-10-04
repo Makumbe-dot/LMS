@@ -2,8 +2,8 @@ import { useState } from 'react'
 
 import DataTable from '../components/DataTable.jsx'
 import { useToast } from '../components/Toast.jsx'
-import { ErrorBanner, Loading, PageHeader, Pager } from '../components/ui.jsx'
-import { downloadCsv, qs } from '../lib/api.js'
+import { ExportButtons, ErrorBanner, Loading, PageHeader, Pager } from '../components/ui.jsx'
+import { qs } from '../lib/api.js'
 import { dateTime, firstOfMonth, today } from '../lib/format.js'
 import { useApi, useDebounced } from '../lib/useApi.js'
 
@@ -66,13 +66,7 @@ export default function Audit() {
         <button type="button" className="btn" onClick={reload}>
           Refresh
         </button>
-        <button
-          type="button"
-          className="btn"
-          onClick={() => downloadCsv(path, 'audit_log').catch(toastError)}
-        >
-          Export CSV
-        </button>
+        <ExportButtons path={path} name={'audit_log'} />
       </PageHeader>
 
       <ErrorBanner error={error} onRetry={reload} />

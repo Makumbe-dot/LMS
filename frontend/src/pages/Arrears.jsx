@@ -3,8 +3,8 @@ import { useNavigate } from 'react-router-dom'
 
 import DataTable from '../components/DataTable.jsx'
 import { useToast } from '../components/Toast.jsx'
-import { ErrorBanner, Loading, PageHeader, Pager } from '../components/ui.jsx'
-import { downloadCsv, qs } from '../lib/api.js'
+import { ExportButtons, ErrorBanner, Loading, PageHeader, Pager } from '../components/ui.jsx'
+import { qs } from '../lib/api.js'
 import { fmt, money } from '../lib/format.js'
 import { useApi } from '../lib/useApi.js'
 
@@ -34,13 +34,7 @@ export default function Arrears() {
         </button>
         {/* The CSV goes to the bare path with no page, so the export is the whole
             book rather than whichever page happens to be on screen. */}
-        <button
-          type="button"
-          className="btn"
-          onClick={() => downloadCsv(PATH, 'portfolio_at_risk').catch(toastError)}
-        >
-          Export CSV
-        </button>
+        <ExportButtons path={PATH} name={'portfolio_at_risk'} />
       </PageHeader>
 
       <ErrorBanner error={error} onRetry={reload} />

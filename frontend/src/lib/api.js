@@ -194,22 +194,36 @@ export function qs(params) {
   return str ? `?${str}` : ''
 }
 
-/** Download a report as CSV, reusing the bearer token. */
-export async function downloadCsv(path, fallbackName = 'export') {
-  const url = BASE + path + (path.includes('?') ? '&' : '?') + 'fmt=csv'
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${getToken()}` } })
-  if (!res.ok) throw new ApiError('Export failed', res.status)
+/**
+ * Download a report or statement as a file: fmt is 'csv', 'xlsx' or 'pdf'. Reuses
+ * the bearer token (renewing it if it has expired), and names the file as the
+ * server does.
+ */
+export async function downloadFile(path, fmt = 'csv', fallbackName = 'export') {
+  const url = BASE + path + (path.includes('?') ? '&' : '?') + `fmt=${fmt}`
+  const fetchIt = () => fetch(url, { headers: { Authorization: `Bearer ${getToken()}` } })
+  let res = await fetchIt()
+  if (res.status === 401 && getRefreshToken() && (await refreshSession())) res = await fetchIt()
+  if (!res.ok) {
+    const isJson = (res.headers.get('content-type') || '').includes('json')
+    const data = isJson ? await res.json() : null
+    throw new ApiError(data?.detail || 'Download failed', res.status)
+  }
   const blob = await res.blob()
   const disposition = res.headers.get('content-disposition') || ''
   const match = disposition.match(/filename="?([^";]+)"?/)
   const link = document.createElement('a')
   link.href = URL.createObjectURL(blob)
-  link.download = match ? match[1] : `${fallbackName}.csv`
+  link.download = match ? match[1] : `${fallbackName}.${fmt}`
   document.body.appendChild(link)
   link.click()
   link.remove()
   URL.revokeObjectURL(link.href)
 }
+
+/** Download a report as CSV. */
+export const downloadCsv = (path, fallbackName = 'export') =>
+  downloadFile(path, 'csv', fallbackName)
 
 async function signInRequest(path, body) {
   const res = await fetch(`${BASE}${path}`, {

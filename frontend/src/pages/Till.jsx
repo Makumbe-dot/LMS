@@ -5,6 +5,7 @@ import { FormModal } from '../components/Modal.jsx'
 import { useToast } from '../components/Toast.jsx'
 import {
   Badge,
+  ExportButtons,
   ErrorBanner,
   Field,
   KeyValues,
@@ -13,7 +14,7 @@ import {
   PageHeader,
   Pager,
 } from '../components/ui.jsx'
-import { downloadCsv, post, qs } from '../lib/api.js'
+import { post, qs } from '../lib/api.js'
 import { useAuth } from '../lib/auth.jsx'
 import { dateTime, fmt, getCurrency, money, num } from '../lib/format.js'
 import { useApi } from '../lib/useApi.js'
@@ -126,13 +127,7 @@ export default function Till() {
             Count and close
           </button>
         ) : null}
-        <button
-          type="button"
-          className="btn"
-          onClick={() => downloadCsv('/api/tills', 'tills').catch(toastError)}
-        >
-          Export CSV
-        </button>
+        <ExportButtons path={'/api/tills'} name={'tills'} />
       </PageHeader>
 
       <ErrorBanner error={mine.error || history.error} onRetry={mine.reload} />

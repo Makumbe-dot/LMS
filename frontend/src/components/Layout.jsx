@@ -37,6 +37,7 @@ const NAV = [
       { to: '/journals', label: 'Journals & expenses' },
       { to: '/bank-reconciliation', label: 'Bank reconciliation' },
       { to: '/funding', label: 'Funding & capital' },
+      { to: '/spreadsheets', label: 'Spreadsheets' },
       { to: '/performance', label: 'Performance' },
       { to: '/provisioning', label: 'Provisioning' },
       { to: '/periods', label: 'Period close' },

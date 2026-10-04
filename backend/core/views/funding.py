@@ -28,7 +28,7 @@ from ..serializers import (
     OpenFacilitySerializer,
 )
 from ..services import funding as svc
-from .helpers import csv_response, paginate, parse_date, parse_int
+from .helpers import table_response, wants_table, paginate, parse_date, parse_int
 
 
 def _require_admin(request) -> None:
@@ -91,7 +91,7 @@ def facilities(request):
         qs = qs.filter(Q(facility_no__icontains=search) | Q(name__icontains=search)
                        | Q(funder_name__icontains=search))
 
-    if request.query_params.get("fmt") == "csv":
+    if wants_table(request):
         rows = [{
             "facility_no": f.facility_no, "funder_name": f.funder_name, "name": f.name,
             "facility_limit": f.facility_limit, "principal_outstanding": f.principal_outstanding,
@@ -100,7 +100,7 @@ def facilities(request):
             "start_date": f.start_date, "maturity_date": f.maturity_date,
             "closed_on": f.closed_on or "", "branch": f.branch.name if f.branch_id else "",
         } for f in qs[:5000]]
-        return csv_response(rows, "funding_facilities")
+        return table_response(request, rows, "funding_facilities")
 
     return Response(paginate(request, qs, FundingFacilitySerializer))
 
@@ -254,14 +254,14 @@ def capital(request):
     if end:
         qs = qs.filter(txn_date__lte=end)
 
-    if request.query_params.get("fmt") == "csv":
+    if wants_table(request):
         rows = [{
             "txn_date": c.txn_date, "txn_type": c.txn_type, "amount": c.amount,
             "contributor": c.contributor, "method": c.method or "",
             "reference": c.reference or "", "reversed": c.reversed,
             "entry_no": c.journal_entry.entry_no if hasattr(c, "journal_entry") else "",
         } for c in qs[:5000]]
-        return csv_response(rows, "capital_movements")
+        return table_response(request, rows, "capital_movements")
 
     payload = paginate(request, qs, CapitalTransactionSerializer, default_size=25)
     payload["summary"] = svc.capital_summary()

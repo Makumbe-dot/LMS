@@ -5,6 +5,7 @@ import Modal, { FormModal } from '../components/Modal.jsx'
 import { useToast } from '../components/Toast.jsx'
 import {
   Badge,
+  ExportButtons,
   ErrorBanner,
   Field,
   KeyValues,
@@ -13,7 +14,7 @@ import {
   PageHeader,
   Pager,
 } from '../components/ui.jsx'
-import { downloadCsv, get, post, qs } from '../lib/api.js'
+import { get, post, qs } from '../lib/api.js'
 import { useAuth } from '../lib/auth.jsx'
 import { fmt, getCurrency, humanise, money, today } from '../lib/format.js'
 import { useOrg } from '../lib/org.jsx'
@@ -106,13 +107,7 @@ export default function Savings() {
             Run monthly interest
           </button>
         ) : null}
-        <button
-          type="button"
-          className="btn"
-          onClick={() => downloadCsv(path, 'savings_accounts').catch(toastError)}
-        >
-          Export CSV
-        </button>
+        <ExportButtons path={path} name={'savings_accounts'} />
       </PageHeader>
 
       {summary.data ? (
@@ -375,7 +370,15 @@ export default function Savings() {
               ['Branch', detail.branch_name || '-'],
             ]}
           />
-          <h3 style={{ marginTop: 16 }}>Statement</h3>
+          <div className="row" style={{ justifyContent: 'space-between', marginTop: 16 }}>
+            <h3 style={{ margin: 0 }}>Statement</h3>
+            <ExportButtons
+              small
+              path={`/api/savings/accounts/${detail.id}/statement`}
+              name={`statement_${detail.account_no}`}
+              formats={['pdf', 'xlsx']}
+            />
+          </div>
           <DataTable
             caption="Savings statement"
             rows={[...detail.transactions].reverse()}

@@ -2,8 +2,8 @@ import { useState } from 'react'
 
 import DataTable from '../components/DataTable.jsx'
 import { useToast } from '../components/Toast.jsx'
-import { Badge, ErrorBanner, Loading, PageHeader, Pager } from '../components/ui.jsx'
-import { downloadCsv, post, qs } from '../lib/api.js'
+import { ExportButtons, Badge, ErrorBanner, Loading, PageHeader, Pager } from '../components/ui.jsx'
+import { post, qs } from '../lib/api.js'
 import { useAuth } from '../lib/auth.jsx'
 import { dateTime, humanise } from '../lib/format.js'
 import { useApi, useDebounced } from '../lib/useApi.js'
@@ -111,13 +111,7 @@ export default function Notifications() {
             </button>
           </>
         ) : null}
-        <button
-          type="button"
-          className="btn"
-          onClick={() => downloadCsv(path, 'notifications').catch(toastError)}
-        >
-          Export CSV
-        </button>
+        <ExportButtons path={path} name={'notifications'} />
       </PageHeader>
 
       {gateway.data ? (

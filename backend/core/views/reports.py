@@ -29,12 +29,12 @@ from ..services import notifications as notify
 from ..services import reports as rpt
 from ..services.amortisation import add_months
 from ..services.penalties import accrue_penalties
-from .helpers import csv_response, paginate, paginate_list, parse_date, parse_int
+from .helpers import table_response, wants_table, paginate, paginate_list, parse_date, parse_int
 
 
 def _render(request, rows: list[dict], name: str):
-    if request.query_params.get("fmt") == "csv":
-        return csv_response(rows, name)
+    if wants_table(request):
+        return table_response(request, rows, name)
     return Response(rows)
 
 
@@ -55,8 +55,8 @@ def par(request):
     """
     as_of = parse_date(request, "as_of")
     rows = rpt.portfolio_at_risk(as_of, parse_int(request, "branch_id"))
-    if request.query_params.get("fmt") == "csv":
-        return csv_response(rows, "portfolio_at_risk")
+    if wants_table(request):
+        return table_response(request, rows, "portfolio_at_risk")
     if "page" not in request.query_params:
         return Response(rows)
     return Response(paginate_list(request, rows, extra={
@@ -134,9 +134,9 @@ def audit_log(request):
     if end:
         qs = qs.filter(created_at__date__lte=end)
 
-    if request.query_params.get("fmt") == "csv":
+    if wants_table(request):
         rows = [{k: v for k, v in AuditSerializer(row).data.items()} for row in qs[:5000]]
-        return csv_response(rows, "audit_log")
+        return table_response(request, rows, "audit_log")
     return Response(paginate(request, qs, AuditSerializer, default_size=100))
 
 
@@ -145,8 +145,8 @@ def audit_log(request):
 def ecl(request):
     """IFRS 9 staging and expected credit loss provisioning."""
     data = rpt.ecl_report(parse_date(request, "as_of"), parse_int(request, "branch_id"))
-    if request.query_params.get("fmt") == "csv":
-        return csv_response(data["rows"], "ecl_provision")
+    if wants_table(request):
+        return table_response(request, data["rows"], "ecl_provision")
     return Response(data)
 
 
@@ -208,12 +208,12 @@ def notifications(request):
                        | Q(borrower__first_name__icontains=term)
                        | Q(borrower__last_name__icontains=term))
 
-    if request.query_params.get("fmt") == "csv":
+    if wants_table(request):
         rows = [{"id": n.id, "scheduled_for": n.scheduled_for, "channel": n.channel,
                  "to": n.to_address, "borrower": n.borrower.full_name,
                  "loan_no": n.loan.loan_no if n.loan_id else "", "kind": n.kind,
                  "status": n.status, "message": n.body} for n in qs[:5000]]
-        return csv_response(rows, "notifications")
+        return table_response(request, rows, "notifications")
     return Response(paginate(request, qs, NotificationSerializer, default_size=50))
 
 
@@ -318,6 +318,46 @@ def bulk_repayments(request):
               f"{result['posted_rows']} postings totalling {result['total_amount']}")
     return Response({"committed": True, **validation, **result},
                     status=status.HTTP_201_CREATED)
+
+
+@api_view(["GET"])
+def spreadsheet(request, kind: str):
+    """The member register and the other keepable listings: JSON, ?fmt=csv or ?fmt=xlsx.
+
+    kind is one of services.spreadsheets.SPREADSHEETS: members, group-membership,
+    savings-balances, loans-outstanding, overdue. ?branch_id= narrows it.
+    """
+    from ..exports import Sheet, xlsx_response
+    from ..models import OrganisationSetting
+    from ..services import spreadsheets as sheets
+
+    if kind not in sheets.SPREADSHEETS:
+        raise BusinessRuleError(f"Unknown spreadsheet '{kind}'")
+    file_name, title, build = sheets.SPREADSHEETS[kind]
+    rows = build(branch_id=parse_int(request, "branch_id"))
+    fmt = request.query_params.get("fmt")
+    if fmt == "xlsx":
+        org = OrganisationSetting.load()
+        note = [f"{org.name} · as at {date.today().isoformat()} · amounts in {org.currency}"]
+        return xlsx_response([Sheet(title, rows, title, note)], file_name)
+    if fmt == "csv":
+        return table_response(request, rows, file_name)
+    # JSON turns Decimal into a float, so say which columns are money for the screen.
+    money = sorted({k for row in rows for k, v in row.items() if isinstance(v, Decimal)})
+    return Response(paginate_list(request, rows, default_size=100,
+                                  extra={"title": title, "money_columns": money}))
+
+
+@api_view(["GET"])
+def workbook(request):
+    """Everything in one Excel file: summary, members, loans outstanding, overdue,
+    savings balances and group membership, one sheet each."""
+    from ..exports import xlsx_response
+    from ..services.spreadsheets import portfolio_workbook
+
+    branch_id = parse_int(request, "branch_id")
+    name = f"portfolio_{date.today().isoformat()}" + (f"_branch_{branch_id}" if branch_id else "")
+    return xlsx_response(portfolio_workbook(branch_id), name)
 
 
 @api_view(["GET", "POST"])

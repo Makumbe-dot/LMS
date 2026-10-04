@@ -9,12 +9,13 @@ import {
   Badge,
   Check,
   ErrorBanner,
+  ExportButtons,
   Field,
   KeyValues,
   Loading,
   PageHeader,
 } from '../components/ui.jsx'
-import { del, get, openHtml, patch, post, put } from '../lib/api.js'
+import { del, get, openHtml, patch, post, put, qs } from '../lib/api.js'
 import { useAuth } from '../lib/auth.jsx'
 import {
   dateOnly,
@@ -230,6 +231,7 @@ export default function LoanDetail() {
   const [tab, setTab] = useState('schedule')
   const [action, setAction] = useState(null) // { kind, txnId? }
   const [statement, setStatement] = useState(null)
+  const [statementPeriod, setStatementPeriod] = useState({ start: '', end: today() })
   const [settlement, setSettlement] = useState(null)
   const [busy, setBusy] = useState(false)
 
@@ -250,7 +252,17 @@ export default function LoanDetail() {
 
   async function openStatement() {
     try {
-      setStatement(await get(`/api/loans/${id}/statement`))
+      setStatement(await get(`/api/loans/${id}/statement${qs(statementPeriod)}`))
+    } catch (err) {
+      toastError(err)
+    }
+  }
+
+  /** A new period: re-read the statement for it, so the screen and the downloads agree. */
+  async function changePeriod(period) {
+    setStatementPeriod(period)
+    try {
+      setStatement(await get(`/api/loans/${id}/statement${qs(period)}`))
     } catch (err) {
       toastError(err)
     }
@@ -1284,11 +1296,31 @@ export default function LoanDetail() {
           wide
           onClose={() => setStatement(null)}
           footer={
-            <button type="button" className="btn small" onClick={() => window.print()}>
-              Print
-            </button>
+            <ExportButtons
+              small
+              path={`/api/loans/${id}/statement${qs(statementPeriod)}`}
+              name={`statement_${statement.loan_no}`}
+              formats={['pdf', 'xlsx']}
+            />
           }
         >
+          <div className="row" style={{ alignItems: 'flex-end', marginBottom: 4 }}>
+            <Field
+              label="From"
+              type="date"
+              value={statementPeriod.start}
+              onChange={(e) => changePeriod({ ...statementPeriod, start: e.target.value })}
+            />
+            <Field
+              label="To"
+              type="date"
+              value={statementPeriod.end}
+              onChange={(e) => changePeriod({ ...statementPeriod, end: e.target.value })}
+            />
+            <p className="muted" style={{ fontSize: 12, marginBottom: 14 }}>
+              Leave From empty for the whole loan. The downloads cover the same period.
+            </p>
+          </div>
           <KeyValues
             items={[
               ['Borrower', `${statement.borrower} (${statement.national_id})`],
@@ -1313,21 +1345,42 @@ export default function LoanDetail() {
             ]}
           />
           <p className="muted" style={{ fontSize: 12 }}>
-            Interest is recognised instalment by instalment, so the running balance below is
-            principal plus penalties less payments.
+            The balance is the principal, penalties and charges owed. Interest is charged on each
+            instalment as it falls due, so it has its own column when paid, and the interest still
+            to fall due is in the total outstanding above.
           </p>
           <DataTable
             caption="Statement lines"
-            rows={statement.lines}
+            rows={[
+              ...(statement.period_start
+                ? [{ description: 'Opening balance', balance: statement.opening_balance }]
+                : []),
+              ...statement.lines,
+            ]}
             rowKey={(row, index) => index}
-            empty="No postings yet"
+            empty="No postings in this period"
             columns={[
-              { key: 'date', header: 'Date', render: (r) => r.date },
-              { key: 'type', header: 'Type', render: (r) => <Badge value={r.type} /> },
-              { key: 'narration', header: 'Narration', render: (r) => r.narration || '' },
+              { key: 'date', header: 'Date', render: (r) => r.date || '' },
+              { key: 'description', header: 'Description', wrap: true, render: (r) => r.description },
               { key: 'ref', header: 'Ref', render: (r) => r.reference || '' },
-              { key: 'debit', header: 'Debit', num: true, render: (r) => fmt(r.debit) },
-              { key: 'credit', header: 'Credit', num: true, render: (r) => fmt(r.credit) },
+              {
+                key: 'debit',
+                header: 'Charged',
+                num: true,
+                render: (r) => (num(r.debit) ? fmt(r.debit) : ''),
+              },
+              {
+                key: 'credit',
+                header: 'Paid',
+                num: true,
+                render: (r) => (num(r.credit) ? fmt(r.credit) : ''),
+              },
+              {
+                key: 'interest',
+                header: 'Interest',
+                num: true,
+                render: (r) => (num(r.interest) ? fmt(r.interest) : ''),
+              },
               { key: 'balance', header: 'Balance', num: true, render: (r) => fmt(r.balance) },
             ]}
           />

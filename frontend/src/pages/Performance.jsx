@@ -2,8 +2,8 @@ import { useState } from 'react'
 
 import DataTable from '../components/DataTable.jsx'
 import { useToast } from '../components/Toast.jsx'
-import { ErrorBanner, Loading, PageHeader } from '../components/ui.jsx'
-import { downloadCsv, qs } from '../lib/api.js'
+import { ExportButtons, ErrorBanner, Loading, PageHeader } from '../components/ui.jsx'
+import { qs } from '../lib/api.js'
 import { fmt, pct, rateMethodLabel } from '../lib/format.js'
 import { useOrg } from '../lib/org.jsx'
 import { useApi } from '../lib/useApi.js'
@@ -114,13 +114,7 @@ export default function Performance() {
         <button type="button" className="btn" onClick={reload}>
           Refresh
         </button>
-        <button
-          type="button"
-          className="btn"
-          onClick={() => downloadCsv(path, active.path).catch(toastError)}
-        >
-          Export CSV
-        </button>
+        <ExportButtons path={path} name={active.path} />
       </PageHeader>
 
       <div className="tabs" role="tablist">

@@ -17,7 +17,7 @@ from ..serializers import (
     LoanSerializer,
 )
 from ..services import groups as svc
-from .helpers import csv_response, paginate, parse_date, parse_int, with_arrears
+from .helpers import table_response, wants_table, paginate, parse_date, parse_int, with_arrears
 
 
 def group_queryset():
@@ -139,6 +139,6 @@ def group_loans(request, group_id: int):
 @api_view(["GET"])
 def performance(request):
     rows = svc.performance(parse_int(request, "branch_id"), parse_date(request, "as_of"))
-    if request.query_params.get("fmt") == "csv":
-        return csv_response(rows, "group_performance")
+    if wants_table(request):
+        return table_response(request, rows, "group_performance")
     return Response(rows)

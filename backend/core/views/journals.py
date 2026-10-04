@@ -15,7 +15,7 @@ from ..serializers import (
     ReasonSerializer,
 )
 from ..services import journals as svc
-from .helpers import csv_response, paginate, parse_date, parse_int
+from .helpers import table_response, wants_table, paginate, parse_date, parse_int
 
 
 def _queryset():
@@ -81,7 +81,7 @@ def journals(request):
                        | Q(reference__icontains=search))
     qs = qs.order_by("-entry_date", "-id")
 
-    if request.query_params.get("fmt") == "csv":
+    if wants_table(request):
         rows = [{
             "journal_no": j.journal_no, "entry_date": j.entry_date, "status": j.status,
             "narration": j.narration, "reference": j.reference or "",
@@ -91,7 +91,7 @@ def journals(request):
             "posted_by": j.posted_by.full_name if j.posted_by_id else "",
             "entry_no": j.journal_entry.entry_no if j.journal_entry_id else "",
         } for j in qs[:5000] for line in j.lines.all()]
-        return csv_response(rows, "manual_journals")
+        return table_response(request, rows, "manual_journals")
 
     payload = paginate(request, qs, ManualJournalSerializer, default_size=25)
     payload["awaiting_approval"] = ManualJournal.objects.filter(

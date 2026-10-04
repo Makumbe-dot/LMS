@@ -1,6 +1,7 @@
 /* A scrollable table with sticky headers.
 
-   columns: [{ key, header, num?, render(row) }]
+   columns: [{ key, header, num?, wrap?, render(row) }] — wrap lets long text break
+   onto more lines instead of widening the table
    onRowClick: called with the row when a row is activated (click or Enter). */
 export default function DataTable({
   columns,
@@ -49,7 +50,10 @@ export default function DataTable({
                 }
               >
                 {columns.map((col) => (
-                  <td key={col.key} className={col.num ? 'num' : undefined}>
+                  <td
+                    key={col.key}
+                    className={[col.num && 'num', col.wrap && 'wrap'].filter(Boolean).join(' ') || undefined}
+                  >
                     {col.render(row)}
                   </td>
                 ))}

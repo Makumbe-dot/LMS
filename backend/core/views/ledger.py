@@ -19,7 +19,7 @@ from ..serializers import (
 )
 from ..services import ledger as gl
 from ..services.amortisation import add_months
-from .helpers import csv_response, paginate, parse_date, parse_int
+from .helpers import table_response, wants_table, paginate, parse_date, parse_int
 
 
 @api_view(["GET", "POST"])
@@ -88,7 +88,7 @@ def journal(request):
         qs = qs.filter(Q(narration__icontains=term) | Q(entry_no__icontains=term)
                        | Q(loan__loan_no__icontains=term))
 
-    if request.query_params.get("fmt") == "csv":
+    if wants_table(request):
         rows = []
         for entry in qs[:2000]:
             for line in entry.lines.all():
@@ -99,7 +99,7 @@ def journal(request):
                     "account_code": line.account.code, "account_name": line.account.name,
                     "debit": line.debit, "credit": line.credit,
                 })
-        return csv_response(rows, "journal")
+        return table_response(request, rows, "journal")
 
     return Response(paginate(request, qs, JournalEntrySerializer, default_size=25))
 
@@ -109,8 +109,8 @@ def trial_balance(request):
     start = parse_date(request, "start")
     end = parse_date(request, "end")
     data = gl.trial_balance(start, end, parse_int(request, "branch_id"))
-    if request.query_params.get("fmt") == "csv":
-        return csv_response(data["rows"], "trial_balance")
+    if wants_table(request):
+        return table_response(request, data["rows"], "trial_balance")
     return Response(data)
 
 
@@ -121,8 +121,8 @@ def income_statement(request):
     if end < start:
         raise BusinessRuleError("end must be on or after start")
     data = gl.income_statement(start, end, parse_int(request, "branch_id"))
-    if request.query_params.get("fmt") == "csv":
-        return csv_response(data["income"] + data["expense"], "income_statement")
+    if wants_table(request):
+        return table_response(request, data["income"] + data["expense"], "income_statement")
     return Response(data)
 
 
@@ -136,8 +136,8 @@ def balance_sheet(request):
     """
     data = gl.balance_sheet(parse_date(request, "as_of", date.today()),
                             parse_int(request, "branch_id"))
-    if request.query_params.get("fmt") == "csv":
-        return csv_response(data["assets"] + data["liabilities"] + data["equity"],
+    if wants_table(request):
+        return table_response(request, data["assets"] + data["liabilities"] + data["equity"],
                             "balance_sheet")
     # Through a serializer so money renders as a decimal string; a bare dict of
     # Decimals comes out as JSON floats and loses cents.
@@ -153,8 +153,8 @@ def reconciliation(request):
     these identities can genuinely break.
     """
     data = gl.reconciliation(parse_date(request, "as_of"))
-    if request.query_params.get("fmt") == "csv":
-        return csv_response(data["rows"], "reconciliation")
+    if wants_table(request):
+        return table_response(request, data["rows"], "reconciliation")
     return Response(ReconciliationSerializer(data).data)
 
 

@@ -10,3 +10,7 @@ django-cors-headers>=4.4
 python-dotenv>=1.0
 # The OpenAPI schema at /api/schema and the browsable reference at /api/docs.
 drf-spectacular>=0.28
+# Excel downloads (every report, statements, the member register and the workbook).
+openpyxl>=3.1
+# PDF statements.
+reportlab>=4.2

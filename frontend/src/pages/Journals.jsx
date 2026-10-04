@@ -3,8 +3,8 @@ import { useMemo, useState } from 'react'
 import DataTable from '../components/DataTable.jsx'
 import Modal, { FormModal } from '../components/Modal.jsx'
 import { useToast } from '../components/Toast.jsx'
-import { Badge, ErrorBanner, Field, KeyValues, Loading, PageHeader, Pager } from '../components/ui.jsx'
-import { del, downloadCsv, post, qs } from '../lib/api.js'
+import { ExportButtons, Badge, ErrorBanner, Field, KeyValues, Loading, PageHeader, Pager } from '../components/ui.jsx'
+import { del, post, qs } from '../lib/api.js'
 import { useAuth } from '../lib/auth.jsx'
 import { dateOnly, dateTime, fmt, getCurrency, money, num, today } from '../lib/format.js'
 import { PeriodNotice, useMinPostingDate } from '../lib/periods.jsx'
@@ -485,13 +485,7 @@ export default function Journals() {
             </button>
           </>
         ) : null}
-        <button
-          type="button"
-          className="btn"
-          onClick={() => downloadCsv(`/api/journals${qs({ status: tab })}`, 'journals').catch(toastError)}
-        >
-          Export CSV
-        </button>
+        <ExportButtons path={`/api/journals${qs({ status: tab })}`} name={'journals'} />
       </PageHeader>
 
       {isAdmin && waiting > 0 ? (

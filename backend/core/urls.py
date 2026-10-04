@@ -82,6 +82,7 @@ urlpatterns = [
     re_path(r"^savings/accounts/(?P<account_id>\d+)/deposit/?$", savings.deposit),
     re_path(r"^savings/accounts/(?P<account_id>\d+)/withdraw/?$", savings.withdraw),
     re_path(r"^savings/accounts/(?P<account_id>\d+)/close/?$", savings.close),
+    re_path(r"^savings/accounts/(?P<account_id>\d+)/statement/?$", savings.statement),
     re_path(r"^savings/accounts/(?P<account_id>\d+)/transactions/(?P<txn_id>\d+)/reverse/?$",
             savings.reverse),
 
@@ -194,6 +195,8 @@ urlpatterns = [
     re_path(r"^reports/branch-performance/?$", reports.branch_performance),
     re_path(r"^reports/payroll/?$", reports.payroll),
     re_path(r"^reports/employers/?$", reports.employers),
+    re_path(r"^reports/spreadsheets/(?P<kind>[a-z-]+)/?$", reports.spreadsheet),
+    re_path(r"^reports/workbook/?$", reports.workbook),
 
     # ---- teller tills (the literal path must precede the numeric id routes)
     re_path(r"^tills/current/?$", tills.current),

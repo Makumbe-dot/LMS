@@ -1,5 +1,44 @@
 /* Small presentational pieces shared by every page. */
+import { useState } from 'react'
+
+import { downloadFile } from '../lib/api.js'
 import { humanise } from '../lib/format.js'
+import { useToast } from './Toast.jsx'
+
+/**
+ * Download buttons for a listing or a statement: Excel first, because it is what
+ * people open, then whichever else the endpoint offers. `path` is the JSON
+ * endpoint; the format is added as ?fmt=.
+ */
+export function ExportButtons({ path, name, formats = ['xlsx', 'csv'], small = false }) {
+  const { toastError } = useToast()
+  const [busy, setBusy] = useState(null)
+  const LABEL = { xlsx: 'Excel', csv: 'CSV', pdf: 'PDF' }
+  return (
+    <span className="export-buttons" role="group" aria-label="Download">
+      {formats.map((fmt) => (
+        <button
+          key={fmt}
+          type="button"
+          className={`btn${small ? ' small' : ''}`}
+          disabled={busy !== null}
+          onClick={async () => {
+            setBusy(fmt)
+            try {
+              await downloadFile(path, fmt, name)
+            } catch (err) {
+              toastError(err)
+            } finally {
+              setBusy(null)
+            }
+          }}
+        >
+          {busy === fmt ? 'Preparing…' : `Download ${LABEL[fmt]}`}
+        </button>
+      ))}
+    </span>
+  )
+}
 
 /** The wordmark's hexagon: one cell of the honeycomb the pages sit on. */
 export function HexMark({ size = 30 }) {

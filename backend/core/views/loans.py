@@ -163,7 +163,20 @@ def loan_detail(request, loan_id: int):
 
 @api_view(["GET"])
 def statement(request, loan_id: int):
-    return Response(loan_statement(get_loan_or_404(loan_id, with_transactions=True)))
+    """The loan's statement: JSON for the screen, ?fmt=xlsx or ?fmt=pdf to download.
+
+    ?start= and ?end= narrow it to a period, with the balance brought forward.
+    """
+    from ..documents import loan_statement_pdf, loan_statement_xlsx
+
+    loan = get_loan_or_404(loan_id, with_transactions=True)
+    data = loan_statement(loan, parse_date(request, "start"), parse_date(request, "end"))
+    fmt = request.query_params.get("fmt")
+    if fmt == "xlsx":
+        return loan_statement_xlsx(data, loan)
+    if fmt == "pdf":
+        return loan_statement_pdf(data)
+    return Response(data)
 
 
 # ---------------------------------------------------------------- decisions

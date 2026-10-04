@@ -26,7 +26,7 @@ from ..serializers import (
     RiskUpdateSerializer,
 )
 from ..services import risks as svc
-from .helpers import csv_response, paginate, parse_int
+from .helpers import table_response, wants_table, paginate, parse_int
 
 NOT_YOURS = "Only the risk's owner or an administrator can change it"
 
@@ -112,8 +112,8 @@ def _filtered(request):
 def risks(request):
     if request.method == "GET":
         qs = _filtered(request)
-        if request.query_params.get("fmt") == "csv":
-            return csv_response(svc.export_rows(qs), "risk_register")
+        if wants_table(request):
+            return table_response(request, svc.export_rows(qs), "risk_register")
         return Response(paginate(request, qs, RiskSerializer, transform=_for(request)))
 
     if not IsTeller().has_permission(request, None):

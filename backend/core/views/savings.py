@@ -26,7 +26,7 @@ from ..serializers import (
     SavingsTransactionSerializer,
 )
 from ..services import savings as svc
-from .helpers import csv_response, paginate, parse_date, parse_int
+from .helpers import table_response, wants_table, paginate, parse_date, parse_int
 
 
 def _validated(serializer_class, request):
@@ -107,14 +107,14 @@ def accounts(request):
         if borrower_id:
             qs = qs.filter(borrower_id=borrower_id)
 
-        if request.query_params.get("fmt") == "csv":
+        if wants_table(request):
             rows = [{
                 "account_no": a.account_no, "borrower": a.borrower.full_name,
                 "borrower_no": a.borrower.borrower_no, "product": a.product.name,
                 "branch": a.branch.name if a.branch_id else "", "status": a.status,
                 "balance": a.balance, "opened_on": a.opened_on,
             } for a in qs[:5000]]
-            return csv_response(rows, "savings_accounts")
+            return table_response(request, rows, "savings_accounts")
         return Response(paginate(request, qs.order_by("-id"), SavingsAccountSerializer))
 
     if not IsTeller().has_permission(request, None):
@@ -137,6 +137,22 @@ def accounts(request):
 @api_view(["GET"])
 def account_detail(request, account_id: int):
     return Response(SavingsAccountDetailSerializer(get_account_or_404(account_id)).data)
+
+
+@api_view(["GET"])
+def statement(request, account_id: int):
+    """The account's statement: JSON, or ?fmt=xlsx / ?fmt=pdf; ?start= and ?end= for a period."""
+    from ..documents import savings_statement_pdf, savings_statement_xlsx
+    from ..services.statements import savings_statement
+
+    account = get_account_or_404(account_id)
+    data = savings_statement(account, parse_date(request, "start"), parse_date(request, "end"))
+    fmt = request.query_params.get("fmt")
+    if fmt == "xlsx":
+        return savings_statement_xlsx(data)
+    if fmt == "pdf":
+        return savings_statement_pdf(data)
+    return Response(data)
 
 
 @api_view(["POST"])

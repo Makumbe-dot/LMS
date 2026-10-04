@@ -6,6 +6,7 @@ import RiskHeatMap, { IMPACT, LIKELIHOOD, RatingChip } from '../components/RiskH
 import { useToast } from '../components/Toast.jsx'
 import {
   Badge,
+  ExportButtons,
   ErrorBanner,
   Field,
   KeyValues,
@@ -14,7 +15,7 @@ import {
   PageHeader,
   Pager,
 } from '../components/ui.jsx'
-import { downloadCsv, get, patch, post, qs } from '../lib/api.js'
+import { get, patch, post, qs } from '../lib/api.js'
 import { useAuth } from '../lib/auth.jsx'
 import { today } from '../lib/format.js'
 import { useOrg } from '../lib/org.jsx'
@@ -193,13 +194,7 @@ export default function Risks() {
             Raise a risk
           </button>
         ) : null}
-        <button
-          type="button"
-          className="btn"
-          onClick={() => downloadCsv(`/api/risks${qs(filters)}`, 'risk_register').catch(toastError)}
-        >
-          Export CSV
-        </button>
+        <ExportButtons path={`/api/risks${qs(filters)}`} name={'risk_register'} />
       </PageHeader>
 
       <ErrorBanner error={summary.error} onRetry={summary.reload} />

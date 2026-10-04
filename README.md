@@ -90,8 +90,23 @@ employer**, **follow-up notes** on a loan (what was tried, what was promised, wh
 **Reporting** — dashboard (portfolio outstanding, PAR>30, collection rate, 12-month disbursement vs
 collection chart, arrears ageing buckets) filterable by date and branch, **IFRS 9 staging and
 expected-credit-loss provisioning**, **performance by officer, product and branch**, collections
-due, arrears / PAR listing, loan book, transactions, per-loan statement, CSV export on every
-report.
+due, arrears / PAR listing, loan book and transactions. **Every report downloads as Excel or CSV.**
+The Excel file has filters on the headings, frozen headings, number formats, and a totals row that
+follows the filter.
+
+**Statements and spreadsheets**:
+
+- **Loan statements** download as PDF or Excel, for the whole loan or for a period with an opening
+  balance. The running balance is the principal, penalties and charges owed, so the closing figure
+  ties to the loan. Interest has its own column.
+- **Savings statements** also download as PDF or Excel. The PDF carries the organisation's details
+  and "page x of y", with no logo unless `STATEMENT_LOGO` sets one.
+- The **Spreadsheets** page holds the **member register**: one row per member with contact,
+  employer and group details, savings balance, loans taken and repaid, and what the member owes
+  and has overdue, with days overdue and the arrears bucket.
+- The same page also has **loans outstanding**, **overdue loans**, **savings balances** and
+  **group membership**, each filterable by branch, plus **one workbook** with all of them and a
+  summary sheet.
 
 **Accounting** — a **double-entry general ledger** with a chart of accounts. Every money movement
 raises one balanced journal entry automatically, so loans receivable in the ledger always equals
@@ -289,6 +304,7 @@ Everything lives in `backend/.env` (see `backend/.env.example` for development a
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | JWT access-token lifetime, 30 by default. This is the window in which a revoked single device keeps working, so raising it weakens revocation; the client renews silently, so lowering it costs nothing but requests. |
 | `REFRESH_TOKEN_EXPIRE_DAYS` | How long a session can be renewed before signing in again, 7 by default. |
 | `SQL_LOG_LEVEL` | Set to `DEBUG` to print every statement the ORM sends to SQL Server. |
+| `STATEMENT_LOGO` | Path to a PNG or JPEG for the top of PDF statements. Empty (the default) or a path that does not exist prints no logo. |
 
 ## Tests
 
@@ -535,6 +551,10 @@ backend/                        Django project
       totp.py                   RFC 6238 codes for two-factor sign-in
       reports.py                dashboard, PAR, collections due, loan book, statement,
                                 IFRS 9 provisioning, performance, payroll deductions
+      statements.py             loan and savings statements: lines, running balance, period
+      spreadsheets.py           the member register, balances, outstanding, overdue, the workbook
+    exports.py                  Excel workbooks: header styling, filters, totals that follow them
+    documents.py                statements as Excel and as PDF (reportlab)
     templates/core/             the printable loan agreement
     views/                      auth, borrowers, products, charges, loans, groups, savings,
                                 ledger, journals, funding, provisions, periods, reports,

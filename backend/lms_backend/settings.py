@@ -49,6 +49,8 @@ ALLOWED_HOSTS = env_list("ALLOWED_HOSTS", "localhost,127.0.0.1,[::1]")
 
 APP_NAME = env("APP_NAME", "Loan Management System")
 CURRENCY = env("CURRENCY", "USD")
+# A PNG or JPEG for the top of PDF statements. Blank (the default) prints no logo.
+STATEMENT_LOGO = env("STATEMENT_LOGO", "")
 
 INSTALLED_APPS = [
     "django.contrib.admin",

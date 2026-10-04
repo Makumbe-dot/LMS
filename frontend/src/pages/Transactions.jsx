@@ -3,8 +3,8 @@ import { useNavigate } from 'react-router-dom'
 
 import DataTable from '../components/DataTable.jsx'
 import { useToast } from '../components/Toast.jsx'
-import { Badge, ErrorBanner, Loading, PageHeader } from '../components/ui.jsx'
-import { downloadCsv, qs } from '../lib/api.js'
+import { ExportButtons, Badge, ErrorBanner, Loading, PageHeader } from '../components/ui.jsx'
+import { qs } from '../lib/api.js'
 import { firstOfMonth, fmt, humanise, money, num, today } from '../lib/format.js'
 import { useApi } from '../lib/useApi.js'
 
@@ -50,13 +50,7 @@ export default function Transactions() {
         <button type="button" className="btn" onClick={reload}>
           Refresh
         </button>
-        <button
-          type="button"
-          className="btn"
-          onClick={() => downloadCsv(path, 'transactions').catch(toastError)}
-        >
-          Export CSV
-        </button>
+        <ExportButtons path={path} name={'transactions'} />
       </PageHeader>
 
       <ErrorBanner error={error} onRetry={reload} />

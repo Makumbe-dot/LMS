@@ -16,7 +16,7 @@ from ..serializers import (
     TillSessionSerializer,
 )
 from ..services import tills as svc
-from .helpers import csv_response, paginate, parse_date, parse_int
+from .helpers import table_response, wants_table, paginate, parse_date, parse_int
 
 
 def _till_or_404(till_id: int, *, for_update: bool = False) -> TillSession:
@@ -60,7 +60,7 @@ def tills(request):
     if end:
         qs = qs.filter(business_date__lte=end)
 
-    if request.query_params.get("fmt") == "csv":
+    if wants_table(request):
         rows = [{
             "session_no": t.session_no, "teller": t.teller.full_name,
             "business_date": t.business_date, "status": t.status,
@@ -70,7 +70,7 @@ def tills(request):
             "close_note": t.close_note or "",
             "verified_by": t.verified_by.full_name if t.verified_by_id else "",
         } for t in qs[:5000]]
-        return csv_response(rows, "tills")
+        return table_response(request, rows, "tills")
 
     payload = paginate(request, qs, TillSessionSerializer, default_size=25)
     payload["awaiting_verification"] = TillSession.objects.filter(

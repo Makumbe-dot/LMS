@@ -27,6 +27,7 @@ import Login from './pages/Login.jsx'
 import Notifications from './pages/Notifications.jsx'
 import Payroll from './pages/Payroll.jsx'
 import Performance from './pages/Performance.jsx'
+import Spreadsheets from './pages/Spreadsheets.jsx'
 import Periods from './pages/Periods.jsx'
 import Products from './pages/Products.jsx'
 import Provisioning from './pages/Provisioning.jsx'
@@ -103,6 +104,7 @@ export default function App() {
           <Route path="/bank-reconciliation" element={<BankRec />} />
           <Route path="/funding" element={<Funding />} />
           <Route path="/performance" element={<Performance />} />
+          <Route path="/spreadsheets" element={<Spreadsheets />} />
           <Route path="/provisioning" element={<Provisioning />} />
           <Route path="/periods" element={<Periods />} />
 

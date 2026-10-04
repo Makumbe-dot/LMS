@@ -3,8 +3,8 @@ import { useNavigate } from 'react-router-dom'
 
 import DataTable from '../components/DataTable.jsx'
 import { useToast } from '../components/Toast.jsx'
-import { ErrorBanner, Kpi, Loading, PageHeader, Pager } from '../components/ui.jsx'
-import { downloadCsv, post, qs } from '../lib/api.js'
+import { ExportButtons, ErrorBanner, Kpi, Loading, PageHeader, Pager } from '../components/ui.jsx'
+import { post, qs } from '../lib/api.js'
 import { useAuth } from '../lib/auth.jsx'
 import { fmt, humanise, money, today } from '../lib/format.js'
 import { useOrg } from '../lib/org.jsx'
@@ -124,13 +124,7 @@ export default function Ledger() {
           Refresh
         </button>
         {tab !== 'accounts' ? (
-          <button
-            type="button"
-            className="btn"
-            onClick={() => downloadCsv(paths[tab], tab).catch(toastError)}
-          >
-            Export CSV
-          </button>
+          <ExportButtons path={paths[tab]} name={tab} />
         ) : null}
         {can('admin') ? (
           <button

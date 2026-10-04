@@ -64,6 +64,23 @@ def csv_response(rows: list[dict], name: str) -> HttpResponse:
     return response
 
 
+TABLE_FORMATS = ("csv", "xlsx")
+
+
+def wants_table(request) -> bool:
+    """Whether the caller asked for the listing as a file (?fmt=csv or ?fmt=xlsx)."""
+    return request.query_params.get("fmt") in TABLE_FORMATS
+
+
+def table_response(request, rows: list[dict], name: str) -> HttpResponse:
+    """The listing as the file asked for: CSV, or an Excel sheet with typed columns."""
+    if request.query_params.get("fmt") == "xlsx":
+        from ..exports import single_sheet
+
+        return single_sheet(rows, name)
+    return csv_response(rows, name)
+
+
 def paginate(request, queryset, serializer_class, transform=None, default_size: int = 50,
              max_size: int = 1000) -> dict:
     """Return one page as {count, page, page_size, num_pages, results}.

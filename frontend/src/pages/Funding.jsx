@@ -5,6 +5,7 @@ import Modal, { FormModal } from '../components/Modal.jsx'
 import { useToast } from '../components/Toast.jsx'
 import {
   Badge,
+  ExportButtons,
   ErrorBanner,
   Field,
   KeyValues,
@@ -13,7 +14,7 @@ import {
   PageHeader,
   Pager,
 } from '../components/ui.jsx'
-import { downloadCsv, get, post, qs } from '../lib/api.js'
+import { get, post, qs } from '../lib/api.js'
 import { useAuth } from '../lib/auth.jsx'
 import { dateOnly, fmt, getCurrency, money, num, pct, today } from '../lib/format.js'
 import { useOrg } from '../lib/org.jsx'
@@ -88,13 +89,7 @@ export default function Funding() {
         <button type="button" className="btn" onClick={reload}>
           Refresh
         </button>
-        <button
-          type="button"
-          className="btn"
-          onClick={() => downloadCsv(paths[tab], tab).catch(toastError)}
-        >
-          Export CSV
-        </button>
+        <ExportButtons path={paths[tab]} name={tab} />
         {isAdmin ? (
           <>
             <button type="button" className="btn" onClick={() => setAction({ kind: 'accrue' })}>

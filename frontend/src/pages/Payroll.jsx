@@ -3,8 +3,8 @@ import { useNavigate } from 'react-router-dom'
 
 import DataTable from '../components/DataTable.jsx'
 import { useToast } from '../components/Toast.jsx'
-import { ErrorBanner, Loading, PageHeader } from '../components/ui.jsx'
-import { downloadCsv, qs } from '../lib/api.js'
+import { ExportButtons, ErrorBanner, Loading, PageHeader } from '../components/ui.jsx'
+import { qs } from '../lib/api.js'
 import { useOrg } from '../lib/org.jsx'
 import { addMonthsIso, firstOfMonth, fmt, money, num } from '../lib/format.js'
 import { useApi } from '../lib/useApi.js'
@@ -73,13 +73,7 @@ export default function Payroll() {
         <button type="button" className="btn" onClick={reload}>
           Refresh
         </button>
-        <button
-          type="button"
-          className="btn primary"
-          onClick={() => downloadCsv(path, 'payroll_deduction').catch(toastError)}
-        >
-          Export CSV
-        </button>
+        <ExportButtons path={path} name={'payroll_deduction'} />
       </PageHeader>
 
       <ErrorBanner error={error} onRetry={reload} />

@@ -496,38 +496,9 @@ def employers_with_active_loans(branch_id=None) -> list[dict]:
              "total_outstanding": q(Decimal(r["outstanding"] or 0))} for r in rows]
 
 
-def loan_statement(loan: Loan) -> dict:
-    """Running-balance statement. Interest is recognised per instalment, so the balance
-    column here is principal + penalties - payments."""
-    running = ZERO
-    lines = []
-    for t in loan.transactions.order_by("id"):
-        if t.reversed:
-            continue
-        if t.txn_type == TxnType.DISBURSEMENT:
-            running += t.principal_component
-            debit, credit = t.principal_component, ZERO
-        elif t.txn_type in (TxnType.PENALTY, TxnType.CHARGE_ADDED):
-            running += t.amount
-            debit, credit = t.amount, ZERO
-        elif t.txn_type in (TxnType.REPAYMENT, TxnType.WAIVER, TxnType.WRITE_OFF):
-            running -= t.amount
-            debit, credit = ZERO, t.amount
-        else:
-            debit = credit = ZERO
-        lines.append({"date": t.txn_date, "type": t.txn_type, "narration": t.narration,
-                      "reference": t.reference, "debit": q(debit), "credit": q(credit),
-                      "balance": q(running)})
-    return {
-        "loan_no": loan.loan_no, "borrower": loan.borrower.full_name,
-        "national_id": loan.borrower.national_id, "product": loan.product.name,
-        "principal": loan.principal, "rate_pct": loan.interest_rate_pct, "term": loan.term_months,
-        "disbursement_date": loan.disbursement_date, "maturity_date": loan.maturity_date,
-        "status": loan.status, "principal_outstanding": loan.principal_outstanding,
-        "interest_outstanding": loan.interest_outstanding,
-        "penalties_outstanding": loan.penalties_outstanding,
-        "charges_outstanding": loan.charges_outstanding,
-        "total_outstanding": loan.total_outstanding, "total_paid": loan.total_paid,
-        "lines": lines,
-    }
+def loan_statement(loan: Loan, start: date | None = None, end: date | None = None) -> dict:
+    """The per-loan statement. Lives in services/statements.py with the savings one."""
+    from .statements import loan_statement as build
+
+    return build(loan, start, end)
 

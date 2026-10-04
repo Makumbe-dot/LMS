@@ -6,6 +6,7 @@ import { FormModal } from '../components/Modal.jsx'
 import { useToast } from '../components/Toast.jsx'
 import {
   Badge,
+  ExportButtons,
   ErrorBanner,
   Field,
   KeyValues,
@@ -14,7 +15,7 @@ import {
   PageHeader,
   StageTag,
 } from '../components/ui.jsx'
-import { downloadCsv, get, post, qs, rowsOf } from '../lib/api.js'
+import { get, post, qs, rowsOf } from '../lib/api.js'
 import { useAuth } from '../lib/auth.jsx'
 import { dateOnly, fmt, money, num, pct, today } from '../lib/format.js'
 import { useOrg } from '../lib/org.jsx'
@@ -104,13 +105,7 @@ export default function Provisioning() {
         <button type="button" className="btn" onClick={reload}>
           Refresh
         </button>
-        <button
-          type="button"
-          className="btn"
-          onClick={() => downloadCsv(path, 'ecl_provision').catch(toastError)}
-        >
-          Export CSV
-        </button>
+        <ExportButtons path={path} name={'ecl_provision'} />
       </PageHeader>
 
       <ErrorBanner error={error} onRetry={reload} />
