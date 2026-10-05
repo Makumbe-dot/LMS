@@ -563,7 +563,7 @@ dl.kv > div:last-child > dt, dl.kv > div:last-child > dd { border-bottom: none; 
 .badge.failed { background: var(--badge-bad-bg); color: var(--badge-bad-fg); }
 .badge.open { background: var(--badge-active-bg); color: var(--badge-active-fg); }
 /* Journals, tills and bank statement lines */
-.badge.draft, .badge.counted, .badge.unmatched { background: var(--badge-pending-bg); color: var(--badge-pending-fg); }
+.badge.draft, .badge.counted, .badge.unmatched, .badge.lodged { background: var(--badge-pending-bg); color: var(--badge-pending-fg); }
 .badge.posted, .badge.verified, .badge.matched { background: var(--badge-active-bg); color: var(--badge-active-fg); }
 .badge.reversed, .badge.ignored, .badge.dismissed { background: var(--badge-closed-bg); color: var(--badge-closed-fg); }
 

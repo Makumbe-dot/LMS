@@ -7,6 +7,7 @@ from .views import (
     bankrec,
     borrowers,
     charges,
+    claims,
     funding,
     groups,
     incoming,
@@ -43,6 +44,11 @@ urlpatterns = [
     re_path(r"^settings/?$", org.settings_view),
     re_path(r"^holidays/?$", org.holidays),
     re_path(r"^holidays/(?P<holiday_id>\d+)/?$", org.holiday_detail),
+
+    # ---- credit-life claims
+    re_path(r"^claims/?$", claims.claims),
+    re_path(r"^claims/(?P<claim_id>\d+)/pay/?$", claims.pay),
+    re_path(r"^claims/(?P<claim_id>\d+)/reject/?$", claims.reject),
 
     # ---- payments reported by mobile-money providers and banks
     re_path(r"^payments/incoming/?$", incoming.payments),

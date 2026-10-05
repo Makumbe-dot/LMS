@@ -1229,6 +1229,66 @@ class IncomingPayment(models.Model):
         return f"{self.provider} {self.reference} {self.amount}"
 
 
+# ---------------------------------------------------------------- credit-life claims
+class ClaimCause(models.TextChoices):
+    DEATH = "death", "Death"
+    DISABILITY = "disability", "Permanent disability"
+    RETRENCHMENT = "retrenchment", "Retrenchment"
+    OTHER = "other", "Other"
+
+
+class ClaimStatus(models.TextChoices):
+    LODGED = "lodged", "Lodged with the insurer"
+    PAID = "paid", "Paid"
+    REJECTED = "rejected", "Rejected"
+
+
+class InsuranceClaim(models.Model):
+    """A credit-life claim on a loan: the borrower died, was disabled or lost their
+    job, and the cover the credit-life fee bought is claimed against the balance.
+
+    While a claim is lodged the loan accrues no penalties and its borrower is sent
+    no reminders or arrears notices. When the insurer pays, the payout is posted to
+    the loan like any repayment, and whatever it does not cover may be written off.
+    """
+    claim_no = models.CharField(max_length=20, unique=True)
+    loan = models.ForeignKey("Loan", on_delete=models.PROTECT, related_name="claims")
+    cause = models.CharField(max_length=20, choices=ClaimCause.choices)
+    event_date = models.DateField()
+    lodged_on = models.DateField()
+    lodged_by = models.ForeignKey("User", on_delete=models.SET_NULL, null=True, blank=True,
+                                  related_name="+")
+    # What the loan owed when the claim was lodged: the figure the insurer is asked for.
+    amount_claimed = models.DecimalField(**MONEY)
+    insurer_reference = models.CharField(max_length=80, null=True, blank=True)
+    notes = models.TextField(null=True, blank=True)
+
+    status = models.CharField(max_length=20, choices=ClaimStatus.choices,
+                              default=ClaimStatus.LODGED, db_index=True)
+    amount_paid = models.DecimalField(null=True, blank=True, **MONEY)
+    paid_on = models.DateField(null=True, blank=True)
+    transaction = models.OneToOneField("Transaction", on_delete=models.PROTECT, null=True,
+                                       blank=True, related_name="claim")
+    remainder_written_off = models.DecimalField(default=ZERO, **MONEY)
+    decided_by = models.ForeignKey("User", on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="+")
+    decided_at = models.DateTimeField(null=True, blank=True)
+    decision_note = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "insurance_claims"
+        ordering = ["-id"]
+        constraints = [
+            # One open claim per loan: a second would claim the same balance twice.
+            models.UniqueConstraint(fields=["loan"], condition=models.Q(status="lodged"),
+                                    name="uq_claim_one_open_per_loan"),
+        ]
+
+    def __str__(self):
+        return f"{self.claim_no} {self.loan_id} {self.status}"
+
+
 # ---------------------------------------------------------------- bank reconciliation
 class BankStatement(models.Model):
     """A bank or mobile-money statement, uploaded to be matched against the ledger.

@@ -36,8 +36,10 @@ from .models import (
     ManualJournal,
     ManualJournalLine,
     Guarantor,
+    ClaimCause,
     Holiday,
     IncomingPayment,
+    InsuranceClaim,
     Instalment,
     Loan,
     LoanNote,
@@ -1384,3 +1386,43 @@ class IncomingAssignSerializer(serializers.Serializer):
 
 class IncomingDismissSerializer(serializers.Serializer):
     note = serializers.CharField(max_length=255)
+
+
+class InsuranceClaimSerializer(serializers.ModelSerializer):
+    loan_no = serializers.CharField(source="loan.loan_no", read_only=True)
+    borrower_name = serializers.CharField(source="loan.borrower.full_name", read_only=True)
+    cause_label = serializers.CharField(source="get_cause_display", read_only=True)
+    lodged_by_name = serializers.CharField(source="lodged_by.full_name", read_only=True,
+                                           default=None)
+    decided_by_name = serializers.CharField(source="decided_by.full_name", read_only=True,
+                                            default=None)
+
+    class Meta:
+        model = InsuranceClaim
+        fields = ["id", "claim_no", "loan", "loan_no", "borrower_name", "cause", "cause_label",
+                  "event_date", "lodged_on", "lodged_by_name", "amount_claimed",
+                  "insurer_reference", "notes", "status", "amount_paid", "paid_on",
+                  "transaction", "remainder_written_off", "decided_by_name", "decided_at",
+                  "decision_note"]
+
+
+class ClaimLodgeSerializer(serializers.Serializer):
+    loan_no = serializers.CharField(max_length=40)
+    cause = serializers.ChoiceField(choices=ClaimCause.choices)
+    event_date = serializers.DateField()
+    insurer_reference = serializers.CharField(required=False, allow_null=True, allow_blank=True,
+                                              max_length=80)
+    notes = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+
+
+class ClaimPaySerializer(serializers.Serializer):
+    amount = money(min_value=Decimal("0.01"))
+    paid_on = serializers.DateField(required=False, allow_null=True)
+    reference = serializers.CharField(required=False, allow_null=True, allow_blank=True,
+                                      max_length=80)
+    write_off_remainder = serializers.BooleanField(default=False)
+    note = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+
+
+class ClaimRejectSerializer(serializers.Serializer):
+    note = serializers.CharField()

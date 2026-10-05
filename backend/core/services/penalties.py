@@ -17,8 +17,10 @@ ZERO = Decimal("0")
 
 
 def active_loans_for_accrual():
+    # A loan with a credit-life claim open is not penalised while the insurer decides.
     return (Loan.objects
             .filter(status=LoanStatus.ACTIVE)
+            .exclude(claims__status="lodged")
             .select_related("product", "borrower")
             .prefetch_related(Prefetch("instalments", queryset=Instalment.objects.order_by("number"))))
 
@@ -29,7 +31,10 @@ def accrue_penalties(as_of: date | None = None, loan: Loan | None = None) -> dic
     # nightly script passes --skip-closed so a month closed on the 1st does not
     # fail that evening's batch.
     periods.assert_open(as_of, "Penalty accrual")
-    loans = [loan] if loan is not None else list(active_loans_for_accrual())
+    if loan is not None:
+        loans = [] if loan.claims.filter(status="lodged").exists() else [loan]
+    else:
+        loans = list(active_loans_for_accrual())
     total = ZERO
     touched = 0
     for ln in loans:

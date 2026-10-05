@@ -43,6 +43,14 @@ the provider's shared secret, a provider retrying the same payment posts it once
 are configured entirely in `.env` (see `INCOMING_PAYMENT_PROVIDERS`), so a new one is not a code
 change.
 
+**Credit-life claims** — what the credit-life fee buys. When a borrower dies, is permanently
+disabled or is retrenched, an officer lodges a claim for the balance; while it is open the loan
+accrues no penalties and the borrower is sent no reminders or arrears notices. An admin records the
+insurer's answer: a payout is posted to the loan as an ordinary repayment (so the ledger needs no
+special case), and whatever it leaves can be written off in the same step or kept on the loan. A
+rejected claim puts the loan back to normal and penalties resume from where they stopped. One loan
+has at most one claim open.
+
 **Holiday calendar** — an administrator keeps a list of public holidays (a single date, or one that
 falls on the same day every year) and ticks the weekdays the offices are closed. No instalment
 falls due on a closed day: it moves to the next working day, for the same amount, since interest is
@@ -377,6 +385,9 @@ case-insensitive default collation. It covers:
 - incoming payments — signatures refused, a provider's own field names, retries posting once,
   matching by loan number, national id and phone, two possible loans held for a person, an
   overpayment held, placing and setting aside, and the ledger still tied afterwards;
+- credit-life claims — one open claim per loan, penalties and reminders paused, a full payout
+  closing the loan, a partial one written off or left, a rejection resuming penalties, and the
+  ledger tied throughout;
 - the holiday calendar — weekends and holidays moving a due date, a run of closed days, annual
   holidays, the amounts unchanged and the rest of the schedule unmoved, a late-declared holiday
   reaching unpaid future instalments but not past ones, and the maturity date following;
@@ -546,6 +557,7 @@ backend/                        Django project
     services/
       amortisation.py           reducing-balance and flat-rate schedules, monthly, fortnightly
                                 or weekly (Decimal, cent-exact), and the APR
+      claims.py                 credit-life claims: lodge, pay out, write off the rest, reject
       incoming.py               payments reported by mobile-money providers and banks: the
                                 signature, matching to a loan, posting, the unmatched queue
       workdays.py               the holiday calendar: closed weekdays, public holidays, and

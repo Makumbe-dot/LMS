@@ -31,6 +31,7 @@ const NAV = [
         roles: ['admin', 'loan_officer', 'teller'],
       },
       { to: '/notifications', label: 'Messages' },
+      { to: '/claims', label: 'Credit-life claims' },
     ],
   },
   {
