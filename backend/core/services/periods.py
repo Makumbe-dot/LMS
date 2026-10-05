@@ -307,7 +307,25 @@ def preflight(year: int, month: int) -> dict:
                    f"they will have to be re-dated after the close"),
     })
 
-    # 10. Advisory: foreign-currency loans not yet restated at the closing rate.
+    # 10. Advisory, effective interest method only: instalment periods that ended in
+    #     or before the month and have not been accrued. Closing over them means
+    #     their income can only be recognised in a later month.
+    from .eir import is_effective, unaccrued_instalments
+
+    if is_effective():
+        pending = unaccrued_instalments(end)
+        checks.append({
+            "key": "interest_accrued",
+            "label": "Interest has been accrued at the effective rate to the month end",
+            "passed": pending == 0,
+            "blocking": False,
+            "overridable": False,
+            "detail": ("Accrued" if pending == 0 else
+                       f"{pending} instalment period(s) not yet accrued — run the interest "
+                       f"accrual on the General ledger page"),
+        })
+
+    # 11. Advisory: foreign-currency loans not yet restated at the closing rate.
     #     A monetary asset in another currency is reported at the closing rate,
     #     and the revaluation is what moves it there.
     from .fx import unrevalued_loans

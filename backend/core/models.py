@@ -148,6 +148,11 @@ class InstalmentStatus(models.TextChoices):
     OVERDUE = "overdue", "Overdue"
 
 
+class InterestMethod(models.TextChoices):
+    COLLECTED = "collected", "When collected"
+    EFFECTIVE = "effective", "Effective interest method (IFRS 9)"
+
+
 class TxnType(models.TextChoices):
     DISBURSEMENT = "disbursement", "Disbursement"
     REPAYMENT = "repayment", "Repayment"
@@ -160,6 +165,9 @@ class TxnType(models.TextChoices):
     WRITE_OFF = "write_off", "Write-off"
     RECOVERY = "recovery", "Recovery after write-off"
     REVERSAL = "reversal", "Reversal"
+    # Interest recognised at the effective rate for a period: moves no cash and no
+    # balance the borrower sees. Only raised under the effective interest method.
+    ACCRUAL = "accrual", "Interest accrued"
     OPENING_BALANCE = "opening_balance", "Opening balance brought forward"
 
 
@@ -303,6 +311,12 @@ class OrganisationSetting(models.Model):
     # to the next working day. Empty by default, so a book that has never set it
     # keeps the due dates it always had.
     closed_weekdays = models.CharField(max_length=40, default="", blank=True)
+
+    # How the ledger recognises interest: when it is collected (the default), or
+    # at the effective rate with the fees spread over the loan (IFRS 9). Cannot
+    # change while loans are running; see services/eir.py.
+    interest_method = models.CharField(max_length=10, choices=InterestMethod.choices,
+                                       default=InterestMethod.COLLECTED)
 
     updated_at = models.DateTimeField(default=timezone.now)
 
@@ -826,6 +840,10 @@ class Loan(models.Model):
     # core.services.provisioning. Deliberately NOT in loans.LOAN_BALANCE_FIELDS:
     # refresh_balances must never touch it.
     provision_held = models.DecimalField(default=ZERO, **MONEY)
+    # Under the effective interest method only: contractual interest recognised
+    # as a receivable so far, and the fees still deferred. Zero otherwise.
+    interest_accrued = models.DecimalField(default=ZERO, **MONEY)
+    fees_deferred = models.DecimalField(default=ZERO, **MONEY)
     created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
@@ -883,6 +901,9 @@ class Instalment(models.Model):
                               default=InstalmentStatus.PENDING)
     last_penalty_date = models.DateField(null=True, blank=True)
     paid_date = models.DateField(null=True, blank=True)
+    # The date the period's interest was accrued on, under the effective interest
+    # method; null until the run reaches it.
+    accrued_on = models.DateField(null=True, blank=True)
 
     class Meta:
         db_table = "instalments"
@@ -1324,6 +1345,12 @@ class RevaluationLine(models.Model):
     principal_movement = models.DecimalField(default=ZERO, **MONEY)
     penalties_movement = models.DecimalField(default=ZERO, **MONEY)
     charges_movement = models.DecimalField(default=ZERO, **MONEY)
+    # Under the effective interest method the receivable interest and the deferred
+    # fees are monetary items in the loan's currency too.
+    interest_receivable = models.DecimalField(default=ZERO, **MONEY)
+    fees_deferred = models.DecimalField(default=ZERO, **MONEY)
+    interest_movement = models.DecimalField(default=ZERO, **MONEY)
+    fees_movement = models.DecimalField(default=ZERO, **MONEY)
     movement = models.DecimalField(default=ZERO, **MONEY)
 
     class Meta:

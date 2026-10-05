@@ -74,6 +74,11 @@ def post_repayment(loan: Loan, user: User, amount: Decimal, txn_date: date | Non
         method=method, reference=reference, narration=narration, posted_by=user,
     )
     refresh_balances(loan)
+    if loan.status == LoanStatus.CLOSED:
+        # Nothing left to spread the fees over (effective interest method only).
+        from .eir import release_deferred_fees
+
+        release_deferred_fees(loan, txn_date, user, f"{loan.loan_no} settled in full")
     return txn
 
 

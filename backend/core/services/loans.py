@@ -399,10 +399,15 @@ def disburse(loan: Loan, user: User, disbursement_date: date | None,
     loan.penalties_outstanding = ZERO
     loan.charges_outstanding = ZERO
     loan.total_paid = ZERO
+    # Under the effective interest method the fees are deferred, not income today.
+    from .eir import is_effective
+
+    loan.fees_deferred = fees if is_effective() else ZERO
     loan.save(update_fields=[
         "status", "fx_rate", "disbursement_date", "first_instalment_date", "maturity_date",
         "instalment_amount", "total_interest", "apr_pct", "principal_outstanding",
         "interest_outstanding", "penalties_outstanding", "charges_outstanding", "total_paid",
+        "fees_deferred",
     ])
 
     db_txn = Transaction.objects.create(
@@ -559,7 +564,10 @@ def write_off(loan: Loan, user: User, narration: str) -> Loan:
     )
     loan.status = LoanStatus.WRITTEN_OFF
     loan.closed_at = datetime.now(timezone.utc)
-    loan.save(update_fields=["status", "closed_at"])
+    # The write-off entry took the accrued interest and the deferred fees with it.
+    loan.interest_accrued = ZERO
+    loan.fees_deferred = ZERO
+    loan.save(update_fields=["status", "closed_at", "interest_accrued", "fees_deferred"])
 
     # The month that carries the write-off expense carries the offsetting release
     # of the provision held against this loan.
@@ -660,6 +668,11 @@ def reschedule(loan: Loan, user: User, new_term: int, new_rate: Decimal | None,
         raise BusinessRuleError("Only active loans can be rescheduled")
     refresh_balances(loan)
     today = date.today()
+    # The old instrument is derecognised: whatever fees were still deferred are
+    # income now, and the new schedule accrues from a clean slate.
+    from .eir import release_deferred_fees
+
+    release_deferred_fees(loan, today, user, f"{loan.loan_no} rescheduled")
     overdue_interest = q(sum(
         (i.interest_due - i.interest_paid for i in sched(loan) if i.due_date < today), ZERO))
     # Snapshot what is being rolled up, so the capitalisation can be posted. The
@@ -695,11 +708,12 @@ def reschedule(loan: Loan, user: User, new_term: int, new_rate: Decimal | None,
     loan.penalties_outstanding = ZERO
     loan.charges_outstanding = ZERO
     loan.total_paid = ZERO
+    loan.interest_accrued = ZERO
     loan.save(update_fields=[
         "principal", "interest_rate_pct", "term_months", "first_instalment_date",
         "maturity_date", "instalment_amount", "total_interest", "apr_pct",
         "principal_outstanding", "interest_outstanding", "penalties_outstanding",
-        "charges_outstanding", "total_paid",
+        "charges_outstanding", "total_paid", "interest_accrued",
     ])
     # The receivable grows by exactly what the penalty, charge and interest legs
     # shed. Posting this is what keeps 1100, 1300 and 1400 tied to the loan book

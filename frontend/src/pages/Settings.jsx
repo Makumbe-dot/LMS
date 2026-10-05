@@ -14,7 +14,7 @@ const FIELDS = [
   'ecl_stage1_pct', 'ecl_stage2_pct', 'ecl_stage3_pct',
   'ecl_stage2_days', 'ecl_stage3_days', 'reminder_days_before',
   'officer_approval_limit', 'min_credit_score', 'group_arrears_block_days',
-  'require_open_till', 'closed_weekdays',
+  'require_open_till', 'closed_weekdays', 'interest_method',
 ]
 
 const WEEKDAYS = [
@@ -171,6 +171,20 @@ export default function Settings() {
             onChange={set('min_credit_score')}
             hint="Advisory; applications below this are flagged, never blocked"
           />
+        </div>
+
+        <h3 style={{ marginTop: 20 }}>Interest recognition</h3>
+        <div className="grid cols-3">
+          <Field
+            as="select"
+            label="Interest is recognised"
+            value={values.interest_method || 'collected'}
+            onChange={set('interest_method')}
+            hint="Cannot change while loans are running. Under the effective method the fees are deferred and a month-end accrual on the General ledger page recognises income at the effective rate."
+          >
+            <option value="collected">When collected (fees to income on the day)</option>
+            <option value="effective">Effective interest method (IFRS 9)</option>
+          </Field>
         </div>
 
         <h3 style={{ marginTop: 20 }}>Impairment (IFRS 9)</h3>

@@ -130,18 +130,24 @@ def set_rate(code: str, rate_date: date, rate: Decimal, user: User | None,
 
 
 # ---------------------------------------------------------------- revaluation
-def _carrying(loan: Loan, rate) -> tuple[Decimal, Decimal, Decimal]:
+def _carrying(loan: Loan, rate, position) -> tuple[Decimal, ...]:
+    receivable, deferred = position
     return (to_base(loan.principal_outstanding, rate),
             to_base(loan.penalties_outstanding, rate),
-            to_base(loan.charges_outstanding, rate))
+            to_base(loan.charges_outstanding, rate),
+            to_base(receivable, rate),
+            to_base(deferred, rate))
 
 
 def preview(as_of: date | None = None) -> dict:
     """What a run on this date would move, loan by loan, without posting."""
+    from .eir import book_positions, is_effective
+
     as_of = as_of or date.today()
     base = base_currency()
     lines = []
     missing = set()
+    positions = book_positions() if is_effective() else {}
     for loan in (Loan.objects.filter(status=LoanStatus.ACTIVE)
                  .exclude(currency__in=["", base]).select_related("borrower").order_by("id")):
         new_rate = rate_on(loan.currency, as_of, strict=False)
@@ -149,19 +155,26 @@ def preview(as_of: date | None = None) -> dict:
             missing.add(normalise(loan.currency))
             continue
         old_rate = loan.fx_rate or ONE
-        before = _carrying(loan, old_rate)
-        after = _carrying(loan, new_rate)
+        position = positions.get(loan.id, (ZERO, ZERO, ONE))[:2]
+        before = _carrying(loan, old_rate, position)
+        after = _carrying(loan, new_rate, position)
+        # The deferred fees are a credit: a rise in their base value is a loss, so
+        # the net movement takes them away.
         movement = [q(a - b) for a, b in zip(after, before)]
+        net = q(movement[0] + movement[1] + movement[2] + movement[3] - movement[4])
         lines.append({
             "loan_id": loan.id, "loan_no": loan.loan_no, "borrower": loan.borrower.full_name,
             "currency": normalise(loan.currency),
             "principal_outstanding": q(loan.principal_outstanding),
             "penalties_outstanding": q(loan.penalties_outstanding),
             "charges_outstanding": q(loan.charges_outstanding),
+            "interest_receivable": position[0], "fees_deferred": position[1],
             "old_rate": old_rate, "new_rate": new_rate,
-            "carrying_before": q(sum(before, ZERO)), "carrying_after": q(sum(after, ZERO)),
+            "carrying_before": q(sum(before[:4], ZERO) - before[4]),
+            "carrying_after": q(sum(after[:4], ZERO) - after[4]),
             "principal_movement": movement[0], "penalties_movement": movement[1],
-            "charges_movement": movement[2], "movement": q(sum(movement, ZERO)),
+            "charges_movement": movement[2], "interest_movement": movement[3],
+            "fees_movement": movement[4], "movement": net,
         })
     return {
         "as_of": as_of, "base_currency": base, "lines": lines,
@@ -198,9 +211,13 @@ def revalue(as_of: date | None, user: User | None, narration: str | None = None)
                         principal_outstanding=l["principal_outstanding"],
                         penalties_outstanding=l["penalties_outstanding"],
                         charges_outstanding=l["charges_outstanding"],
+                        interest_receivable=l["interest_receivable"],
+                        fees_deferred=l["fees_deferred"],
                         principal_movement=l["principal_movement"],
                         penalties_movement=l["penalties_movement"],
-                        charges_movement=l["charges_movement"], movement=l["movement"])
+                        charges_movement=l["charges_movement"],
+                        interest_movement=l["interest_movement"],
+                        fees_movement=l["fees_movement"], movement=l["movement"])
         for l in plan["lines"]
     ])
     # The booked rate moves with the ledger, so the next posting on each loan
@@ -228,13 +245,18 @@ def _run_lines(run: RevaluationRun) -> list[tuple[str, Decimal, Decimal, str]]:
     from . import ledger
 
     totals = run.lines.aggregate(p=Sum("principal_movement"), pen=Sum("penalties_movement"),
-                                 c=Sum("charges_movement"))
+                                 c=Sum("charges_movement"), i=Sum("interest_movement"),
+                                 f=Sum("fees_movement"))
     lines = []
     for code, amount, text in [
         (ledger.CODES["loans_receivable"], q(totals["p"] or ZERO), "Loans receivable restated"),
         (ledger.CODES["penalties_receivable"], q(totals["pen"] or ZERO),
          "Penalties receivable restated"),
         (ledger.CODES["charges_receivable"], q(totals["c"] or ZERO), "Charges receivable restated"),
+        (ledger.CODES["interest_receivable"], q(totals["i"] or ZERO),
+         "Interest receivable restated"),
+        # a credit balance: a rise is a credit to it
+        (ledger.CODES["deferred_fees"], -q(totals["f"] or ZERO), "Deferred fees restated"),
     ]:
         if amount > 0:
             lines.append((code, amount, ZERO, text))

@@ -480,7 +480,7 @@ class LoanSerializer(serializers.ModelSerializer):
                   "first_instalment_date", "maturity_date", "closed_at", "principal_outstanding",
                   "interest_outstanding", "penalties_outstanding", "charges_outstanding",
                   "total_paid", "total_outstanding", "arrears_amount", "days_in_arrears",
-                  "credit_score", "credit_grade"]
+                  "interest_accrued", "fees_deferred", "credit_score", "credit_grade"]
 
 
 class LoanNoteSerializer(serializers.ModelSerializer):
@@ -633,8 +633,18 @@ class OrganisationSettingSerializer(serializers.ModelSerializer):
                   # The Settings page has always shown these; the API silently dropped
                   # them, so an edited approval limit was never saved.
                   "officer_approval_limit", "min_credit_score", "group_arrears_block_days",
-                  "require_open_till", "closed_weekdays", "updated_at"]
+                  "require_open_till", "closed_weekdays", "interest_method", "updated_at"]
         read_only_fields = ["updated_at"]
+
+    def validate_interest_method(self, value):
+        from .exceptions import BusinessRuleError
+        from .services.eir import assert_can_change
+
+        try:
+            assert_can_change(value)
+        except BusinessRuleError as exc:
+            raise serializers.ValidationError(str(exc.detail))
+        return value
 
     def validate_closed_weekdays(self, value):
         from .services.workdays import format_weekdays, parse_weekdays
@@ -1053,7 +1063,9 @@ class RevaluationLineSerializer(serializers.ModelSerializer):
         model = RevaluationLine
         fields = ["id", "loan_id", "loan_no", "borrower", "currency", "old_rate", "new_rate",
                   "principal_outstanding", "penalties_outstanding", "charges_outstanding",
-                  "principal_movement", "penalties_movement", "charges_movement", "movement"]
+                  "interest_receivable", "fees_deferred",
+                  "principal_movement", "penalties_movement", "charges_movement",
+                  "interest_movement", "fees_movement", "movement"]
 
 
 class RevaluationPreviewLineSerializer(serializers.Serializer):
@@ -1068,9 +1080,13 @@ class RevaluationPreviewLineSerializer(serializers.Serializer):
     new_rate = serializers.DecimalField(max_digits=18, decimal_places=6)
     carrying_before = money()
     carrying_after = money()
+    interest_receivable = money()
+    fees_deferred = money()
     principal_movement = money()
     penalties_movement = money()
     charges_movement = money()
+    interest_movement = money()
+    fees_movement = money()
     movement = money()
 
 

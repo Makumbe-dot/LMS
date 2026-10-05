@@ -45,6 +45,7 @@ LOAN_LABELS = {
     TxnType.RECOVERY: "Recovered after write-off",
     TxnType.REVERSAL: "Repayment reversed",
     TxnType.OPENING_BALANCE: "Balance brought forward",
+    TxnType.ACCRUAL: "Interest accrued (ledger only)",
 }
 
 
@@ -91,6 +92,9 @@ def loan_statement(loan: Loan, start: date | None = None, end: date | None = Non
     opening = ZERO
     lines = []
     for t in loan.transactions.order_by("txn_date", "id"):
+        if t.txn_type == TxnType.ACCRUAL:
+            # Moves nothing the borrower owes or has paid; it is the ledger's affair.
+            continue
         charged, paid, change, label = _loan_effect(t)
         if start and t.txn_date < start:
             opening += change

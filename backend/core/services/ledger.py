@@ -62,6 +62,8 @@ CODES = {
     "borrowing_interest": "5300",
     "facility_fees": "5310",
     "fx_differences": "4800",
+    "deferred_fees": "1150",
+    "interest_receivable": "1200",
 }
 
 # Deliberately NOT in CODES, which is documented as the accounts this module posts
@@ -73,6 +75,8 @@ RETAINED_EARNINGS = "3000"
 DEFAULT_ACCOUNTS = [
     ("1000", "Cash and bank", AccountType.ASSET, "Where disbursements leave from and repayments land"),
     ("1100", "Loans receivable - principal", AccountType.ASSET, "Principal advanced and not yet repaid"),
+    ("1150", "Deferred loan fees", AccountType.ASSET, "Contra-asset; fees deducted at disbursement and not yet taken to income under the effective interest method"),
+    ("1200", "Interest receivable", AccountType.ASSET, "Interest accrued at the effective rate and not yet collected"),
     ("1300", "Penalties receivable", AccountType.ASSET, "Late-payment penalties charged and not yet collected"),
     ("1400", "Charges receivable", AccountType.ASSET, "Fees added to a loan balance and not yet collected"),
     ("1900", "Provision for credit losses", AccountType.ASSET, "Contra-asset; expected credit loss held against the book"),
@@ -119,6 +123,8 @@ DEFAULT_ACCOUNTS = [
 # `journals` refuses them and names the right place.
 CONTROL_ACCOUNTS = {
     "1100": "the loan itself (a disbursement, repayment, write-off or reschedule)",
+    "1150": "the interest accrual run on the General ledger page",
+    "1200": "the interest accrual run on the General ledger page",
     "1300": "the loan itself (penalty accrual, waiver or repayment)",
     "1400": "the loan itself (raise a charge, or take a repayment)",
     "1900": "the provision run on the Provisioning page",
@@ -207,6 +213,60 @@ def _receivables_after(txn: Transaction) -> tuple[Decimal, Decimal, Decimal]:
             q(totals["chg"] + totals["chg_raised"]))
 
 
+def _eir_state(loan_id: int, upto_id: int | None, fees: Decimal) -> tuple[Decimal, Decimal]:
+    """(interest receivable, fees deferred) on a loan once every transaction with
+    id <= `upto_id` has been applied, from the transactions themselves.
+
+    The receivable is the contractual interest accrued less the interest collected
+    or capitalised, never below zero; both sums restart after a reschedule, which
+    replaces the schedule. A write-off clears both. The deferred fees are what was
+    deducted at disbursement less every unwind since.
+    """
+    from django.db.models import Max, Sum
+
+    qs = Transaction.objects.filter(loan_id=loan_id)
+    if upto_id is not None:
+        qs = qs.filter(id__lte=upto_id)
+    if qs.filter(txn_type=TxnType.WRITE_OFF).exists():
+        return ZERO, ZERO
+    # The fees are deferred by the disbursement itself: before it there is nothing
+    # on 1150, and a loan brought over by opening balance never has any.
+    if not qs.filter(txn_type=TxnType.DISBURSEMENT).exists():
+        fees = ZERO
+    base = qs.filter(txn_type=TxnType.CAPITALISATION).aggregate(m=Max("id"))["m"]
+    window = qs.filter(id__gt=base) if base else qs
+    if base:
+        fees = ZERO
+
+    def total(kind, field):
+        return q(window.filter(txn_type=kind).aggregate(v=Sum(field))["v"] or ZERO)
+
+    accrued = total(TxnType.ACCRUAL, "interest_component")
+    settled = (total(TxnType.REPAYMENT, "interest_component")
+               - total(TxnType.REVERSAL, "interest_component")
+               + total(TxnType.CAPITALISATION, "interest_component"))
+    receivable = max(ZERO, q(accrued - settled))
+    unwound = q(total(TxnType.ACCRUAL, "amount") - accrued)
+    return receivable, q(fees - unwound)
+
+
+def _eir_movements(txn: Transaction) -> tuple[Decimal, Decimal]:
+    """The change 1200 and 1150 take for `txn`, in the base currency, or zeros
+    when interest is recognised on collection. 1150 is a credit balance, so a
+    positive figure means more deferred."""
+    from .eir import is_effective
+    from .fx import to_base
+
+    if not is_effective():
+        return ZERO, ZERO
+    loan = txn.loan
+    fees = q(loan.admin_fee + loan.insurance_fee + loan.other_charges)
+    rate = txn.book_rate or Decimal("1")
+    after = _eir_state(loan.id, txn.id, fees)
+    before = _eir_state(loan.id, txn.id - 1, fees) if txn.id else (ZERO, ZERO)
+    return tuple(q(to_base(a, rate) - to_base(b, rate)) for a, b in zip(after, before))
+
+
 def _converted_movements(txn: Transaction) -> tuple[Decimal, Decimal, Decimal]:
     """The change each receivable account takes for `txn`, in the base currency.
 
@@ -243,6 +303,9 @@ def _lines_for(txn: Transaction) -> list[tuple[str, Decimal, Decimal, str]]:
     amount = to_base(txn.amount, spot)
     interest = to_base(txn.interest_component, spot)
     d_principal, d_penalty, d_charge = _converted_movements(txn)
+    # Under the effective interest method: the change in interest receivable and in
+    # the deferred fees. Both zero when interest is recognised on collection.
+    d_receivable, d_deferred = _eir_movements(txn)
 
     def dr(code, value, text):
         return (code, value, ZERO, text) if value >= 0 else (code, ZERO, -value, text)
@@ -258,8 +321,21 @@ def _lines_for(txn: Transaction) -> list[tuple[str, Decimal, Decimal, str]]:
         net = to_base(q(txn.principal_component - fees), spot)
         lines = [dr(CODES["loans_receivable"], d_principal, "Principal advanced"),
                  cr(CODES["bank"], net, "Net paid to the borrower")]
-        if fees > 0:
+        if d_deferred != 0:
+            # Effective interest: the fees are deferred, not income on the day.
+            lines.append(cr(CODES["deferred_fees"], d_deferred, "Fees deferred over the loan"))
+        elif fees > 0:
             lines.append(cr(CODES["fee_income"], q(d_principal - net), "Admin and credit-life fees"))
+
+    elif txn.txn_type == TxnType.ACCRUAL:
+        # Income at the effective rate: the contractual interest for the period
+        # becomes a receivable, the rest unwinds the deferred fees. Interest already
+        # collected ahead of the accrual was income when it arrived, so the
+        # receivable grows by less and the income line by as much less.
+        lines = [dr(CODES["interest_receivable"], d_receivable, "Interest accrued for the period"),
+                 cr(CODES["deferred_fees"], d_deferred, "Deferred fees unwound"),
+                 cr(CODES["interest_income"], q(d_receivable - d_deferred),
+                    "Interest at the effective rate")]
 
     elif txn.txn_type == TxnType.PENALTY:
         lines = [dr(CODES["penalties_receivable"], d_penalty, "Late-payment penalty charged"),
@@ -269,8 +345,12 @@ def _lines_for(txn: Transaction) -> list[tuple[str, Decimal, Decimal, str]]:
         lines = [dr(CODES["bank"], amount, "Repayment received")]
         if d_principal != 0:
             lines.append(cr(CODES["loans_receivable"], -d_principal, "Principal repaid"))
-        if interest > 0:
-            lines.append(cr(CODES["interest_income"], interest, "Interest collected"))
+        if d_receivable != 0:
+            lines.append(cr(CODES["interest_receivable"], -d_receivable, "Accrued interest settled"))
+        if q(interest + d_receivable) > 0:
+            lines.append(cr(CODES["interest_income"], q(interest + d_receivable),
+                            "Interest collected" if d_receivable == 0
+                            else "Interest collected ahead of accrual"))
         if d_penalty != 0:
             lines.append(cr(CODES["penalties_receivable"], -d_penalty, "Penalty collected"))
         if d_charge != 0:
@@ -282,8 +362,11 @@ def _lines_for(txn: Transaction) -> list[tuple[str, Decimal, Decimal, str]]:
         lines = [cr(CODES["bank"], amount, "Repayment reversed")]
         if d_principal != 0:
             lines.append(dr(CODES["loans_receivable"], d_principal, "Principal restored"))
-        if interest > 0:
-            lines.append(dr(CODES["interest_income"], interest, "Interest income reversed"))
+        if d_receivable != 0:
+            lines.append(dr(CODES["interest_receivable"], d_receivable, "Accrued interest restored"))
+        if q(interest - d_receivable) > 0:
+            lines.append(dr(CODES["interest_income"], q(interest - d_receivable),
+                            "Interest income reversed"))
         if d_penalty != 0:
             lines.append(dr(CODES["penalties_receivable"], d_penalty, "Penalty restored"))
         if d_charge != 0:
@@ -300,11 +383,18 @@ def _lines_for(txn: Transaction) -> list[tuple[str, Decimal, Decimal, str]]:
     elif txn.txn_type == TxnType.WRITE_OFF:
         # Only recognised balances leave the ledger: principal, penalties and
         # charges. Unearned interest was never income, so it is not an expense now.
-        recognised = q(-(d_principal + d_penalty + d_charge))
+        # Under the effective interest method the accrued interest goes with them,
+        # and the fees still deferred come off the loss.
+        recognised = q(-(d_principal + d_penalty + d_charge + d_receivable) + d_deferred)
         if recognised > 0:
             lines = [dr(CODES["write_off"], recognised, "Balance written off")]
             if d_principal != 0:
                 lines.append(cr(CODES["loans_receivable"], -d_principal, "Principal written off"))
+            if d_receivable != 0:
+                lines.append(cr(CODES["interest_receivable"], -d_receivable,
+                                "Accrued interest written off"))
+            if d_deferred != 0:
+                lines.append(cr(CODES["deferred_fees"], d_deferred, "Deferred fees released"))
             if d_penalty != 0:
                 lines.append(cr(CODES["penalties_receivable"], -d_penalty, "Penalties written off"))
             if d_charge != 0:
@@ -326,6 +416,14 @@ def _lines_for(txn: Transaction) -> list[tuple[str, Decimal, Decimal, str]]:
         # other side.
         lines = [dr(CODES["loans_receivable"], d_principal, "Capitalised into a new principal")]
         capitalised_interest = q(d_principal + d_penalty + d_charge)
+        if d_receivable != 0:
+            # Accrued already: it moves from the receivable, not from income.
+            lines.append(cr(CODES["interest_receivable"], -d_receivable,
+                            "Accrued interest capitalised"))
+            capitalised_interest = q(capitalised_interest + d_receivable)
+        if d_deferred != 0:
+            lines.append(cr(CODES["deferred_fees"], d_deferred, "Deferred fees released"))
+            capitalised_interest = q(capitalised_interest - d_deferred)
         if capitalised_interest > 0:
             lines.append(cr(CODES["interest_income"], capitalised_interest,
                             "Overdue interest capitalised"))
@@ -974,6 +1072,28 @@ def reconciliation(as_of=None) -> dict:
             "difference": q(ledger_value - book), "agrees": ledger_value == book,
             "sub_ledger": what,
         })
+
+    # Under the effective interest method two more accounts stand against the book.
+    from .eir import book_positions, is_effective
+    from .fx import to_base
+
+    if is_effective():
+        positions = book_positions().values()
+        for code, name, book, what in [
+            ("1200", "Interest receivable",
+             q(sum((to_base(r, rate) for r, _d, rate in positions), ZERO)),
+             "interest accrued and not yet collected on active loans"),
+            ("1150", "Deferred loan fees",
+             -q(sum((to_base(d, rate) for _r, d, rate in positions), ZERO)),
+             "fees deducted at disbursement and not yet taken to income"),
+        ]:
+            ledger_value = q(by_code.get(code, ZERO))
+            rows.append({
+                "code": code, "name": name, "ledger": ledger_value, "book": q(book),
+                "difference": q(ledger_value - q(book)), "agrees": ledger_value == q(book),
+                "sub_ledger": what,
+            })
+        rows.sort(key=lambda r: r["code"])
 
     sheet = balance_sheet(as_of)
     return {

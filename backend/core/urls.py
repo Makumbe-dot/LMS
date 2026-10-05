@@ -164,6 +164,7 @@ urlpatterns = [
     re_path(r"^ledger/reconciliation/?$", ledger.reconciliation),
     re_path(r"^ledger/income-statement/?$", ledger.income_statement),
     re_path(r"^ledger/rebuild/?$", ledger.rebuild),
+    re_path(r"^ledger/accrue-interest/?$", ledger.accrue_interest),
 
     # ---- bank and mobile-money reconciliation (line routes before the numeric id ones)
     re_path(r"^bank-statements/lines/(?P<line_id>\d+)/candidates/?$", bankrec.line_candidates),

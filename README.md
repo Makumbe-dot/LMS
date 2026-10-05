@@ -135,6 +135,21 @@ so a journal can never open a reconciliation break. Paying out more than the ban
 a closed month is refused, and a posted journal is reversed rather than deleted. Rebuild re-posts
 journals, so a journal wipe does not quietly drop every salary from the books.
 
+**Interest recognition, as a setting** — by default interest is income **when collected** and
+the upfront fees are income on the day (see *Ledger recognition*), which is what a small lender's
+management accounts usually show. Statements audited under IFRS 9 expect the **effective interest
+method** instead, and the Settings page offers it: the fees are deferred at disbursement
+(1150), and a month-end accrual (the General ledger page, or `manage.py accrue_interest`)
+recognises income at the effective rate for every instalment period that has ended, the
+contractual interest to a receivable (1200) and the rest unwinding the fees, so over the life of
+the loan the income is exactly the interest plus the fees at a constant yield. A repayment settles
+the receivable; one that arrives ahead of the accrual is income when it arrives, and the accrual
+recognises only what is left. Closure, early settlement and a reschedule release the fees still
+deferred; a write-off takes them against the loss. Two more sub-ledger identities (1200 and 1150)
+join the reconciliation, and the period-close checks say when a month has not been accrued. The
+basis **cannot change while loans are running**: half a book on each would reconcile to nothing,
+so the change is made on an empty active book, or at a cut-over agreed with the auditor.
+
 **Multi-currency** — the ledger, savings, funding and the tills are kept in the organisation's
 currency; a **product may lend in another**, and a loan sold under it is kept in that currency
 instalment by instalment. A **rate table** (base units per one unit of the currency, the latest
@@ -448,6 +463,7 @@ cd backend
 ..\.venv\Scripts\python.exe manage.py accrue_borrowing_interest [--as-of 2026-09-30] [--skip-closed]
 ..\.venv\Scripts\python.exe manage.py run_provisions [--as-of 2026-09-30] [--dry-run] [--force]
 ..\.venv\Scripts\python.exe manage.py revalue_fx [--as-of 2026-09-30] [--dry-run]
+..\.venv\Scripts\python.exe manage.py accrue_interest [--as-of 2026-09-30]
 ```
 
 The three monthly steps — savings interest, borrowing interest and the provision — run on the 1st
@@ -568,6 +584,7 @@ backend/                        Django project
       savings.py                deposit accounts, interest, fees, dormancy
       ledger.py                 double-entry posting rules, trial balance, income statement
       fx.py                     currencies, the rate table, conversion rules, revaluation runs
+      eir.py                    the effective interest method: the schedule and the accrual run
       imports.py                bulk repayment CSV: parse, validate, commit
       notifications.py          reminder and arrears message generation, outbox
       provisioning.py           booking the IFRS 9 expected credit loss movement
@@ -660,8 +677,9 @@ is debited by the settlement and credited by the advance, and nets to the cash a
 annual rate, credited once per calendar month. The monthly account fee is taken at the same time
 and never takes a balance below zero.
 
-*Ledger recognition*: **interest is recognised when it is collected**, not as it accrues, which
-keeps the ledger in step with a book whose interest is recognised instalment by instalment.
+*Ledger recognition*: by default **interest is recognised when it is collected**, not as it
+accrues, which keeps the ledger in step with a book whose interest is recognised instalment by
+instalment; the effective interest method (a setting, see *What it does*) accrues it instead.
 Penalties are recognised when they are charged, because they are raised as a receivable on the
 instalment. So a write-off expenses principal and penalties but not unearned interest, and the
 early-settlement interest rebate touches no ledger account at all.
@@ -709,6 +727,8 @@ claims that can genuinely break — nine accounts against the sub-ledgers they a
 | 2110 Accrued interest on borrowings | interest accrued and unpaid on facilities |
 | 3100 Share capital | capital injected less capital returned |
 | 3200 Distributions | dividends paid |
+| 1200 Interest receivable | interest accrued and not collected (effective interest method only) |
+| 1150 Deferred loan fees | fees deducted and not yet taken to income (effective interest method only) |
 
 A migration, a hand-edit in SSMS, or a service that moves a balance without posting all show up
 there. `manage.py seed` prints the result at the end of every run, and the same reconciliation is
@@ -952,8 +972,12 @@ restart at 1. Nothing depends on the numbering.
 
 What is deliberately not here, and why:
 
-- **Interest recognised by the effective interest method.** Interest is recognised when collected
-  and upfront fees go straight to income (see *Ledger recognition*). That is the usual treatment for
-  management accounts in a small lender; statements audited under IFRS 9 would expect interest
-  accrued at the effective rate with integral fees spread over the loan. Changing it rewrites the
-  ledger rule the reconciliation tests protect, so it is an auditor's decision first.
+- **A bureau or mobile-money contract.** The credit bureau check and the message gateway are
+  configuration (`BUREAU_BACKEND`, `MESSAGE_SMS_BACKEND`): the code speaks to any JSON API, but a
+  real bureau or aggregator needs a contract, credentials and the paths to its fields in `.env`.
+- **Savings, funding and tills in a foreign currency.** Loans may be in another currency; the
+  deposit book, the facilities and the drawers stay in the organisation's. A foreign-currency
+  repayment taken in cash is counted in the drawer at the day's rate.
+- **Changing the interest method on a running book.** The effective interest method is chosen on
+  an empty active book. Moving a book already carrying loans across needs a cut-over agreed with
+  the auditor, and a migration written for that cut-over.
