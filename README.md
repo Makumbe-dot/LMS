@@ -388,7 +388,7 @@ case-insensitive default collation. It covers:
 - the message outbox — generation, idempotency, receipts, sending and cancelling;
 - IFRS 9 staging, the provision run, its reversal and the repost path;
 - capital, funder facilities, borrowing interest and the cash guard;
-- period close — the guard, the nine pre-close checks, reopening, and the commands;
+- period close — the guard, the pre-close checks, reopening, and the commands;
 - manual journals — four eyes, control accounts refused, the cash guard, the closed-month guard,
   reversal, withdrawal, and that Rebuild re-posts them;
 - **the reconciliation identities**, asserted as identities rather than as figures, so they keep

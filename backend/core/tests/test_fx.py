@@ -118,8 +118,8 @@ class ForeignCurrencyTests(LedgerBase):
             self.assertEqual(response.status_code, 201, response.content)
         self.assert_reconciled("after nine small repayments")
         db = Loan.objects.get(pk=loan["id"])
-        self.assertEqual(gl.reconciliation()["rows"][0]["book"],
-                         fx.to_base(db.principal_outstanding, db.fx_rate))
+        loans_receivable = next(r for r in gl.reconciliation()["rows"] if r["code"] == "1100")
+        self.assertEqual(loans_receivable["book"], fx.to_base(db.principal_outstanding, db.fx_rate))
 
     # ------------------------------------------------------------------ revaluation
     def test_a_revaluation_restates_the_receivables_and_moves_the_booked_rate(self):

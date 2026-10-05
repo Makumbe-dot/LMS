@@ -1073,27 +1073,28 @@ def reconciliation(as_of=None) -> dict:
             "sub_ledger": what,
         })
 
-    # Under the effective interest method two more accounts stand against the book.
+    # Two more accounts stand against the book under the effective interest method,
+    # and read zero against zero otherwise; shown either way, so every control
+    # account the journals refuse is on this page.
     from .eir import book_positions, is_effective
     from .fx import to_base
 
-    if is_effective():
-        positions = book_positions().values()
-        for code, name, book, what in [
-            ("1200", "Interest receivable",
-             q(sum((to_base(r, rate) for r, _d, rate in positions), ZERO)),
-             "interest accrued and not yet collected on active loans"),
-            ("1150", "Deferred loan fees",
-             -q(sum((to_base(d, rate) for _r, d, rate in positions), ZERO)),
-             "fees deducted at disbursement and not yet taken to income"),
-        ]:
-            ledger_value = q(by_code.get(code, ZERO))
-            rows.append({
-                "code": code, "name": name, "ledger": ledger_value, "book": q(book),
-                "difference": q(ledger_value - q(book)), "agrees": ledger_value == q(book),
-                "sub_ledger": what,
-            })
-        rows.sort(key=lambda r: r["code"])
+    positions = list(book_positions().values()) if is_effective() else []
+    for code, name, book, what in [
+        ("1200", "Interest receivable",
+         q(sum((to_base(r, rate) for r, _d, rate in positions), ZERO)),
+         "interest accrued and not yet collected on active loans"),
+        ("1150", "Deferred loan fees",
+         -q(sum((to_base(d, rate) for _r, d, rate in positions), ZERO)),
+         "fees deducted at disbursement and not yet taken to income"),
+    ]:
+        ledger_value = q(by_code.get(code, ZERO))
+        rows.append({
+            "code": code, "name": name, "ledger": ledger_value, "book": q(book),
+            "difference": q(ledger_value - q(book)), "agrees": ledger_value == q(book),
+            "sub_ledger": what,
+        })
+    rows.sort(key=lambda r: r["code"])
 
     sheet = balance_sheet(as_of)
     return {
