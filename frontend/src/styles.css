@@ -771,23 +771,99 @@ dl.kv > div:last-child > dt, dl.kv > div:last-child > dd { border-bottom: none; 
 }
 .login-panel {
   position: relative; display: flex; flex-direction: column; justify-content: space-between;
-  padding: 36px 48px 44px; color: #fff; overflow: hidden;
-  background:
-    radial-gradient(900px 500px at 10% -10%, rgba(79, 179, 240, 0.35), transparent 60%),
-    radial-gradient(700px 500px at 100% 110%, rgba(27, 92, 158, 0.55), transparent 60%),
-    linear-gradient(160deg, #0f1f3d 0%, #0a1730 100%);
+  padding: 36px 48px 40px; color: #fff; overflow: hidden; background: #0a1730;
 }
-.login-panel::after {
-  content: ''; position: absolute; inset: 0; pointer-events: none; opacity: .5;
+
+/* Each slide is a scene: a gradient that drifts, two soft orbs of light and a few
+   floating hexagons, with a photograph over it when one has been dropped in. The
+   scenes sit on top of one another and crossfade. */
+.login-scene {
+  position: absolute; inset: 0; opacity: 0; transition: opacity 1.1s ease;
+  background: linear-gradient(160deg, #0f1f3d 0%, #0a1730 100%);
+}
+.login-scene.is-active { opacity: 1; }
+.login-scene::before {
+  content: ''; position: absolute; inset: -20%;
+  background:
+    radial-gradient(42% 38% at 18% 12%, var(--glow-a), transparent 70%),
+    radial-gradient(46% 42% at 85% 92%, var(--glow-b), transparent 70%);
+  animation: scene-drift 18s ease-in-out infinite alternate;
+}
+.login-scene::after {
+  content: ''; position: absolute; inset: 0; opacity: .45;
   background-image: var(--page-pattern); background-size: 56px 98px;
   mask-image: linear-gradient(180deg, transparent, #000 40%, transparent);
   -webkit-mask-image: linear-gradient(180deg, transparent, #000 40%, transparent);
 }
+.scene-dawn   { --glow-a: rgba(79, 179, 240, 0.55);  --glow-b: rgba(27, 92, 158, 0.65); }
+.scene-tide   { --glow-a: rgba(43, 154, 95, 0.45);   --glow-b: rgba(79, 179, 240, 0.45); }
+.scene-ember  { --glow-a: rgba(235, 104, 52, 0.42);  --glow-b: rgba(122, 90, 240, 0.45); }
+.scene-meadow { --glow-a: rgba(201, 138, 18, 0.40);  --glow-b: rgba(43, 154, 95, 0.50); }
+.login-photo {
+  position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: .55;
+  animation: scene-zoom 22s ease-in-out infinite alternate;
+}
+.login-orb {
+  position: absolute; border-radius: 50%; filter: blur(40px); opacity: .5;
+  background: var(--glow-a); width: 360px; height: 360px; left: -80px; top: 30%;
+  animation: orb-float 16s ease-in-out infinite alternate;
+}
+.login-orb.orb-2 {
+  background: var(--glow-b); width: 420px; height: 420px; left: auto; right: -120px; top: -140px;
+  animation-duration: 21s; animation-delay: -6s;
+}
+.login-hex {
+  position: absolute; opacity: .18; animation: hex-float 14s ease-in-out infinite alternate;
+}
+.login-hex .brand-mark { filter: drop-shadow(0 12px 30px rgba(0, 0, 0, 0.35)); }
+.login-hex.hex-1 { right: 12%; top: 18%; }
+.login-hex.hex-2 { right: 34%; top: 46%; animation-duration: 11s; animation-delay: -4s; }
+.login-hex.hex-3 { right: 20%; bottom: 22%; animation-duration: 17s; animation-delay: -9s; }
+@keyframes scene-drift {
+  from { transform: translate3d(-3%, -2%, 0) scale(1); }
+  to { transform: translate3d(3%, 4%, 0) scale(1.08); }
+}
+@keyframes scene-zoom {
+  from { transform: scale(1); }
+  to { transform: scale(1.08); }
+}
+@keyframes orb-float {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(60px, -50px, 0); }
+}
+@keyframes hex-float {
+  from { transform: translate3d(0, 0, 0) rotate(0deg); }
+  to { transform: translate3d(-18px, -26px, 0) rotate(12deg); }
+}
+.login-panel.still .login-scene::before, .login-panel.still .login-photo,
+.login-panel.still .login-orb, .login-panel.still .login-hex { animation: none; }
+
+@keyframes story-in {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* the slide picker: a bar that fills while its slide is showing */
+.login-dots { position: relative; z-index: 1; display: flex; gap: 8px; margin-top: 30px; }
+.login-dots button {
+  position: relative; width: 34px; height: 4px; padding: 0; border: none; border-radius: 2px;
+  background: rgba(255, 255, 255, 0.22); cursor: pointer; overflow: hidden;
+}
+.login-dots button.is-active { width: 56px; }
+.login-dot-fill {
+  position: absolute; inset: 0; transform-origin: left; transform: scaleX(0);
+  background: #8cd0f7;
+}
+.login-dots button.is-active .login-dot-fill { animation: dot-fill 7s linear forwards; }
+.login-panel:hover .login-dots button.is-active .login-dot-fill { animation-play-state: paused; }
+.login-panel.still .login-dots button.is-active .login-dot-fill { animation: none; transform: none; }
+@keyframes dot-fill { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+
 .login-brand {
   position: relative; z-index: 1; display: flex; align-items: center; gap: 12px;
   font: 800 17px/1.2 var(--font-head); letter-spacing: -0.01em;
 }
-.login-story { position: relative; z-index: 1; max-width: 520px; }
+.login-story { position: relative; z-index: 1; max-width: 520px; animation: story-in .7s ease both; }
 .login-tag {
   margin: 0 0 12px; color: #8cd0f7; font: 600 12px/1.2 var(--font-sans);
   letter-spacing: 0.1em; text-transform: uppercase;
@@ -968,7 +1044,7 @@ dl.kv > div:last-child > dt, dl.kv > div:last-child > dd { border-bottom: none; 
   .login-page { grid-template-columns: 1fr; }
   .login-panel { padding: 22px 24px 26px; gap: 18px; }
   .login-story h1 { font-size: 24px; }
-  .login-lead, .login-points { display: none; }
+  .login-lead, .login-points, .login-hex, .login-dots { display: none; }
 }
 @media (max-width: 560px) {
   .stat-grid { grid-template-columns: 1fr; }
