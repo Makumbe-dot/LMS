@@ -1,8 +1,10 @@
 /* Small presentational pieces shared by every page. */
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 
 import { downloadFile } from '../lib/api.js'
 import { humanise } from '../lib/format.js'
+import Icon from './Icons.jsx'
 import { useToast } from './Toast.jsx'
 
 /**
@@ -67,14 +69,35 @@ export function Badge({ value }) {
   return <span className={`badge ${value}`}>{humanise(value)}</span>
 }
 
-export function Kpi({ label, value, sub }) {
-  return (
-    <div className="kpi">
-      <div className="label">{label}</div>
-      <div className="value">{value}</div>
-      <div className="sub">{sub || ''}</div>
-    </div>
+/**
+ * A stat tile: one number that matters. With `icon` and `tone` it carries a
+ * tinted icon chip (tone: blue | green | amber | red | violet | slate); with `to`
+ * the whole tile is a link to the page behind the number.
+ */
+export function Kpi({ label, value, sub, icon, tone, to }) {
+  const className = `kpi${tone ? ` tone-${tone}` : ''}${to ? ' linked' : ''}`
+  const body = (
+    <>
+      {icon ? (
+        <span className="kpi-icon" aria-hidden="true">
+          <Icon name={icon} size={18} />
+        </span>
+      ) : null}
+      <div className="kpi-body">
+        <div className="label">{label}</div>
+        <div className="value">{value}</div>
+        <div className="sub">{sub || ''}</div>
+      </div>
+    </>
   )
+  if (to) {
+    return (
+      <Link className={className} to={to}>
+        {body}
+      </Link>
+    )
+  }
+  return <div className={className}>{body}</div>
 }
 
 export function PageHeader({ title, meta, children }) {

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 
 import LoanTable from '../components/LoanTable.jsx'
 import { ErrorBanner, Loading, PageHeader, Pager } from '../components/ui.jsx'
@@ -14,8 +14,12 @@ const STATUSES = ['pending', 'approved', 'active', 'closed', 'rejected', 'writte
 export default function Loans() {
   const { can } = useAuth()
   const { activeBranches } = useOrg()
+  // The dashboard links here with ?status=pending; the filter starts from it.
+  const [params] = useSearchParams()
   const [search, setSearch] = useState('')
-  const [status, setStatus] = useState('')
+  const [status, setStatus] = useState(() =>
+    STATUSES.includes(params.get('status')) ? params.get('status') : '',
+  )
   const [branchId, setBranchId] = useState('')
   const [inArrears, setInArrears] = useState(false)
   const [page, setPage] = useState(1)
