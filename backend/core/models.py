@@ -110,6 +110,11 @@ class TillStatus(models.TextChoices):
     VERIFIED = "verified", "Verified"
 
 
+class BureauEnquiryStatus(models.TextChoices):
+    OK = "ok", "Report received"
+    FAILED = "failed", "Failed"
+
+
 class StatementLineStatus(models.TextChoices):
     UNMATCHED = "unmatched", "Unmatched"
     MATCHED = "matched", "Matched"
@@ -1673,6 +1678,47 @@ class BorrowerDocument(models.Model):
 
     def __str__(self):
         return f"{self.original_name} ({self.doc_type})"
+
+
+class BureauEnquiry(models.Model):
+    """One question put to a credit bureau about a borrower, and its answer.
+
+    Kept as a register rather than a field on the borrower, because a report is
+    dated: the scorecard only reads one younger than BUREAU_VALID_DAYS, and an
+    officer can see what the bureau said at the time of an earlier application.
+    A failed attempt is kept too, so "the bureau was down" is on record.
+    """
+    borrower = models.ForeignKey(Borrower, on_delete=models.CASCADE,
+                                 related_name="bureau_enquiries", db_index=True)
+    loan = models.ForeignKey("Loan", on_delete=models.SET_NULL, null=True, blank=True,
+                             related_name="bureau_enquiries",
+                             help_text="The application it was run for, if any")
+    status = models.CharField(max_length=10, choices=BureauEnquiryStatus.choices,
+                              default=BureauEnquiryStatus.OK)
+    provider = models.CharField(max_length=20)
+    reference = models.CharField(max_length=80, null=True, blank=True,
+                                 help_text="The bureau's own reference for the report")
+    score = models.IntegerField(null=True, blank=True)
+    score_max = models.IntegerField(default=1000)
+    open_accounts = models.IntegerField(default=0)
+    accounts_in_arrears = models.IntegerField(default=0)
+    defaults = models.IntegerField(default=0)
+    worst_days_in_arrears = models.IntegerField(default=0)
+    total_exposure = models.DecimalField(default=ZERO, **MONEY,
+                                         help_text="Owed to other lenders")
+    summary = models.TextField(null=True, blank=True)
+    detail = models.TextField(null=True, blank=True, help_text="JSON: the figures as received")
+    error = models.TextField(null=True, blank=True)
+    enquired_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                                    related_name="+")
+    enquired_at = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        db_table = "bureau_enquiries"
+        ordering = ["-enquired_at", "-id"]
+
+    def __str__(self):
+        return f"{self.borrower_id} via {self.provider} on {self.enquired_at:%Y-%m-%d}"
 
 
 class Sequence(models.Model):

@@ -22,6 +22,7 @@ from .models import (
     FacilityTransaction,
     FundingFacility,
     BorrowerDocument,
+    BureauEnquiry,
     BorrowerGroup,
     Branch,
     Charge,
@@ -224,6 +225,19 @@ class BorrowerSerializer(serializers.ModelSerializer):
         model = Borrower
         fields = ["id", "borrower_no", "created_at", *BORROWER_FIELDS, "branch_name",
                   "guarantors", "documents", "active_loans", "total_outstanding"]
+
+
+class BureauEnquirySerializer(serializers.ModelSerializer):
+    enquired_by_name = serializers.CharField(source="enquired_by.full_name", read_only=True,
+                                             default=None)
+    loan_no = serializers.CharField(source="loan.loan_no", read_only=True, default=None)
+
+    class Meta:
+        model = BureauEnquiry
+        fields = ["id", "status", "provider", "reference", "score", "score_max",
+                  "open_accounts", "accounts_in_arrears", "defaults", "worst_days_in_arrears",
+                  "total_exposure", "summary", "error", "loan_no", "enquired_by_name",
+                  "enquired_at"]
 
 
 class BorrowerCreateSerializer(serializers.ModelSerializer):

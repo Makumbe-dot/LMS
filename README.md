@@ -170,6 +170,15 @@ Reopening needs a reason and goes in the audit trail with the numbers it superse
 history, affordability, current arrears, employment, KYC), with the reason for every factor, plus
 **approval limits** so a loan above a set amount needs an administrator.
 
+**Credit bureau check** — an officer asks the bureau about a borrower from their file, and the
+answer (bureau score, accounts elsewhere, arrears and defaults with other lenders, what they owe
+elsewhere) goes on a dated register. While a report is fresh (`BUREAU_VALID_DAYS`, 90 by default)
+the scorecard splits its thirty history points between this book and the bureau's; a default on
+record scores nothing. The bureau itself is configuration: `BUREAU_BACKEND=none` (the default,
+no button is shown), `demo` (a repeatable made-up report for rehearsals) or `http` (any bureau
+with a JSON API, with the paths to each figure set in `.env`). Only the figures the paths name are
+stored, never the whole response, because a bureau report carries other lenders' account numbers.
+
 **Security register** — collateral pledged against a loan: type, description, valuation, reference,
 and release or realisation.
 
@@ -539,6 +548,7 @@ backend/                        Django project
       penalties.py              daily penalty accrual
       charges.py                the charges catalogue, frozen onto a loan when raised
       scoring.py                the credit scorecard
+      bureau.py                 credit bureau enquiries: none / demo / http backends
       groups.py                 joint-liability groups and the borrowing rule
       savings.py                deposit accounts, interest, fees, dormancy
       ledger.py                 double-entry posting rules, trial balance, income statement
@@ -931,7 +941,5 @@ What is deliberately not here, and why:
   management accounts in a small lender; statements audited under IFRS 9 would expect interest
   accrued at the effective rate with integral fees spread over the loan. Changing it rewrites the
   ledger rule the reconciliation tests protect, so it is an auditor's decision first.
-- **A credit bureau check.** The scorecard reads only this book. A bureau lookup needs a bureau
-  contract and its API.
 - **Multi-currency.** One currency per organisation. It needs a currency on product and loan, a
   rate table, and a revaluation run.

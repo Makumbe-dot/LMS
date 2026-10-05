@@ -51,6 +51,8 @@ urlpatterns = [
     re_path(r"^borrowers/(?P<borrower_id>\d+)/guarantors/?$", borrowers.add_guarantor),
     re_path(r"^borrowers/(?P<borrower_id>\d+)/guarantors/(?P<guarantor_id>\d+)/?$",
             borrowers.remove_guarantor),
+    re_path(r"^borrowers/(?P<borrower_id>\d+)/bureau/?$", borrowers.bureau),
+    re_path(r"^bureau/status/?$", borrowers.bureau_status),
     re_path(r"^borrowers/(?P<borrower_id>\d+)/documents/?$", borrowers.documents),
     re_path(r"^borrowers/(?P<borrower_id>\d+)/documents/(?P<document_id>\d+)/download/?$",
             borrowers.download_document),

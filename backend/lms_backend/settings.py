@@ -298,6 +298,32 @@ MESSAGE_HTTP = {
     "headers": _pairs(env("MESSAGE_HTTP_HEADERS", "")),
 }
 
+# ---------------------------------------------------------------- credit bureau
+# "none" by default: a lender without a bureau contract sees no button, not a
+# pretend report. "demo" fabricates a deterministic report for rehearsals and
+# tests; "http" asks a real bureau. See core/services/bureau.py.
+BUREAU_BACKEND = env("BUREAU_BACKEND", "none")
+BUREAU_VALID_DAYS = int(env("BUREAU_VALID_DAYS", "90"))
+BUREAU_HTTP = {
+    "url": env("BUREAU_HTTP_URL", ""),
+    "method": env("BUREAU_HTTP_METHOD", "POST"),
+    "id_field": env("BUREAU_HTTP_ID_FIELD", "national_id"),
+    "timeout": int(env("BUREAU_HTTP_TIMEOUT", "20")),
+    "extra": _pairs(env("BUREAU_HTTP_FIELDS", "")),
+    "headers": _pairs(env("BUREAU_HTTP_HEADERS", "")),
+    # Dotted paths to each figure in the bureau's JSON answer.
+    "paths": {
+        "score": env("BUREAU_HTTP_SCORE_PATH", "score"),
+        "score_max": env("BUREAU_HTTP_SCORE_MAX_PATH", ""),
+        "open_accounts": env("BUREAU_HTTP_OPEN_ACCOUNTS_PATH", "open_accounts"),
+        "accounts_in_arrears": env("BUREAU_HTTP_ARREARS_PATH", "accounts_in_arrears"),
+        "defaults": env("BUREAU_HTTP_DEFAULTS_PATH", "defaults"),
+        "worst_days_in_arrears": env("BUREAU_HTTP_WORST_DAYS_PATH", "worst_days_in_arrears"),
+        "total_exposure": env("BUREAU_HTTP_EXPOSURE_PATH", "total_exposure"),
+        "reference": env("BUREAU_HTTP_REFERENCE_PATH", "reference"),
+    },
+}
+
 # Email, for the email channel when MESSAGE_EMAIL_BACKEND is "smtp".
 EMAIL_BACKEND = env("EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend")
 EMAIL_HOST = env("EMAIL_HOST", "")

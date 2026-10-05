@@ -8,8 +8,113 @@ import { useToast } from '../components/Toast.jsx'
 import { ErrorBanner, Field, KeyValues, Loading, PageHeader } from '../components/ui.jsx'
 import { del, post, postForm } from '../lib/api.js'
 import { useAuth } from '../lib/auth.jsx'
-import { bytes, dateOnly, humanise, money } from '../lib/format.js'
+import { bytes, dateOnly, dateTime, humanise, money } from '../lib/format.js'
 import { useApi } from '../lib/useApi.js'
+
+/**
+ * What the credit bureau says about this borrower. Hidden behind a sentence when
+ * no bureau is configured, so the button only appears when it would do something.
+ */
+function BureauCard({ borrowerId, mayEdit }) {
+  const { toast, toastError } = useToast()
+  const enquiries = useApi(`/api/borrowers/${borrowerId}/bureau`)
+  const [running, setRunning] = useState(false)
+  const data = enquiries.data
+
+  async function runCheck() {
+    setRunning(true)
+    try {
+      const row = await post(`/api/borrowers/${borrowerId}/bureau`)
+      enquiries.reload()
+      if (row.status === 'ok') toast('Bureau report received')
+      else toastError(row.error || 'The bureau did not answer')
+    } catch (err) {
+      toastError(err)
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  if (!data) return null
+  const latest = data.rows.find((r) => r.id === data.latest_id)
+  const rows = data.rows || []
+
+  return (
+    <div className="card">
+      <div className="row between" style={{ marginBottom: 12 }}>
+        <h3 style={{ margin: 0 }}>Credit bureau</h3>
+        {data.configured && mayEdit ? (
+          <button type="button" className="btn small" onClick={runCheck} disabled={running}>
+            {running ? 'Asking the bureau…' : 'Run bureau check'}
+          </button>
+        ) : null}
+      </div>
+      {!data.configured ? (
+        <p className="muted" style={{ marginBottom: 0 }}>
+          No credit bureau is connected. The scorecard reads this book only; set BUREAU_BACKEND in
+          the backend settings once the institution has a bureau contract.
+        </p>
+      ) : (
+        <>
+          {data.demo ? (
+            <p className="banner" style={{ borderLeftColor: 'var(--warn)' }}>
+              The bureau is in demo mode: reports are made up from the national ID and leave this
+              machine never.
+            </p>
+          ) : null}
+          {latest ? (
+            <KeyValues
+              items={[
+                ['Report of', dateTime(latest.enquired_at)],
+                ['Bureau score', latest.score === null ? '-' : `${latest.score} / ${latest.score_max}`],
+                ['Accounts elsewhere', latest.open_accounts],
+                [
+                  'In arrears elsewhere',
+                  latest.accounts_in_arrears ? (
+                    <span className="tag-danger">
+                      {latest.accounts_in_arrears} (worst {latest.worst_days_in_arrears} days)
+                    </span>
+                  ) : (
+                    <span className="tag-ok">None</span>
+                  ),
+                ],
+                [
+                  'Defaults on record',
+                  latest.defaults ? <span className="tag-danger">{latest.defaults}</span> : 'None',
+                ],
+                ['Owed to other lenders', money(latest.total_exposure)],
+                ['Reference', latest.reference || '-'],
+              ]}
+            />
+          ) : (
+            <p className="muted">
+              No report inside the last {data.valid_days} days. The scorecard will use one once it
+              is run.
+            </p>
+          )}
+          {rows.length > 1 || (rows.length === 1 && !latest) ? (
+            <DataTable
+              caption="Earlier enquiries"
+              rows={rows}
+              columns={[
+                { key: 'when', header: 'When', render: (r) => dateTime(r.enquired_at) },
+                { key: 'status', header: 'Status', render: (r) => humanise(r.status) },
+                {
+                  key: 'score',
+                  header: 'Score',
+                  num: true,
+                  render: (r) => (r.score === null ? '-' : `${r.score}/${r.score_max}`),
+                },
+                { key: 'summary', header: 'Summary', render: (r) => r.summary || r.error || '-' },
+                { key: 'by', header: 'By', render: (r) => r.enquired_by_name || '-' },
+              ]}
+            />
+          ) : null}
+        </>
+      )}
+    </div>
+  )
+}
 
 const DOC_TYPES = [
   ['id', 'Identity document'],
@@ -247,6 +352,8 @@ export default function BorrowerDetail() {
           ))
         )}
       </div>
+
+      <BureauCard borrowerId={id} mayEdit={mayEdit} />
 
       <div className="card">
         <h3>Loans</h3>

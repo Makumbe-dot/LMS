@@ -13,17 +13,19 @@ from django.http import FileResponse
 
 from ..audit import audit
 from ..exceptions import BusinessRuleError, NotFound
-from ..models import Borrower, BorrowerDocument, Guarantor, LoanStatus
+from ..models import Borrower, BorrowerDocument, Guarantor, Loan, LoanStatus
 from ..permissions import IsOfficer
 from ..serializers import (
     BorrowerCreateSerializer,
     BorrowerDocumentSerializer,
     BorrowerSerializer,
     BorrowerUpdateSerializer,
+    BureauEnquirySerializer,
     DocumentUploadSerializer,
     GuarantorSerializer,
     LoanSerializer,
 )
+from ..services import bureau as bureau_svc
 from ..services.loans import next_number
 from .helpers import loan_queryset, paginate, parse_int, with_arrears
 
@@ -222,3 +224,40 @@ def delete_document(request, borrower_id: int, document_id: int):
         document.delete()
         audit(request.user, "delete_document", "borrower", borrower_id, name)
     return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# ---------------------------------------------------------------- credit bureau
+@api_view(["GET"])
+def bureau_status(request):
+    """Whether a bureau check would do anything, so the page can show or hide the button."""
+    return Response(bureau_svc.describe())
+
+
+@api_view(["GET", "POST"])
+def bureau(request, borrower_id: int):
+    borrower = Borrower.objects.filter(pk=borrower_id).first()
+    if borrower is None:
+        raise NotFound("Borrower not found")
+
+    if request.method == "GET":
+        rows = borrower.bureau_enquiries.select_related("enquired_by", "loan")[:20]
+        status_now = bureau_svc.describe()
+        fresh = bureau_svc.latest(borrower)
+        return Response({**status_now, "latest_id": fresh.id if fresh else None,
+                         "rows": BureauEnquirySerializer(rows, many=True).data})
+
+    if not IsOfficer().has_permission(request, None):
+        return Response({"detail": IsOfficer.message}, status=status.HTTP_403_FORBIDDEN)
+    if not bureau_svc.describe()["configured"]:
+        raise BusinessRuleError(
+            "No credit bureau is configured. Set BUREAU_BACKEND in backend/.env once the "
+            "institution has a bureau contract.")
+    loan = None
+    loan_id = parse_int(request, "loan_id") if request.query_params.get("loan_id") else None
+    if loan_id or request.data.get("loan_id"):
+        loan = Loan.objects.filter(pk=loan_id or request.data.get("loan_id"),
+                                   borrower=borrower).first()
+    row = bureau_svc.enquire(borrower, request.user, loan)
+    return Response(BureauEnquirySerializer(row).data,
+                    status=status.HTTP_201_CREATED if row.status == "ok"
+                    else status.HTTP_502_BAD_GATEWAY)

@@ -54,22 +54,47 @@ def _affordability_points(instalment: Decimal, salary: Decimal, cap: Decimal) ->
     return 0, f"{share}, above the {cap}% limit"
 
 
-def _history_points(borrower) -> tuple[int, str]:
-    """30 points. What the borrower did with the money last time."""
+def _history_points(borrower, weight: int = 30) -> tuple[int, str]:
+    """What the borrower did with the money last time, out of `weight`."""
     previous = list(borrower.loans.filter(
         status__in=[LoanStatus.CLOSED, LoanStatus.WRITTEN_OFF]).only("id", "status"))
+    scale = Decimal(weight) / 30
     if not previous:
-        return 12, "No completed loans yet, so there is no repayment record to go on"
+        return round(12 * scale), "No completed loans yet, so there is no repayment record to go on"
 
     written_off = sum(1 for l in previous if l.status == LoanStatus.WRITTEN_OFF)
     settled = len(previous) - written_off
     if written_off:
         return 0, f"{written_off} previous loan(s) were written off"
     if settled >= 3:
-        return 30, f"{settled} previous loans settled in full"
+        return weight, f"{settled} previous loans settled in full"
     if settled == 2:
-        return 25, "Two previous loans settled in full"
-    return 20, "One previous loan settled in full"
+        return round(25 * scale), "Two previous loans settled in full"
+    return round(20 * scale), "One previous loan settled in full"
+
+
+def _bureau_points(enquiry, weight: int = 15) -> tuple[int, str]:
+    """What the borrower did with everyone else's money, out of `weight`.
+
+    A default on record scores nothing: it is the one fact a bureau exists to
+    tell us. Otherwise arrears elsewhere take most of the points, and the bureau's
+    own score fills in the rest.
+    """
+    label = f"Bureau report of {enquiry.enquired_at:%Y-%m-%d}"
+    if enquiry.defaults:
+        return 0, f"{label}: {enquiry.defaults} default(s) with other lenders"
+    if enquiry.worst_days_in_arrears > 30:
+        return round(weight * 0.2), (f"{label}: {enquiry.worst_days_in_arrears} days in arrears "
+                                     f"with another lender")
+    if enquiry.accounts_in_arrears:
+        return round(weight * 0.5), (f"{label}: {enquiry.accounts_in_arrears} account(s) "
+                                     f"elsewhere in arrears")
+    if enquiry.score is not None and enquiry.score_max:
+        share = Decimal(enquiry.score) / Decimal(enquiry.score_max)
+        points = round(weight * (Decimal("0.6") + Decimal("0.4") * share))
+        return min(points, weight), (f"{label}: score {enquiry.score}/{enquiry.score_max}, "
+                                     f"{enquiry.open_accounts} account(s) elsewhere all current")
+    return round(weight * 0.8), f"{label}: {enquiry.open_accounts} account(s) elsewhere, all current"
 
 
 def _arrears_points(borrower, as_of: date) -> tuple[int, str]:
@@ -125,11 +150,24 @@ def _kyc_points(borrower) -> tuple[int, str]:
 def score_application(borrower, product, principal: Decimal, term: int,
                       instalment: Decimal, as_of: date | None = None) -> dict:
     """Score one proposed loan. Returns the score, the grade and the breakdown."""
+    from .bureau import latest as latest_bureau_report
+
     as_of = as_of or date.today()
     factors = []
 
+    # With a fresh bureau report, the 30 points for repayment history are shared
+    # between this book and everyone else's; without one, this book carries them
+    # all and the card says a bureau was not consulted.
+    report = latest_bureau_report(borrower, as_of)
+    if report:
+        history = [("Repayment history", 15, _history_points(borrower, 15)),
+                   ("Credit bureau", 15, _bureau_points(report, 15))]
+    else:
+        points, reason = _history_points(borrower)
+        history = [("Repayment history", 30, (points, f"{reason} (no bureau report)"))]
+
     for name, weight, (points, reason) in [
-        ("Repayment history", 30, _history_points(borrower)),
+        *history,
         ("Affordability", 25, _affordability_points(
             instalment, borrower.net_salary, product.max_instalment_to_salary_pct)),
         ("Current arrears", 20, _arrears_points(borrower, as_of)),
