@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { get, qs } from '../lib/api.js'
 import { humanise } from '../lib/format.js'
 import { useDebounced } from '../lib/useApi.js'
+import Icon from './Icons.jsx'
 
 /** One box over borrowers and loans. Ctrl+K focuses it. */
 export default function GlobalSearch() {
@@ -63,11 +64,12 @@ export default function GlobalSearch() {
 
   return (
     <div className="global-search" ref={boxRef}>
+      <Icon name="search" size={16} className="search-icon" />
       <input
         ref={inputRef}
         type="search"
         value={term}
-        placeholder="Search borrowers and loans   (Ctrl+K)"
+        placeholder="Search borrowers and loans"
         aria-label="Search borrowers and loans"
         onChange={(e) => {
           setTerm(e.target.value)
@@ -78,6 +80,11 @@ export default function GlobalSearch() {
           if (e.key === 'Enter' && hits.length) go(hits[0].path)
         }}
       />
+      {term ? null : (
+        <kbd className="search-kbd" aria-hidden="true">
+          Ctrl K
+        </kbd>
+      )}
       {open && term.trim().length >= 2 ? (
         <div className="search-results" role="listbox">
           {hits.length === 0 ? (

@@ -3,6 +3,7 @@ import { useState } from 'react'
 
 import { downloadFile } from '../lib/api.js'
 import { humanise } from '../lib/format.js'
+import Icon from './Icons.jsx'
 import { useToast } from './Toast.jsx'
 
 /**
@@ -67,10 +68,20 @@ export function Badge({ value }) {
   return <span className={`badge ${value}`}>{humanise(value)}</span>
 }
 
-export function Kpi({ label, value, sub }) {
+/** A stat tile. `icon` names an icon from Icons.jsx; `tone` (blue, green, amber,
+    red, violet, slate) colours its chip and edge, and should follow the meaning
+    of the number, not decoration: red only when the figure is bad. */
+export function Kpi({ label, value, sub, icon, tone = 'blue' }) {
   return (
-    <div className="kpi">
-      <div className="label">{label}</div>
+    <div className={`kpi tone-${tone}`}>
+      <div className="kpi-top">
+        <div className="label">{label}</div>
+        {icon ? (
+          <span className="kpi-icon">
+            <Icon name={icon} size={18} />
+          </span>
+        ) : null}
+      </div>
       <div className="value">{value}</div>
       <div className="sub">{sub || ''}</div>
     </div>

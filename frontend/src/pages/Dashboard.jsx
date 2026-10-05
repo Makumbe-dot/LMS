@@ -4,7 +4,8 @@ import { Link } from 'react-router-dom'
 import GroupedBars from '../components/GroupedBars.jsx'
 import HBars from '../components/HBars.jsx'
 import { useToast } from '../components/Toast.jsx'
-import { Badge, ErrorBanner, Kpi, Loading, PageHeader } from '../components/ui.jsx'
+import Icon from '../components/Icons.jsx'
+import { Badge, ErrorBanner, Kpi, Loading } from '../components/ui.jsx'
 import { post, qs } from '../lib/api.js'
 import { useAuth } from '../lib/auth.jsx'
 import { money, pct, today } from '../lib/format.js'
@@ -20,8 +21,22 @@ const BUCKET_LABEL = {
   '180+': '180+ days',
 }
 
+function greeting(hour) {
+  if (hour < 12) return 'Good morning'
+  if (hour < 17) return 'Good afternoon'
+  return 'Good evening'
+}
+
+/** Colour a rate by whether it is good news: higher is better unless `lowerIsBetter`. */
+function toneFor(value, good, fair, lowerIsBetter = false) {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return 'slate'
+  if (lowerIsBetter) return n <= good ? 'green' : n <= fair ? 'amber' : 'red'
+  return n >= good ? 'green' : n >= fair ? 'amber' : 'red'
+}
+
 export default function Dashboard() {
-  const { can } = useAuth()
+  const { can, user } = useAuth()
   const { toast, toastError } = useToast()
   const { activeBranches } = useOrg()
   const [asOf, setAsOf] = useState(today())
@@ -57,8 +72,39 @@ export default function Dashboard() {
 
   return (
     <>
-      <PageHeader title="Dashboard" meta={`Portfolio as at ${data.as_of}`}>
-        <label className="check">
+      <section className="hero" aria-labelledby="dash-title">
+        <div>
+          <div className="hero-eyebrow">
+            {new Date(`${data.as_of}T00:00:00`).toLocaleDateString(undefined, {
+              weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+            })}
+          </div>
+          <h2 id="dash-title">
+            {greeting(new Date().getHours())}
+            {user?.full_name ? `, ${user.full_name.split(' ')[0]}` : ''}
+          </h2>
+          <p>
+            {data.active_loans} active loans worth {money(data.portfolio_outstanding)}.{' '}
+            {pct(data.collection_rate_pct)} of what fell due this month has been collected.
+          </p>
+        </div>
+        {can('admin', 'loan_officer') ? (
+          <div className="hero-actions">
+            <Link className="btn primary" to="/loans/new">
+              <Icon name="plus" size={16} /> New loan
+            </Link>
+            <Link className="btn" to="/borrowers/new">
+              <Icon name="user" size={16} /> New borrower
+            </Link>
+            <button type="button" className="btn" onClick={runPenalties} disabled={running}>
+              <Icon name="play" size={14} /> {running ? 'Running…' : 'Run penalties'}
+            </button>
+          </div>
+        ) : null}
+      </section>
+
+      <div className="toolbar">
+        <label className="check" style={{ margin: 0 }}>
           As at&nbsp;
           <input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} />
         </label>
@@ -76,55 +122,54 @@ export default function Dashboard() {
             ))}
           </select>
         ) : null}
-        {can('admin', 'loan_officer') ? (
-          <>
-            <Link className="btn" to="/borrowers/new">
-              New borrower
-            </Link>
-            <Link className="btn primary" to="/loans/new">
-              New loan
-            </Link>
-            <button type="button" className="btn" onClick={runPenalties} disabled={running}>
-              {running ? 'Running…' : 'Run penalties'}
-            </button>
-          </>
-        ) : null}
-      </PageHeader>
+      </div>
 
       <div className="grid cols-4">
         <Kpi
           label="Portfolio outstanding"
+          icon="loans"
           value={money(data.portfolio_outstanding)}
           sub={`Principal ${money(data.principal_outstanding)}`}
         />
         <Kpi
           label="Active loans"
+          icon="list"
+          tone="violet"
           value={data.active_loans}
           sub={`${data.pending_applications} pending applications`}
         />
         <Kpi
           label="PAR > 30 days"
+          icon="alert"
+          tone={toneFor(data.par_30_pct, 5, 10, true)}
           value={pct(data.par_30_pct)}
           sub={money(data.par_30_amount)}
         />
-        <Kpi label="Borrowers" value={data.borrowers} sub="on the register" />
+        <Kpi label="Borrowers" icon="users" tone="slate" value={data.borrowers} sub="on the register" />
         <Kpi
           label="Disbursed this month"
+          icon="arrowUp"
           value={money(data.disbursed_this_month)}
           sub="principal advanced"
         />
         <Kpi
           label="Collected this month"
+          icon="arrowDown"
+          tone="green"
           value={money(data.collected_this_month)}
           sub={`Due ${money(data.due_this_month)}`}
         />
         <Kpi
           label="Collection rate"
+          icon="chart"
+          tone={toneFor(data.collection_rate_pct, 90, 70)}
           value={pct(data.collection_rate_pct)}
           sub="collected / due this month"
         />
         <Kpi
           label="Written off"
+          icon="history"
+          tone="slate"
           value={data.status_counts.written_off ?? 0}
           sub={`${data.status_counts.closed ?? 0} settled in full`}
         />
