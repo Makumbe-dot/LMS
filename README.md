@@ -332,9 +332,8 @@ npm test              # the frontend suite
 npm run test:coverage
 ```
 
-`.github/workflows/ci.yml` runs the same set on push. It is dormant until this repository has a
-remote — it exists so the suite becomes a gate the moment one is added, rather than something
-someone has to remember.
+`.github/workflows/ci.yml` runs the same set on every push and pull request, against SQL Server
+2022 in a service container.
 
 **The backend suite** runs against a real SQL Server database (`LMS_test`, created and dropped
 automatically) rather than SQLite, because three of the behaviours this code works around are the
@@ -590,7 +589,7 @@ sql/
   04_reporting_views_v2.sql     savings, groups, ledger, charge, funding and balance-sheet
                                 views, plus usp_reconcile_ledger and its ten checks
 .github/workflows/
-  ci.yml                        both suites on push; dormant until there is a remote
+  ci.yml                        both suites on every push and pull request
 scripts/
   verify.ps1                    everything that has to pass before a commit
   run_nightly_jobs.ps1          the nightly batch, with a dated log

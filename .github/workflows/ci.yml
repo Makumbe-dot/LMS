@@ -1,8 +1,5 @@
-# Runs on push and pull request once this repository has a remote.
-#
-# There is no remote yet, so this file is dormant: it exists so the test suite
-# becomes a gate the moment one is added, rather than something that has to be
-# remembered. `scripts/verify.ps1` is the same set of checks for local use.
+# Runs on push and pull request. `scripts/verify.ps1` is the same set of checks
+# for local use.
 #
 # The backend tests need SQL Server. The service container below is the Linux
 # image of SQL Server 2022, which is close enough for the ORM — the three
@@ -49,8 +46,8 @@ jobs:
       - name: Install the ODBC driver
         run: |
           curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
-            | sudo gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg
-          curl -fsSL https://packages.microsoft.com/config/ubuntu/22.04/prod.list \
+            | sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/microsoft-prod.gpg
+          curl -fsSL "https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/prod.list" \
             | sudo tee /etc/apt/sources.list.d/mssql-release.list
           sudo apt-get update
           sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18 unixodbc-dev
@@ -62,7 +59,9 @@ jobs:
         env:
           SA_PASSWORD: ${{ secrets.CI_SA_PASSWORD || 'Str0ng!Passw0rd' }}
         run: |
-          /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$SA_PASSWORD" \
+          # sqlcmd ships in the SQL Server image, not on the runner.
+          docker exec ${{ job.services.sqlserver.id }} \
+            /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$SA_PASSWORD" \
             -Q "CREATE DATABASE LMS COLLATE SQL_Latin1_General_CP1_CI_AS;"
 
       - name: Django checks
@@ -76,8 +75,11 @@ jobs:
           DB_TRUSTED_CONNECTION: '0'
           DB_TRUST_SERVER_CERT: '1'
           DB_DRIVER: ODBC Driver 18 for SQL Server
-          SECRET_KEY: ci-only-not-a-secret
+          # settings.py refuses a key under 32 characters when DEBUG is off.
+          SECRET_KEY: ci-only-not-a-secret-padded-past-thirty-two-characters
           DEBUG: '0'
+          # The test client speaks plain HTTP; the production redirect would 301 it.
+          SECURE_SSL_REDIRECT: '0'
         run: python manage.py check
 
       # A model change with no migration breaks nothing locally — the test
