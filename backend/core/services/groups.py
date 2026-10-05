@@ -22,6 +22,7 @@ from ..models import (
 )
 from . import arrears as arrears_svc
 from .amortisation import q
+from .fx import to_base
 from .loans import next_number
 
 ZERO = Decimal("0")
@@ -104,9 +105,10 @@ def standing(group: BorrowerGroup, as_of: date | None = None) -> dict:
     worst_days = 0
     behind = []
     for loan in loans:
-        amount = q(Decimal(loan.arrears_amount or 0))
+        # In the organisation's currency, at the loan's booked rate.
+        amount = to_base(loan.arrears_amount or 0, loan.fx_rate)
         days = arrears_svc.days_from(loan.oldest_arrears_due, as_of)
-        outstanding += loan.total_outstanding
+        outstanding += to_base(loan.total_outstanding, loan.fx_rate)
         arrears_amount += amount
         if days > worst_days:
             worst_days = days

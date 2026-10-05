@@ -27,7 +27,7 @@ from ..models import (
     TxnType,
     User,
 )
-from . import charges, periods
+from . import charges, fx, periods, workdays
 from .amortisation import (
     MONTHLY,
     add_months,
@@ -197,7 +197,7 @@ def quote(product: LoanProduct, principal: Decimal, term: int,
     first_due = default_first_due(disb, borrower.payday if borrower else None, frequency,
                                   meeting_day_of(borrower) if frequency != MONTHLY else None)
     rows = build_schedule(principal, product.interest_rate_pct, term, first_due,
-                          product.rate_method, frequency)
+                          product.rate_method, frequency, workdays.load())
     admin, ins = _fees(product, principal)
     catalogue = charges.quote_for(product, principal)
     other = q(sum((row["amount"] for row in catalogue), ZERO))
@@ -205,13 +205,19 @@ def quote(product: LoanProduct, principal: Decimal, term: int,
     fees = q(admin + ins + other)
     # Salaries are monthly, so a weekly instalment is measured as what it comes to
     # over a month. Comparing the raw weekly figure would pass a loan that takes
-    # four times the limit.
+    # four times the limit. Salaries are also in the organisation's currency, so a
+    # foreign-currency instalment is measured at today's rate.
+    currency = fx.normalise(product.currency) or fx.base_currency()
+    rate = fx.rate_on(currency, disb)
     per_month = monthly_equivalent(rows[0].instalment, frequency)
+    per_month_base = fx.to_base(per_month, rate)
     aff_pct = affordable = None
     if borrower and borrower.net_salary and borrower.net_salary > 0:
-        aff_pct = q(per_month / borrower.net_salary * 100)
+        aff_pct = q(per_month_base / borrower.net_salary * 100)
         affordable = aff_pct <= product.max_instalment_to_salary_pct
     return {
+        "currency": currency,
+        "fx_rate": rate,
         "principal": q(principal),
         "term_months": term,
         "repayment_frequency": frequency,
@@ -234,7 +240,7 @@ def quote(product: LoanProduct, principal: Decimal, term: int,
         "affordability_pct": aff_pct,
         "affordable": affordable,
         "schedule": [vars(r) for r in rows],
-        "scorecard": (score_application(borrower, product, principal, term, per_month)
+        "scorecard": (score_application(borrower, product, principal, term, per_month_base)
                       if borrower else None),
     }
 
@@ -311,7 +317,7 @@ def apply(borrower: Borrower, product: LoanProduct, principal: Decimal, term: in
         branch_id=borrower.branch_id or getattr(officer, "branch_id", None),
         principal=q(principal), interest_rate_pct=product.interest_rate_pct,
         rate_method=product.rate_method, repayment_frequency=product.repayment_frequency,
-        term_months=term,
+        term_months=term, currency=qt["currency"], fx_rate=qt["fx_rate"],
         purpose=purpose, admin_fee=qt["admin_fee"], insurance_fee=qt["insurance_fee"],
         other_charges=qt["other_charges"],
         instalment_amount=qt["instalment_amount"], total_interest=qt["total_interest"],
@@ -333,10 +339,14 @@ def approve(loan: Loan, user: User) -> Loan:
     if user.id == loan.officer_id and user.role != Role.ADMIN:
         raise BusinessRuleError("The originating officer cannot approve their own loan")
     limit = OrganisationSetting.load().officer_approval_limit
-    if user.role != Role.ADMIN and loan.principal > limit:
+    # The limit is in the organisation's currency; a foreign loan is measured at
+    # today's rate.
+    principal_base = fx.to_base(loan.principal, fx.rate_on(loan.currency))
+    if user.role != Role.ADMIN and principal_base > limit:
         raise BusinessRuleError(
-            f"{loan.principal} is above the {limit} a loan officer may approve; "
-            f"this one needs an administrator")
+            f"{loan.principal} {loan.currency or fx.base_currency()} "
+            f"({principal_base} {fx.base_currency()}) is above the {limit} a loan officer "
+            f"may approve; this one needs an administrator")
     loan.status = LoanStatus.APPROVED
     loan.approved_at = datetime.now(timezone.utc)
     loan.approved_by = user
@@ -367,10 +377,14 @@ def disburse(loan: Loan, user: User, disbursement_date: date | None,
     if first_due <= disb:
         raise BusinessRuleError("First instalment date must be after the disbursement date")
     rows = build_schedule(loan.principal, loan.interest_rate_pct, loan.term_months, first_due,
-                          loan.rate_method, loan.repayment_frequency)
+                          loan.rate_method, loan.repayment_frequency, workdays.load())
     _create_schedule(loan, rows)
 
     loan.status = LoanStatus.ACTIVE
+    # The rate the ledger carries this loan at, until the next revaluation: the
+    # spot rate on the day the money went out. Set before the Transaction below,
+    # whose posting reads it.
+    loan.fx_rate = fx.rate_on(loan.currency, disb)
     loan.disbursement_date = disb
     loan.first_instalment_date = first_due
     loan.maturity_date = rows[-1].due_date
@@ -385,10 +399,15 @@ def disburse(loan: Loan, user: User, disbursement_date: date | None,
     loan.penalties_outstanding = ZERO
     loan.charges_outstanding = ZERO
     loan.total_paid = ZERO
+    # Under the effective interest method the fees are deferred, not income today.
+    from .eir import is_effective
+
+    loan.fees_deferred = fees if is_effective() else ZERO
     loan.save(update_fields=[
-        "status", "disbursement_date", "first_instalment_date", "maturity_date",
+        "status", "fx_rate", "disbursement_date", "first_instalment_date", "maturity_date",
         "instalment_amount", "total_interest", "apr_pct", "principal_outstanding",
         "interest_outstanding", "penalties_outstanding", "charges_outstanding", "total_paid",
+        "fees_deferred",
     ])
 
     db_txn = Transaction.objects.create(
@@ -545,7 +564,10 @@ def write_off(loan: Loan, user: User, narration: str) -> Loan:
     )
     loan.status = LoanStatus.WRITTEN_OFF
     loan.closed_at = datetime.now(timezone.utc)
-    loan.save(update_fields=["status", "closed_at"])
+    # The write-off entry took the accrued interest and the deferred fees with it.
+    loan.interest_accrued = ZERO
+    loan.fees_deferred = ZERO
+    loan.save(update_fields=["status", "closed_at", "interest_accrued", "fees_deferred"])
 
     # The month that carries the write-off expense carries the offsetting release
     # of the provision held against this loan.
@@ -646,6 +668,11 @@ def reschedule(loan: Loan, user: User, new_term: int, new_rate: Decimal | None,
         raise BusinessRuleError("Only active loans can be rescheduled")
     refresh_balances(loan)
     today = date.today()
+    # The old instrument is derecognised: whatever fees were still deferred are
+    # income now, and the new schedule accrues from a clean slate.
+    from .eir import release_deferred_fees
+
+    release_deferred_fees(loan, today, user, f"{loan.loan_no} rescheduled")
     overdue_interest = q(sum(
         (i.interest_due - i.interest_paid for i in sched(loan) if i.due_date < today), ZERO))
     # Snapshot what is being rolled up, so the capitalisation can be posted. The
@@ -663,7 +690,7 @@ def reschedule(loan: Loan, user: User, new_term: int, new_rate: Decimal | None,
 
     loan.instalments.all().delete()
     rows = build_schedule(new_principal, rate, new_term, first, loan.rate_method,
-                          loan.repayment_frequency)
+                          loan.repayment_frequency, workdays.load())
     _create_schedule(loan, rows)
 
     loan.principal = new_principal
@@ -681,11 +708,12 @@ def reschedule(loan: Loan, user: User, new_term: int, new_rate: Decimal | None,
     loan.penalties_outstanding = ZERO
     loan.charges_outstanding = ZERO
     loan.total_paid = ZERO
+    loan.interest_accrued = ZERO
     loan.save(update_fields=[
         "principal", "interest_rate_pct", "term_months", "first_instalment_date",
         "maturity_date", "instalment_amount", "total_interest", "apr_pct",
         "principal_outstanding", "interest_outstanding", "penalties_outstanding",
-        "charges_outstanding", "total_paid",
+        "charges_outstanding", "total_paid", "interest_accrued",
     ])
     # The receivable grows by exactly what the penalty, charge and interest legs
     # shed. Posting this is what keeps 1100, 1300 and 1400 tied to the loan book

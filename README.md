@@ -31,6 +31,16 @@ one falls a period after disbursement, moved to the group's meeting day when the
 group. Affordability is always measured on what the instalments come to over a month, because
 salaries are monthly. A loan keeps the frequency it was sold with.
 
+**Holiday calendar** — an administrator keeps a list of public holidays (a single date, or one that
+falls on the same day every year) and ticks the weekdays the offices are closed. No instalment
+falls due on a closed day: it moves to the next working day, for the same amount, since interest is
+charged per period, not per day. Only that one instalment moves. The dates after it still count
+from the first due date as agreed, so a holiday never drags the rest of the schedule along with it.
+Adding a holiday, or closing another weekday, also moves the unpaid instalments of running loans
+that now fall on a closed day, so a holiday declared at short notice reaches the loans already on
+the book. An instalment already due never moves, because that would rewrite its arrears history.
+Removing a holiday moves nothing back. The agreement says that a closed day moves the instalment.
+
 **Loan products** — **reducing-balance or flat-rate** interest, amount and term limits, upfront
 admin and credit-life fees (deducted at disbursement), daily penalty rate, grace days, and a
 maximum instalment-to-salary ratio, plus a **charges catalogue** of additional fees defined once
@@ -125,6 +135,35 @@ so a journal can never open a reconciliation break. Paying out more than the ban
 a closed month is refused, and a posted journal is reversed rather than deleted. Rebuild re-posts
 journals, so a journal wipe does not quietly drop every salary from the books.
 
+**Interest recognition, as a setting** — by default interest is income **when collected** and
+the upfront fees are income on the day (see *Ledger recognition*), which is what a small lender's
+management accounts usually show. Statements audited under IFRS 9 expect the **effective interest
+method** instead, and the Settings page offers it: the fees are deferred at disbursement
+(1150), and a month-end accrual (the General ledger page, or `manage.py accrue_interest`)
+recognises income at the effective rate for every instalment period that has ended, the
+contractual interest to a receivable (1200) and the rest unwinding the fees, so over the life of
+the loan the income is exactly the interest plus the fees at a constant yield. A repayment settles
+the receivable; one that arrives ahead of the accrual is income when it arrives, and the accrual
+recognises only what is left. Closure, early settlement and a reschedule release the fees still
+deferred; a write-off takes them against the loss. Two more sub-ledger identities (1200 and 1150)
+join the reconciliation, and the period-close checks say when a month has not been accrued. The
+basis **cannot change while loans are running**: half a book on each would reconcile to nothing,
+so the change is made on an empty active book, or at a cut-over agreed with the auditor.
+
+**Multi-currency** — the ledger, savings, funding and the tills are kept in the organisation's
+currency; a **product may lend in another**, and a loan sold under it is kept in that currency
+instalment by instalment. A **rate table** (base units per one unit of the currency, the latest
+rate on or before a date applies) converts every posting: the receivables are carried at the
+loan's **booked rate** (the spot rate on the day it was disbursed) as the change in their
+base-currency value, so the ledger equals outstanding-times-rate to the cent; cash and income go
+in at the day's spot rate; whatever lies between is a **realised exchange difference** on 4800. A
+**month-end revaluation** (the Currencies page, or `manage.py revalue_fx`) restates every open
+foreign loan at the closing rate, posts the unrealised difference, and moves the booked rate on;
+the period-close checks say when a loan is still at an earlier rate. Dashboards, PAR, provisions,
+exposure and the registers add foreign loans in at their booked rates; a loan's own pages and
+statement show its own currency. Affordability and the officer approval limit measure a foreign
+instalment or principal at today's rate.
+
 **Bank reconciliation** — a bank or mobile-money statement, exported as CSV (one signed amount
 column or money-in / money-out columns, ISO or day-first dates), is matched line by line against
 the ledger. Each line pairs with the one journal entry that moved exactly the same amount through
@@ -159,6 +198,15 @@ Reopening needs a reason and goes in the audit trail with the numbers it superse
 **Credit assessment** — a transparent, points-based **scorecard** at application (repayment
 history, affordability, current arrears, employment, KYC), with the reason for every factor, plus
 **approval limits** so a loan above a set amount needs an administrator.
+
+**Credit bureau check** — an officer asks the bureau about a borrower from their file, and the
+answer (bureau score, accounts elsewhere, arrears and defaults with other lenders, what they owe
+elsewhere) goes on a dated register. While a report is fresh (`BUREAU_VALID_DAYS`, 90 by default)
+the scorecard splits its thirty history points between this book and the bureau's; a default on
+record scores nothing. The bureau itself is configuration: `BUREAU_BACKEND=none` (the default,
+no button is shown), `demo` (a repeatable made-up report for rehearsals) or `http` (any bureau
+with a JSON API, with the paths to each figure set in `.env`). Only the figures the paths name are
+stored, never the whole response, because a bureau report carries other lenders' account numbers.
 
 **Security register** — collateral pledged against a loan: type, description, valuation, reference,
 and release or realisation.
@@ -322,9 +370,8 @@ npm test              # the frontend suite
 npm run test:coverage
 ```
 
-`.github/workflows/ci.yml` runs the same set on push. It is dormant until this repository has a
-remote — it exists so the suite becomes a gate the moment one is added, rather than something
-someone has to remember.
+`.github/workflows/ci.yml` runs the same set on every push and pull request, against SQL Server
+2022 in a service container.
 
 **The backend suite** runs against a real SQL Server database (`LMS_test`, created and dropped
 automatically) rather than SQLite, because three of the behaviours this code works around are the
@@ -341,7 +388,7 @@ case-insensitive default collation. It covers:
 - the message outbox — generation, idempotency, receipts, sending and cancelling;
 - IFRS 9 staging, the provision run, its reversal and the repost path;
 - capital, funder facilities, borrowing interest and the cash guard;
-- period close — the guard, the nine pre-close checks, reopening, and the commands;
+- period close — the guard, the pre-close checks, reopening, and the commands;
 - manual journals — four eyes, control accounts refused, the cash guard, the closed-month guard,
   reversal, withdrawal, and that Rebuild re-posts them;
 - **the reconciliation identities**, asserted as identities rather than as figures, so they keep
@@ -350,9 +397,21 @@ case-insensitive default collation. It covers:
   across a book put through repayments, penalties, charges, waivers, reversals and a reschedule;
 - **query counts** — each report is run against a book, then against twice the book, and the count
   must not change. A regression to a query per loan fails the suite rather than merely getting slow;
+- the holiday calendar — due dates stepping over closed days, and running loans moved when a
+  holiday is declared;
+- the credit bureau — the register, the three backends (the http one against a fake bureau),
+  what is kept from a report, and how the scorecard reads it;
+- multi-currency — a foreign loan reconciling to the cent through disbursement, repayment at a new
+  rate, reversal, nine rounded repayments, the revaluation run and a rebuild;
+- the effective interest method — the schedule's totals, the deferral at disbursement, the accrual,
+  repayments before and after it, settlement, write-off, reschedule, rebuild, and that the basis
+  cannot change on a running book;
 - sessions — renewal, rotation, sign-out, and revocation when an account is disabled or a role
   changes;
 - performance and payroll reports;
+- the holiday calendar — weekends and holidays moving a due date, a run of closed days, annual
+  holidays, the amounts unchanged and the rest of the schedule unmoved, a late-declared holiday
+  reaching unpaid future instalments but not past ones, and the maturity date following;
 - repayment frequencies — weekly and fortnightly schedules, the monthly rate scaled per period, the
   monthly schedule unchanged row for row, the group meeting day, affordability on a month of weekly
   instalments;
@@ -412,6 +471,8 @@ cd backend
 ..\.venv\Scripts\python.exe manage.py run_savings_interest [--dormant-after 6] [--skip-closed]
 ..\.venv\Scripts\python.exe manage.py accrue_borrowing_interest [--as-of 2026-09-30] [--skip-closed]
 ..\.venv\Scripts\python.exe manage.py run_provisions [--as-of 2026-09-30] [--dry-run] [--force]
+..\.venv\Scripts\python.exe manage.py revalue_fx [--as-of 2026-09-30] [--dry-run]
+..\.venv\Scripts\python.exe manage.py accrue_interest [--as-of 2026-09-30]
 ```
 
 The three monthly steps — savings interest, borrowing interest and the provision — run on the 1st
@@ -507,7 +568,7 @@ backend/                        Django project
     settings.py                 env-driven config, SQL Server connection, DRF + JWT
     urls.py                     /api, /admin, and the React SPA fallback
   core/
-    models.py                   branches, settings, users, borrowers, guarantors, documents,
+    models.py                   branches, settings, holidays, users, borrowers, guarantors, documents,
                                 products, loans, instalments, transactions, notes,
                                 notifications, manual journals, tills, bank statements,
                                 audit_log, sequences
@@ -519,15 +580,20 @@ backend/                        Django project
     services/
       amortisation.py           reducing-balance and flat-rate schedules, monthly, fortnightly
                                 or weekly (Decimal, cent-exact), and the APR
+      workdays.py               the holiday calendar: closed weekdays, public holidays, and
+                                moving a due date to the next working day
       loans.py                  quote, apply, approve, reject, disburse, balances, arrears,
                                 early settlement, top-up, reschedule, write-off, recoveries
       repayments.py             waterfall allocation, reversals, waivers
       penalties.py              daily penalty accrual
       charges.py                the charges catalogue, frozen onto a loan when raised
       scoring.py                the credit scorecard
+      bureau.py                 credit bureau enquiries: none / demo / http backends
       groups.py                 joint-liability groups and the borrowing rule
       savings.py                deposit accounts, interest, fees, dormancy
       ledger.py                 double-entry posting rules, trial balance, income statement
+      fx.py                     currencies, the rate table, conversion rules, revaluation runs
+      eir.py                    the effective interest method: the schedule and the accrual run
       imports.py                bulk repayment CSV: parse, validate, commit
       notifications.py          reminder and arrears message generation, outbox
       provisioning.py           booking the IFRS 9 expected credit loss movement
@@ -547,27 +613,31 @@ backend/                        Django project
     exports.py                  Excel workbooks: header styling, filters, totals that follow them
     documents.py                statements as Excel and as PDF (reportlab)
     templates/core/             the printable loan agreement
-    views/                      auth, borrowers, products, charges, loans, groups, savings,
-                                ledger, journals, funding, provisions, periods, reports,
-                                tills, bankrec, org
+    views/                      auth, borrowers (and the bureau), products, charges, loans,
+                                groups, savings, ledger, journals, funding, currencies,
+                                provisions, periods, reports, tills, bankrec, org
     authentication.py           JWT auth that honours revocation
     management/commands/        seed, run_penalties, run_savings_interest, run_provisions,
-                                accrue_borrowing_interest, send_reminders, close_period,
-                                reopen_period, prune_tokens, reset_mfa
+                                accrue_borrowing_interest, accrue_interest, revalue_fx,
+                                send_reminders, close_period, reopen_period, prune_tokens,
+                                reset_mfa
     tests/                      the test suite
 frontend/                       React + Vite single-page app
   src/
     lib/        api.js (fetch + JWT), auth.jsx, org.jsx, periods.jsx, theme.jsx, format.js,
                 useApi.js
-    components/ Layout, GlobalSearch, DataTable, Modal, Toast, GroupedBars, HBars,
+    components/ Layout (the sidebar in sections, the top bar, the rail and the drawer),
+                Icons, GlobalSearch, DataTable, Modal, Toast, GroupedBars, HBars, Donut,
                 LoanTable, ui.jsx
-    pages/      Login, Dashboard, Borrowers, Groups, Loans, Savings, Collections, Till, Arrears,
-                Payroll, BulkImport, LoanBookImport, Notifications, Transactions, Ledger,
-                Journals, BankRec, Funding, Performance, Provisioning, Periods, Products,
-                Charges, Users, Settings, Account, Audit
+    pages/      Login (the slideshow), Dashboard, Borrowers, Groups, Loans, Savings,
+                Collections, Till, Arrears, Payroll, BulkImport, LoanBookImport,
+                Notifications, Transactions, Ledger, Journals, BankRec, Funding, Currencies,
+                Performance, Provisioning, Periods, Products, Charges, Users, Settings,
+                Account, Audit
     test/       setup.js (jsdom, storage, a loud default fetch) and harness.jsx
                 (renderPage with the providers stubbed, stubApi by path fragment)
-    styles.css  design tokens, light and dark themes
+    styles.css  design tokens, light and dark themes, the shell, the sign-in scenes
+  public/login/ drop slide-1.jpg .. slide-4.jpg here for photographs on the sign-in page
 sql/
   01_create_database.sql        create the LMS database (run first)
   02_app_login.sql              optional SQL login and a read-only analyst login
@@ -575,7 +645,7 @@ sql/
   04_reporting_views_v2.sql     savings, groups, ledger, charge, funding and balance-sheet
                                 views, plus usp_reconcile_ledger and its ten checks
 .github/workflows/
-  ci.yml                        both suites on push; dormant until there is a remote
+  ci.yml                        both suites on every push and pull request
 scripts/
   verify.ps1                    everything that has to pass before a commit
   run_nightly_jobs.ps1          the nightly batch, with a dated log
@@ -620,8 +690,9 @@ is debited by the settlement and credited by the advance, and nets to the cash a
 annual rate, credited once per calendar month. The monthly account fee is taken at the same time
 and never takes a balance below zero.
 
-*Ledger recognition*: **interest is recognised when it is collected**, not as it accrues, which
-keeps the ledger in step with a book whose interest is recognised instalment by instalment.
+*Ledger recognition*: by default **interest is recognised when it is collected**, not as it
+accrues, which keeps the ledger in step with a book whose interest is recognised instalment by
+instalment; the effective interest method (a setting, see *What it does*) accrues it instead.
 Penalties are recognised when they are charged, because they are raised as a receivable on the
 instalment. So a write-off expenses principal and penalties but not unearned interest, and the
 early-settlement interest rebate touches no ledger account at all.
@@ -660,15 +731,17 @@ claims that can genuinely break — nine accounts against the sub-ledgers they a
 
 | Account | Equals |
 |---|---|
-| 1100 Loans receivable | principal outstanding on active loans |
-| 1300 Penalties receivable | penalties outstanding on active loans |
-| 1400 Charges receivable | charges outstanding on active loans |
+| 1100 Loans receivable | principal outstanding on active loans, each at its booked rate |
+| 1300 Penalties receivable | penalties outstanding on active loans, each at its booked rate |
+| 1400 Charges receivable | charges outstanding on active loans, each at its booked rate |
 | 1900 Provision for credit losses | provision held across every loan |
 | 2000 Client funds payable | savings balances |
 | 2100 Funder borrowings | principal outstanding on funding facilities |
 | 2110 Accrued interest on borrowings | interest accrued and unpaid on facilities |
 | 3100 Share capital | capital injected less capital returned |
 | 3200 Distributions | dividends paid |
+| 1200 Interest receivable | interest accrued and not collected (effective interest method only) |
+| 1150 Deferred loan fees | fees deducted and not yet taken to income (effective interest method only) |
 
 A migration, a hand-edit in SSMS, or a service that moves a balance without posting all show up
 there. `manage.py seed` prints the result at the end of every run, and the same reconciliation is
@@ -912,14 +985,12 @@ restart at 1. Nothing depends on the numbering.
 
 What is deliberately not here, and why:
 
-- **Interest recognised by the effective interest method.** Interest is recognised when collected
-  and upfront fees go straight to income (see *Ledger recognition*). That is the usual treatment for
-  management accounts in a small lender; statements audited under IFRS 9 would expect interest
-  accrued at the effective rate with integral fees spread over the loan. Changing it rewrites the
-  ledger rule the reconciliation tests protect, so it is an auditor's decision first.
-- **A credit bureau check.** The scorecard reads only this book. A bureau lookup needs a bureau
-  contract and its API.
-- **Multi-currency.** One currency per organisation. It needs a currency on product and loan, a
-  rate table, and a revaluation run.
-- **A public-holiday calendar.** Instalments can fall due on a closed day; the product's grace days
-  already keep that from costing anyone a penalty.
+- **A bureau or mobile-money contract.** The credit bureau check and the message gateway are
+  configuration (`BUREAU_BACKEND`, `MESSAGE_SMS_BACKEND`): the code speaks to any JSON API, but a
+  real bureau or aggregator needs a contract, credentials and the paths to its fields in `.env`.
+- **Savings, funding and tills in a foreign currency.** Loans may be in another currency; the
+  deposit book, the facilities and the drawers stay in the organisation's. A foreign-currency
+  repayment taken in cash is counted in the drawer at the day's rate.
+- **Changing the interest method on a running book.** The effective interest method is chosen on
+  an empty active book. Moving a book already carrying loans across needs a cut-over agreed with
+  the auditor, and a migration written for that cut-over.

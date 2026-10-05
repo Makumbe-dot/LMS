@@ -29,7 +29,7 @@ export default function Ledger() {
   const navigate = useNavigate()
   const { can } = useAuth()
   const { toast, toastError } = useToast()
-  const { activeBranches } = useOrg()
+  const { activeBranches, settings } = useOrg()
 
   const [tab, setTab] = useState('trial')
   const [start, setStart] = useState(startOfYear())
@@ -70,6 +70,21 @@ export default function Ledger() {
     accounts: (d) => Array.isArray(d),
   }
   const ready = shapes[tab](data)
+
+  async function accrueInterest() {
+    setBusy(true)
+    try {
+      const result = await post(`/api/ledger/accrue-interest${qs({ as_of: end })}`)
+      toast(
+        `Interest accrued on ${result.loans_accrued} loan(s) to ${result.as_of}: ${money(result.interest_income)}`,
+      )
+      reload()
+    } catch (err) {
+      toastError(err)
+    } finally {
+      setBusy(false)
+    }
+  }
 
   async function rebuild() {
     setBusy(true)
@@ -125,6 +140,17 @@ export default function Ledger() {
         </button>
         {tab !== 'accounts' ? (
           <ExportButtons path={paths[tab]} name={tab} />
+        ) : null}
+        {can('admin') && settings?.interest_method === 'effective' ? (
+          <button
+            type="button"
+            className="btn"
+            disabled={busy}
+            onClick={accrueInterest}
+            title="Recognise interest at the effective rate for every instalment period ended by the date above"
+          >
+            {busy ? 'Working…' : 'Accrue interest'}
+          </button>
         ) : null}
         {can('admin') ? (
           <button

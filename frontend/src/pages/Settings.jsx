@@ -4,8 +4,8 @@ import DataTable from '../components/DataTable.jsx'
 import { FormModal } from '../components/Modal.jsx'
 import { useToast } from '../components/Toast.jsx'
 import { Check, ErrorBanner, Field, Loading, PageHeader } from '../components/ui.jsx'
-import { patch, post } from '../lib/api.js'
-import { getCurrency } from '../lib/format.js'
+import { del, patch, post } from '../lib/api.js'
+import { dateOnly, getCurrency } from '../lib/format.js'
 import { useOrg } from '../lib/org.jsx'
 import { useApi } from '../lib/useApi.js'
 
@@ -14,18 +14,28 @@ const FIELDS = [
   'ecl_stage1_pct', 'ecl_stage2_pct', 'ecl_stage3_pct',
   'ecl_stage2_days', 'ecl_stage3_days', 'reminder_days_before',
   'officer_approval_limit', 'min_credit_score', 'group_arrears_block_days',
-  'require_open_till',
+  'require_open_till', 'closed_weekdays', 'interest_method',
 ]
+
+const WEEKDAYS = [
+  ['mon', 'Monday'], ['tue', 'Tuesday'], ['wed', 'Wednesday'], ['thu', 'Thursday'],
+  ['fri', 'Friday'], ['sat', 'Saturday'], ['sun', 'Sunday'],
+]
+
+const moved = (n) =>
+  n ? ` ${n} upcoming instalment${n === 1 ? '' : 's'} moved to the next working day.` : ''
 
 export default function Settings() {
   const { toast, toastError } = useToast()
   const org = useOrg()
   const { data, error, loading, reload } = useApi('/api/settings')
   const branches = useApi('/api/branches?include_inactive=true')
+  const holidays = useApi('/api/holidays')
 
   const [values, setValues] = useState(null)
   const [busy, setBusy] = useState(false)
   const [editingBranch, setEditingBranch] = useState(null)
+  const [addingHoliday, setAddingHoliday] = useState(false)
 
   useEffect(() => {
     if (data) setValues(Object.fromEntries(FIELDS.map((f) => [f, data[f] ?? ''])))
@@ -37,8 +47,8 @@ export default function Settings() {
     event.preventDefault()
     setBusy(true)
     try {
-      await patch('/api/settings', values)
-      toast('Settings saved')
+      const saved = await patch('/api/settings', values)
+      toast(`Settings saved.${moved(saved?.instalments_moved)}`)
       reload()
       org.reload()
     } catch (err) {
@@ -68,6 +78,43 @@ export default function Settings() {
     }
   }
 
+  async function addHoliday(payload) {
+    setBusy(true)
+    try {
+      const created = await post('/api/holidays', payload)
+      setAddingHoliday(false)
+      holidays.reload()
+      toast(`${created.name} added.${moved(created.instalments_moved)}`)
+    } catch (err) {
+      toastError(err)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function removeHoliday(holiday) {
+    const question = `Take ${holiday.name} off the calendar? Instalments already moved stay put.`
+    if (!window.confirm(question)) return
+    try {
+      await del(`/api/holidays/${holiday.id}`)
+      holidays.reload()
+      toast('Holiday removed')
+    } catch (err) {
+      toastError(err)
+    }
+  }
+
+  const closed = new Set(String(values?.closed_weekdays || '').split(',').filter(Boolean))
+  const toggleDay = (day) => (e) => {
+    const next = new Set(closed)
+    if (e.target.checked) next.add(day)
+    else next.delete(day)
+    setValues((v) => ({
+      ...v,
+      closed_weekdays: WEEKDAYS.map(([d]) => d).filter((d) => next.has(d)).join(','),
+    }))
+  }
+
   if (loading && !values) return <Loading what="Loading settings" />
   if (error) return <ErrorBanner error={error} onRetry={reload} />
   if (!values) return null
@@ -91,7 +138,7 @@ export default function Settings() {
             onChange={set('currency')}
             required
             maxLength={8}
-            hint="Shown against every amount in the app"
+            hint="The organisation's own currency: the ledger, savings and tills are kept in it. Loans may be in others; see Currencies."
           />
           <Field label="Phone" value={values.phone || ''} onChange={set('phone')} />
           <Field label="Email" value={values.email || ''} onChange={set('email')} />
@@ -124,6 +171,20 @@ export default function Settings() {
             onChange={set('min_credit_score')}
             hint="Advisory; applications below this are flagged, never blocked"
           />
+        </div>
+
+        <h3 style={{ marginTop: 20 }}>Interest recognition</h3>
+        <div className="grid cols-3">
+          <Field
+            as="select"
+            label="Interest is recognised"
+            value={values.interest_method || 'collected'}
+            onChange={set('interest_method')}
+            hint="Cannot change while loans are running. Under the effective method the fees are deferred and a month-end accrual on the General ledger page recognises income at the effective rate."
+          >
+            <option value="collected">When collected (fees to income on the day)</option>
+            <option value="effective">Effective interest method (IFRS 9)</option>
+          </Field>
         </div>
 
         <h3 style={{ marginTop: 20 }}>Impairment (IFRS 9)</h3>
@@ -206,6 +267,23 @@ export default function Settings() {
           postings are never affected.
         </p>
 
+        <h3>Working days</h3>
+        <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>
+          The offices are closed every week on the days ticked here. An instalment never falls due
+          on a closed day or a public holiday; it moves to the next working day, for the same
+          amount. Saving a change moves the upcoming instalments of running loans too.
+        </p>
+        <div className="row" style={{ flexWrap: 'wrap', gap: 12 }}>
+          {WEEKDAYS.map(([day, label]) => (
+            <Check
+              key={day}
+              label={`Closed ${label}`}
+              checked={closed.has(day)}
+              onChange={toggleDay(day)}
+            />
+          ))}
+        </div>
+
         <div className="row">
           <button className="btn primary" type="submit" disabled={busy}>
             {busy ? 'Saving…' : 'Save settings'}
@@ -243,6 +321,58 @@ export default function Settings() {
           ]}
         />
       </div>
+
+      <div className="card">
+        <div className="row between" style={{ marginBottom: 12 }}>
+          <h3 style={{ margin: 0 }}>Public holidays</h3>
+          <button type="button" className="btn small" onClick={() => setAddingHoliday(true)}>
+            Add holiday
+          </button>
+        </div>
+        <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>
+          Adding a holiday moves the unpaid instalments falling due on it to the next working day.
+          A holiday already past moves nothing.
+        </p>
+        <DataTable
+          caption="Public holidays"
+          rows={holidays.data || []}
+          empty="No holidays on the calendar"
+          columns={[
+            { key: 'date', header: 'Date', render: (r) => dateOnly(r.date) },
+            { key: 'name', header: 'Holiday', render: (r) => r.name },
+            {
+              key: 'recurs',
+              header: 'Every year',
+              render: (r) => (r.recurs_annually ? 'Yes' : 'No'),
+            },
+            {
+              key: 'remove',
+              header: '',
+              render: (r) => (
+                <button type="button" className="btn small" onClick={() => removeHoliday(r)}>
+                  Remove
+                </button>
+              ),
+            },
+          ]}
+        />
+      </div>
+
+      {addingHoliday ? (
+        <FormModal
+          title="Add a public holiday"
+          submitLabel="Add holiday"
+          busy={busy}
+          onClose={() => setAddingHoliday(false)}
+          onSubmit={addHoliday}
+        >
+          <div className="grid cols-2">
+            <Field label="Date" name="date" type="date" required />
+            <Field label="Name" name="name" required maxLength={120} />
+          </div>
+          <Check label="Falls on this day every year" name="recurs_annually" />
+        </FormModal>
+      ) : null}
 
       {editingBranch ? (
         <FormModal

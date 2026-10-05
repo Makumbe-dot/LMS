@@ -1,4 +1,6 @@
-"""Branches, institution settings and cross-entity search."""
+"""Branches, institution settings, the holiday calendar and cross-entity search."""
+from datetime import date
+
 from django.db import transaction
 from django.db.models import Q
 from rest_framework import status
@@ -7,9 +9,10 @@ from rest_framework.response import Response
 
 from ..audit import audit
 from ..exceptions import BusinessRuleError, NotFound
-from ..models import Borrower, Branch, Loan, OrganisationSetting
+from ..models import Borrower, Branch, Holiday, Loan, OrganisationSetting
 from ..permissions import IsAdmin
-from ..serializers import BranchSerializer, OrganisationSettingSerializer
+from ..serializers import BranchSerializer, HolidaySerializer, OrganisationSettingSerializer
+from ..services import workdays
 
 
 @api_view(["GET", "POST"])
@@ -58,10 +61,62 @@ def settings_view(request):
         return Response({"detail": IsAdmin.message}, status=status.HTTP_403_FORBIDDEN)
     body = OrganisationSettingSerializer(config, data=request.data, partial=True)
     body.is_valid(raise_exception=True)
+    closing = config.closed_weekdays
     with transaction.atomic():
         body.save()
         audit(request.user, "update", "settings", 1, str(list(body.validated_data.keys())))
-    return Response(OrganisationSettingSerializer(OrganisationSetting.load()).data)
+        moved = 0
+        if config.closed_weekdays != closing:
+            moved = workdays.move_upcoming_instalments(workdays.load(), date.today())
+            if moved:
+                audit(request.user, "move_instalments", "settings", 1,
+                      f"{moved} instalments moved off {config.closed_weekdays}")
+    data = dict(OrganisationSettingSerializer(OrganisationSetting.load()).data)
+    data["instalments_moved"] = moved
+    return Response(data)
+
+
+@api_view(["GET", "POST"])
+def holidays(request):
+    """The public-holiday calendar. Everyone reads it; only an admin adds to it.
+
+    Adding a holiday moves the unpaid instalments of running loans that fall due
+    on it to the next working day, so a day declared at short notice reaches the
+    loans already on the book. A holiday already past moves nothing.
+    """
+    if request.method == "GET":
+        qs = Holiday.objects.select_related("created_by").order_by("date")
+        year = request.query_params.get("year")
+        if year and year.isdigit():
+            qs = qs.filter(Q(date__year=int(year)) | Q(recurs_annually=True))
+        return Response(HolidaySerializer(qs, many=True).data)
+
+    if not IsAdmin().has_permission(request, None):
+        return Response({"detail": IsAdmin.message}, status=status.HTTP_403_FORBIDDEN)
+    body = HolidaySerializer(data=request.data)
+    body.is_valid(raise_exception=True)
+    with transaction.atomic():
+        holiday = body.save(created_by=request.user)
+        moved = workdays.move_upcoming_instalments(workdays.load(), date.today())
+        audit(request.user, "create", "holiday", holiday.id,
+              f"{holiday.date} {holiday.name}; {moved} instalments moved")
+    data = dict(HolidaySerializer(holiday).data)
+    data["instalments_moved"] = moved
+    return Response(data, status=status.HTTP_201_CREATED)
+
+
+@api_view(["DELETE"])
+@permission_classes([IsAdmin])
+def holiday_detail(request, holiday_id: int):
+    """Take a holiday off the calendar. Instalments already moved off it stay where
+    they are: the borrower was told the new date, and a day later is never dearer."""
+    holiday = Holiday.objects.filter(pk=holiday_id).first()
+    if holiday is None:
+        raise NotFound("Holiday not found")
+    with transaction.atomic():
+        audit(request.user, "delete", "holiday", holiday.id, f"{holiday.date} {holiday.name}")
+        holiday.delete()
+    return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 @api_view(["GET"])

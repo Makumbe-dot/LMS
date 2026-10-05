@@ -22,6 +22,7 @@ from .models import (
     FacilityTransaction,
     FundingFacility,
     BorrowerDocument,
+    BureauEnquiry,
     BorrowerGroup,
     Branch,
     Charge,
@@ -36,6 +37,7 @@ from .models import (
     ManualJournal,
     ManualJournalLine,
     Guarantor,
+    Holiday,
     Instalment,
     Loan,
     LoanNote,
@@ -46,8 +48,11 @@ from .models import (
     OrganisationSetting,
     PaymentMethod,
     ProductCharge,
+    ExchangeRate,
     ProvisionRun,
     ProvisionRunLine,
+    RevaluationLine,
+    RevaluationRun,
     ProvisionRunStatus,
     RateMethod,
     Role,
@@ -225,6 +230,19 @@ class BorrowerSerializer(serializers.ModelSerializer):
                   "guarantors", "documents", "active_loans", "total_outstanding"]
 
 
+class BureauEnquirySerializer(serializers.ModelSerializer):
+    enquired_by_name = serializers.CharField(source="enquired_by.full_name", read_only=True,
+                                             default=None)
+    loan_no = serializers.CharField(source="loan.loan_no", read_only=True, default=None)
+
+    class Meta:
+        model = BureauEnquiry
+        fields = ["id", "status", "provider", "reference", "score", "score_max",
+                  "open_accounts", "accounts_in_arrears", "defaults", "worst_days_in_arrears",
+                  "total_exposure", "summary", "error", "loan_no", "enquired_by_name",
+                  "enquired_at"]
+
+
 class BorrowerCreateSerializer(serializers.ModelSerializer):
     guarantors = GuarantorSerializer(many=True, required=False, default=list)
 
@@ -258,6 +276,19 @@ class ProductSerializer(serializers.ModelSerializer):
         if value <= 0:
             raise serializers.ValidationError("Interest rate must be greater than zero")
         return value
+
+    def validate_currency(self, value):
+        from .services import fx
+
+        code = fx.normalise(value)
+        if not code or code == fx.base_currency():
+            return ""
+        if len(code) > 8 or not code.isalpha():
+            raise serializers.ValidationError("A currency is a short code such as ZWG or ZAR")
+        if fx.rate_on(code, strict=False) is None:
+            raise serializers.ValidationError(
+                f"No exchange rate for {code} yet. Add one on the Currencies page first.")
+        return code
 
     def validate(self, attrs):
         def field(name):
@@ -365,6 +396,8 @@ class ScorecardSerializer(serializers.Serializer):
 
 
 class LoanQuoteSerializer(serializers.Serializer):
+    currency = serializers.CharField(required=False)
+    fx_rate = serializers.DecimalField(max_digits=18, decimal_places=6, required=False)
     principal = money()
     term_months = serializers.IntegerField()
     repayment_frequency = serializers.CharField()
@@ -419,8 +452,8 @@ class TransactionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Transaction
         fields = ["id", "loan_id", "txn_type", "txn_date", "amount", "principal_component",
-                  "interest_component", "penalty_component", "charge_component", "method",
-                  "reference", "narration", "reversed", "reversal_of_id", "created_at"]
+                  "interest_component", "penalty_component", "charge_component", "fx_rate",
+                  "method", "reference", "narration", "reversed", "reversal_of_id", "created_at"]
 
 
 class LoanSerializer(serializers.ModelSerializer):
@@ -438,7 +471,8 @@ class LoanSerializer(serializers.ModelSerializer):
         fields = ["id", "loan_no", "external_ref", "borrower_id", "borrower_name", "product_id",
                   "product_name", "officer_id", "officer_name", "branch_id", "branch_name",
                   "group_id", "refinanced_from_id",
-                  "principal", "interest_rate_pct", "rate_method", "repayment_frequency",
+                  "principal", "currency", "fx_rate", "interest_rate_pct", "rate_method",
+                  "repayment_frequency",
                   "term_months", "purpose", "admin_fee", "insurance_fee", "other_charges",
                   "instalment_amount", "total_interest", "total_cost_of_credit", "apr_pct",
                   "status",
@@ -446,7 +480,7 @@ class LoanSerializer(serializers.ModelSerializer):
                   "first_instalment_date", "maturity_date", "closed_at", "principal_outstanding",
                   "interest_outstanding", "penalties_outstanding", "charges_outstanding",
                   "total_paid", "total_outstanding", "arrears_amount", "days_in_arrears",
-                  "credit_score", "credit_grade"]
+                  "interest_accrued", "fees_deferred", "credit_score", "credit_grade"]
 
 
 class LoanNoteSerializer(serializers.ModelSerializer):
@@ -599,8 +633,39 @@ class OrganisationSettingSerializer(serializers.ModelSerializer):
                   # The Settings page has always shown these; the API silently dropped
                   # them, so an edited approval limit was never saved.
                   "officer_approval_limit", "min_credit_score", "group_arrears_block_days",
-                  "require_open_till", "updated_at"]
+                  "require_open_till", "closed_weekdays", "interest_method", "updated_at"]
         read_only_fields = ["updated_at"]
+
+    def validate_interest_method(self, value):
+        from .exceptions import BusinessRuleError
+        from .services.eir import assert_can_change
+
+        try:
+            assert_can_change(value)
+        except BusinessRuleError as exc:
+            raise serializers.ValidationError(str(exc.detail))
+        return value
+
+    def validate_closed_weekdays(self, value):
+        from .services.workdays import format_weekdays, parse_weekdays
+
+        try:
+            days = parse_weekdays(value)
+        except ValueError as exc:
+            raise serializers.ValidationError(str(exc))
+        if len(days) == 7:
+            raise serializers.ValidationError("The offices must open on at least one day a week")
+        return format_weekdays(days)
+
+
+class HolidaySerializer(serializers.ModelSerializer):
+    created_by_name = serializers.CharField(source="created_by.full_name", read_only=True,
+                                            default=None)
+
+    class Meta:
+        model = Holiday
+        fields = ["id", "date", "name", "recurs_annually", "created_by_name", "created_at"]
+        read_only_fields = ["created_at"]
 
 
 class DocumentUploadSerializer(serializers.Serializer):
@@ -981,6 +1046,71 @@ class StatementJournalSerializer(serializers.Serializer):
 
 
 # ---------------------------------------------------------------- provisioning
+class ExchangeRateSerializer(serializers.ModelSerializer):
+    set_by_name = serializers.CharField(source="set_by.full_name", read_only=True, default=None)
+
+    class Meta:
+        model = ExchangeRate
+        fields = ["id", "code", "rate_date", "rate", "note", "set_by_name", "created_at"]
+        read_only_fields = ["created_at"]
+
+
+class RevaluationLineSerializer(serializers.ModelSerializer):
+    loan_no = serializers.CharField(source="loan.loan_no", read_only=True)
+    borrower = serializers.CharField(source="loan.borrower.full_name", read_only=True)
+
+    class Meta:
+        model = RevaluationLine
+        fields = ["id", "loan_id", "loan_no", "borrower", "currency", "old_rate", "new_rate",
+                  "principal_outstanding", "penalties_outstanding", "charges_outstanding",
+                  "interest_receivable", "fees_deferred",
+                  "principal_movement", "penalties_movement", "charges_movement",
+                  "interest_movement", "fees_movement", "movement"]
+
+
+class RevaluationPreviewLineSerializer(serializers.Serializer):
+    loan_id = serializers.IntegerField()
+    loan_no = serializers.CharField()
+    borrower = serializers.CharField()
+    currency = serializers.CharField()
+    principal_outstanding = money()
+    penalties_outstanding = money()
+    charges_outstanding = money()
+    old_rate = serializers.DecimalField(max_digits=18, decimal_places=6)
+    new_rate = serializers.DecimalField(max_digits=18, decimal_places=6)
+    carrying_before = money()
+    carrying_after = money()
+    interest_receivable = money()
+    fees_deferred = money()
+    principal_movement = money()
+    penalties_movement = money()
+    charges_movement = money()
+    interest_movement = money()
+    fees_movement = money()
+    movement = money()
+
+
+class RevaluationPreviewSerializer(serializers.Serializer):
+    as_of = serializers.DateField()
+    base_currency = serializers.CharField()
+    loans = serializers.IntegerField()
+    movement = money()
+    missing_rates = serializers.ListField(child=serializers.CharField())
+    lines = RevaluationPreviewLineSerializer(many=True)
+
+
+class RevaluationRunSerializer(serializers.ModelSerializer):
+    entry_no = serializers.CharField(source="journal_entry.entry_no", read_only=True,
+                                     default=None)
+    run_by_name = serializers.CharField(source="run_by.full_name", read_only=True, default=None)
+    lines = RevaluationLineSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = RevaluationRun
+        fields = ["id", "run_no", "as_of", "base_currency", "loans_revalued", "movement",
+                  "narration", "entry_no", "run_by_name", "created_at", "lines"]
+
+
 class ProvisionRunSerializer(serializers.ModelSerializer):
     entry_no = serializers.CharField(source="journal_entry.entry_no", read_only=True,
                                      default=None)

@@ -116,7 +116,9 @@
       {% if frequency == "weekly" %}every week{% if first_due %}, starting on {{ first_due|date:"l j F Y" }},{% endif %}
       {% elif frequency == "fortnightly" %}every second week{% if first_due %}, starting on {{ first_due|date:"l j F Y" }},{% endif %}
       {% else %}on the {{ payday_ordinal }} day of each month{% endif %}
-      until the loan is repaid in full.
+      until the loan is repaid in full.{% if closed_days %}
+      An instalment that would fall due on a public holiday or on a day the Lender's offices
+      are closed falls due on the next working day instead, for the same amount.{% endif %}
     </li>
     <li>
       Payments are applied first to penalties, then to any charges added to the loan balance,

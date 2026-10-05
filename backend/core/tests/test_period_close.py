@@ -320,8 +320,8 @@ class PreflightTests(PeriodCloseBase):
         checks = periods.preflight(2026, 4)
         advisory = [c for c in checks["checks"] if not c["blocking"]]
         # Postings after month end, penalties, ledger agreement, journals awaiting
-        # approval.
-        self.assertEqual(len(advisory), 4)
+        # approval, foreign loans at the closing rate.
+        self.assertEqual(len(advisory), 5)
         self.assertTrue(checks["can_close"])
 
 

@@ -110,6 +110,11 @@ class TillStatus(models.TextChoices):
     VERIFIED = "verified", "Verified"
 
 
+class BureauEnquiryStatus(models.TextChoices):
+    OK = "ok", "Report received"
+    FAILED = "failed", "Failed"
+
+
 class StatementLineStatus(models.TextChoices):
     UNMATCHED = "unmatched", "Unmatched"
     MATCHED = "matched", "Matched"
@@ -143,6 +148,11 @@ class InstalmentStatus(models.TextChoices):
     OVERDUE = "overdue", "Overdue"
 
 
+class InterestMethod(models.TextChoices):
+    COLLECTED = "collected", "When collected"
+    EFFECTIVE = "effective", "Effective interest method (IFRS 9)"
+
+
 class TxnType(models.TextChoices):
     DISBURSEMENT = "disbursement", "Disbursement"
     REPAYMENT = "repayment", "Repayment"
@@ -155,6 +165,9 @@ class TxnType(models.TextChoices):
     WRITE_OFF = "write_off", "Write-off"
     RECOVERY = "recovery", "Recovery after write-off"
     REVERSAL = "reversal", "Reversal"
+    # Interest recognised at the effective rate for a period: moves no cash and no
+    # balance the borrower sees. Only raised under the effective interest method.
+    ACCRUAL = "accrual", "Interest accrued"
     OPENING_BALANCE = "opening_balance", "Opening balance brought forward"
 
 
@@ -293,6 +306,18 @@ class OrganisationSetting(models.Model):
     # has never used tills keeps posting until someone decides to start.
     require_open_till = models.BooleanField(default=False)
 
+    # Weekdays the offices are shut every week, as three-letter names ("sat,sun").
+    # An instalment never falls due on one of these, or on a public holiday; it moves
+    # to the next working day. Empty by default, so a book that has never set it
+    # keeps the due dates it always had.
+    closed_weekdays = models.CharField(max_length=40, default="", blank=True)
+
+    # How the ledger recognises interest: when it is collected (the default), or
+    # at the effective rate with the fees spread over the loan (IFRS 9). Cannot
+    # change while loans are running; see services/eir.py.
+    interest_method = models.CharField(max_length=10, choices=InterestMethod.choices,
+                                       default=InterestMethod.COLLECTED)
+
     updated_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
@@ -310,6 +335,28 @@ class OrganisationSetting(models.Model):
     def load(cls) -> "OrganisationSetting":
         obj, _ = cls.objects.get_or_create(pk=1)
         return obj
+
+
+class Holiday(models.Model):
+    """A public holiday: a day the offices are shut, so nothing falls due on it.
+
+    A holiday that `recurs_annually` is shut on the same day and month every year
+    (Christmas); one that does not is a single date (a moving feast, or a day
+    declared at short notice).
+    """
+    date = models.DateField(unique=True)
+    name = models.CharField(max_length=120)
+    recurs_annually = models.BooleanField(default=False)
+    created_by = models.ForeignKey("User", on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="+")
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "holidays"
+        ordering = ["date"]
+
+    def __str__(self):
+        return f"{self.date} - {self.name}"
 
 
 # ---------------------------------------------------------------- users
@@ -494,6 +541,10 @@ class LoanProduct(models.Model):
     penalty_rate_pct_per_day = models.DecimalField(default=Decimal("0.5"), **RATE)
     grace_days = models.IntegerField(default=3)
     max_instalment_to_salary_pct = models.DecimalField(default=Decimal("40"), max_digits=6, decimal_places=2)
+    # The currency the product lends in. Blank means the organisation's own; any
+    # other code needs a rate on the Currencies page before a loan can be quoted.
+    currency = models.CharField(max_length=8, blank=True, default="",
+                                help_text="Blank for the organisation's currency")
     is_active = models.BooleanField(default=True)
 
     class Meta:
@@ -719,6 +770,12 @@ class Loan(models.Model):
     # The number of instalments, in the loan's repayment frequency. See the note on
     # LoanProduct.min_term_months for why it keeps its monthly name.
     term_months = models.IntegerField()
+    # Snapshot of the product's currency at application, and the rate the ledger
+    # carries this loan's receivables at: base units per one unit of `currency`,
+    # 1 for a loan in the base currency. Set at disbursement, moved by each
+    # revaluation run. See services/fx.py.
+    currency = models.CharField(max_length=8, blank=True, default="")
+    fx_rate = models.DecimalField(max_digits=18, decimal_places=6, default=Decimal("1"))
     purpose = models.CharField(max_length=200, null=True, blank=True)
     branch = models.ForeignKey("Branch", on_delete=models.SET_NULL, null=True, blank=True,
                                related_name="loans")
@@ -783,6 +840,10 @@ class Loan(models.Model):
     # core.services.provisioning. Deliberately NOT in loans.LOAN_BALANCE_FIELDS:
     # refresh_balances must never touch it.
     provision_held = models.DecimalField(default=ZERO, **MONEY)
+    # Under the effective interest method only: contractual interest recognised
+    # as a receivable so far, and the fees still deferred. Zero otherwise.
+    interest_accrued = models.DecimalField(default=ZERO, **MONEY)
+    fees_deferred = models.DecimalField(default=ZERO, **MONEY)
     created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
@@ -840,6 +901,9 @@ class Instalment(models.Model):
                               default=InstalmentStatus.PENDING)
     last_penalty_date = models.DateField(null=True, blank=True)
     paid_date = models.DateField(null=True, blank=True)
+    # The date the period's interest was accrued on, under the effective interest
+    # method; null until the run reaches it.
+    accrued_on = models.DateField(null=True, blank=True)
 
     class Meta:
         db_table = "instalments"
@@ -895,6 +959,12 @@ class Transaction(models.Model):
     interest_component = models.DecimalField(default=ZERO, **MONEY)
     penalty_component = models.DecimalField(default=ZERO, **MONEY)
     charge_component = models.DecimalField(default=ZERO, **MONEY)
+    # The spot rate on the transaction date (cash and income legs) and the loan's
+    # booked rate at the time (receivable legs), base units per unit of the loan's
+    # currency; both 1 for a base-currency loan. Filled by a pre_save hook when
+    # left blank, copied from the original on a reversal.
+    fx_rate = models.DecimalField(max_digits=18, decimal_places=6, null=True, blank=True)
+    book_rate = models.DecimalField(max_digits=18, decimal_places=6, null=True, blank=True)
     method = models.CharField(max_length=20, choices=PaymentMethod.choices, null=True, blank=True)
     reference = models.CharField(max_length=80, null=True, blank=True)
     narration = models.TextField(null=True, blank=True)
@@ -1213,6 +1283,79 @@ class StatementLine(models.Model):
 
     def __str__(self):
         return f"{self.statement_id}/{self.line_no} {self.amount}"
+
+
+# ---------------------------------------------------------------- currencies
+class ExchangeRate(models.Model):
+    """Base units per ONE unit of `code` on a date. The rate for any date is the
+    latest one on or before it. See services/fx.py."""
+    code = models.CharField(max_length=8, db_index=True)
+    rate_date = models.DateField(db_index=True)
+    rate = models.DecimalField(max_digits=18, decimal_places=6)
+    note = models.CharField(max_length=120, null=True, blank=True)
+    set_by = models.ForeignKey("User", on_delete=models.SET_NULL, null=True, blank=True,
+                               related_name="+")
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "exchange_rates"
+        ordering = ["-rate_date", "code"]
+        constraints = [models.UniqueConstraint(fields=["code", "rate_date"],
+                                               name="uq_exchange_rate_code_date")]
+
+    def __str__(self):
+        return f"{self.code} {self.rate} on {self.rate_date}"
+
+
+class RevaluationRun(models.Model):
+    """One restatement of every open foreign-currency loan at a closing rate.
+
+    Hangs its own journal entry, like a provision run, so a Rebuild can re-post it.
+    """
+    run_no = models.CharField(max_length=20, unique=True, db_index=True)
+    as_of = models.DateField(db_index=True)
+    base_currency = models.CharField(max_length=8)
+    loans_revalued = models.IntegerField(default=0)
+    movement = models.DecimalField(default=ZERO, **MONEY,
+                                   help_text="Net change in the receivables, base currency")
+    narration = models.TextField(null=True, blank=True)
+    journal_entry = models.OneToOneField("JournalEntry", on_delete=models.SET_NULL, null=True,
+                                         blank=True, related_name="revaluation_run")
+    run_by = models.ForeignKey("User", on_delete=models.SET_NULL, null=True, blank=True,
+                               related_name="+")
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "revaluation_runs"
+        ordering = ["-as_of", "-id"]
+
+    def __str__(self):
+        return f"{self.run_no} as at {self.as_of}"
+
+
+class RevaluationLine(models.Model):
+    run = models.ForeignKey(RevaluationRun, on_delete=models.CASCADE, related_name="lines")
+    loan = models.ForeignKey("Loan", on_delete=models.CASCADE, related_name="revaluation_lines")
+    currency = models.CharField(max_length=8)
+    old_rate = models.DecimalField(max_digits=18, decimal_places=6)
+    new_rate = models.DecimalField(max_digits=18, decimal_places=6)
+    principal_outstanding = models.DecimalField(default=ZERO, **MONEY)
+    penalties_outstanding = models.DecimalField(default=ZERO, **MONEY)
+    charges_outstanding = models.DecimalField(default=ZERO, **MONEY)
+    principal_movement = models.DecimalField(default=ZERO, **MONEY)
+    penalties_movement = models.DecimalField(default=ZERO, **MONEY)
+    charges_movement = models.DecimalField(default=ZERO, **MONEY)
+    # Under the effective interest method the receivable interest and the deferred
+    # fees are monetary items in the loan's currency too.
+    interest_receivable = models.DecimalField(default=ZERO, **MONEY)
+    fees_deferred = models.DecimalField(default=ZERO, **MONEY)
+    interest_movement = models.DecimalField(default=ZERO, **MONEY)
+    fees_movement = models.DecimalField(default=ZERO, **MONEY)
+    movement = models.DecimalField(default=ZERO, **MONEY)
+
+    class Meta:
+        db_table = "revaluation_lines"
+        ordering = ["id"]
 
 
 # ---------------------------------------------------------------- provisioning
@@ -1645,6 +1788,47 @@ class BorrowerDocument(models.Model):
 
     def __str__(self):
         return f"{self.original_name} ({self.doc_type})"
+
+
+class BureauEnquiry(models.Model):
+    """One question put to a credit bureau about a borrower, and its answer.
+
+    Kept as a register rather than a field on the borrower, because a report is
+    dated: the scorecard only reads one younger than BUREAU_VALID_DAYS, and an
+    officer can see what the bureau said at the time of an earlier application.
+    A failed attempt is kept too, so "the bureau was down" is on record.
+    """
+    borrower = models.ForeignKey(Borrower, on_delete=models.CASCADE,
+                                 related_name="bureau_enquiries", db_index=True)
+    loan = models.ForeignKey("Loan", on_delete=models.SET_NULL, null=True, blank=True,
+                             related_name="bureau_enquiries",
+                             help_text="The application it was run for, if any")
+    status = models.CharField(max_length=10, choices=BureauEnquiryStatus.choices,
+                              default=BureauEnquiryStatus.OK)
+    provider = models.CharField(max_length=20)
+    reference = models.CharField(max_length=80, null=True, blank=True,
+                                 help_text="The bureau's own reference for the report")
+    score = models.IntegerField(null=True, blank=True)
+    score_max = models.IntegerField(default=1000)
+    open_accounts = models.IntegerField(default=0)
+    accounts_in_arrears = models.IntegerField(default=0)
+    defaults = models.IntegerField(default=0)
+    worst_days_in_arrears = models.IntegerField(default=0)
+    total_exposure = models.DecimalField(default=ZERO, **MONEY,
+                                         help_text="Owed to other lenders")
+    summary = models.TextField(null=True, blank=True)
+    detail = models.TextField(null=True, blank=True, help_text="JSON: the figures as received")
+    error = models.TextField(null=True, blank=True)
+    enquired_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                                    related_name="+")
+    enquired_at = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        db_table = "bureau_enquiries"
+        ordering = ["-enquired_at", "-id"]
+
+    def __str__(self):
+        return f"{self.borrower_id} via {self.provider} on {self.enquired_at:%Y-%m-%d}"
 
 
 class Sequence(models.Model):

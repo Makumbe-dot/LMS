@@ -158,7 +158,7 @@ def rows(as_of: date | None = None, *, branch_id=None, statuses=(LoanStatus.ACTI
                # but an explicit one would, so never add one.
                .values("id", "principal_outstanding", "interest_outstanding",
                        "penalties_outstanding", "charges_outstanding",
-                       "arrears_amount", "oldest_arrears_due"))
+                       "arrears_amount", "oldest_arrears_due", "currency", "fx_rate"))
     return [{
         **row,
         "arrears_amount": Decimal(row["arrears_amount"] or 0),
@@ -193,20 +193,25 @@ def totals(as_of: date | None = None, *, branch_id=None, par_days: int = 30) -> 
     par_loans = loans_in_arrears = 0
     loans = 0
 
+    # Book totals are in the organisation's currency: a foreign loan counts at its
+    # booked rate, which is what the ledger carries it at.
+    from .fx import to_base
+
     for row in rows(as_of, branch_id=branch_id):
         loans += 1
-        principal = Decimal(row["principal_outstanding"] or 0)
+        rate = row["fx_rate"] or 1
+        principal = to_base(row["principal_outstanding"], rate)
         principal_total += principal
         outstanding_total += (principal
-                              + Decimal(row["interest_outstanding"] or 0)
-                              + Decimal(row["penalties_outstanding"] or 0)
-                              + Decimal(row["charges_outstanding"] or 0))
+                              + to_base(row["interest_outstanding"], rate)
+                              + to_base(row["penalties_outstanding"], rate)
+                              + to_base(row["charges_outstanding"], rate))
         bucket = bucket_for(row["days_in_arrears"])
         counts[bucket] += 1
         amounts[bucket] += principal
-        overdue[bucket] += row["arrears_amount"]
+        overdue[bucket] += to_base(row["arrears_amount"], rate)
         if row["arrears_amount"] > 0:
-            arrears_total += row["arrears_amount"]
+            arrears_total += to_base(row["arrears_amount"], rate)
             loans_in_arrears += 1
         if row["oldest_arrears_due"] is not None and row["oldest_arrears_due"] < cutoff:
             par_amount += principal

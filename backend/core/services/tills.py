@@ -51,14 +51,21 @@ CASH = PaymentMethod.CASH
 
 # ---------------------------------------------------------------- what moved
 def _loan_cash(txn: Transaction) -> Decimal:
-    """The signed cash effect of one loan transaction on the drawer: + in, - out."""
+    """The signed cash effect of one loan transaction on the drawer: + in, - out.
+
+    The drawer is counted in the organisation's currency, so a foreign-currency
+    loan's cash is taken at the spot rate stamped on the transaction.
+    """
+    from .fx import to_base
+
     kind = txn.txn_type
+    amount = to_base(txn.amount, txn.fx_rate)
     if kind in (TxnType.REPAYMENT, TxnType.RECOVERY):
-        return txn.amount if txn.method == CASH else ZERO
+        return amount if txn.method == CASH else ZERO
     if kind == TxnType.CHARGE:
-        return txn.amount if txn.method in (CASH, None) else ZERO
+        return amount if txn.method in (CASH, None) else ZERO
     if kind == TxnType.DISBURSEMENT:
-        return -txn.amount if txn.method == CASH else ZERO
+        return -amount if txn.method == CASH else ZERO
     if kind == TxnType.REVERSAL and txn.reversal_of_id:
         original = txn.reversal_of
         return -_loan_cash(original) if original.txn_type != TxnType.REVERSAL else ZERO

@@ -56,7 +56,7 @@ from ..models import (
     TxnType,
     User,
 )
-from . import periods
+from . import fx, periods, workdays
 from .amortisation import annual_percentage_rate, build_schedule, q, total_interest
 from .loans import _create_schedule, default_first_due, next_number, refresh_balances, sched
 
@@ -159,7 +159,7 @@ class _Planned:
 
 
 def _plan(row: dict, product: LoanProduct, borrower_payday: int | None,
-          cutover: date) -> dict:
+          cutover: date, calendar: workdays.WorkingCalendar | None = None) -> dict:
     """Everything about one row that can be worked out without writing anything."""
     principal = q(_decimal(row.get("principal"), "principal", minimum=Decimal("0.01")))
     term_raw = _decimal(row.get("term"), "term", minimum=Decimal(1))
@@ -182,7 +182,7 @@ def _plan(row: dict, product: LoanProduct, borrower_payday: int | None,
                            required=False) or ZERO)
 
     schedule = build_schedule(principal, rate, term, first_due, product.rate_method,
-                              product.repayment_frequency)
+                              product.repayment_frequency, calendar)
     contract = q(sum((r.instalment for r in schedule), ZERO))
     if paid >= contract:
         raise ValueError(f"amount_paid {paid} covers the whole contract of {contract}; "
@@ -206,6 +206,7 @@ def validate(rows: list[dict], cutover: date) -> dict:
     """Check every row against the book without writing anything."""
     periods.assert_open(cutover, "The cut-over date")
     products = {p.code.lower(): p for p in LoanProduct.objects.all()}
+    calendar = workdays.load()
     branches = {b.code.lower(): b for b in Branch.objects.all()}
     ids = [r.get("national_id") for r in rows if r.get("national_id")]
     borrowers = {b.national_id: b for b in Borrower.objects.filter(national_id__in=ids)}
@@ -267,7 +268,7 @@ def validate(rows: list[dict], cutover: date) -> dict:
                 payday = borrower.payday
                 result["borrower"] = borrower.full_name
 
-            plan = _plan(row, product, payday, cutover)
+            plan = _plan(row, product, payday, cutover, calendar)
         except ValueError as exc:
             result["error"] = str(exc)
             checked.append(result)
@@ -317,6 +318,7 @@ def commit(rows: list[dict], validation: dict, user: User, cutover: date) -> dic
         raise BusinessRuleError("Nothing to import.")
 
     products = {p.code.lower(): p for p in LoanProduct.objects.all()}
+    calendar = workdays.load()
     branches = {b.code.lower(): b for b in Branch.objects.all()}
     imported = []
     with transaction.atomic():
@@ -340,7 +342,7 @@ def commit(rows: list[dict], validation: dict, user: User, cutover: date) -> dic
                     notes=f"Brought over from the previous system on {cutover.isoformat()}",
                 )
             product = products[row["product_code"].lower()]
-            plan = _plan(row, product, borrower.payday, cutover)
+            plan = _plan(row, product, borrower.payday, cutover, calendar)
             imported.append(_bring_over(borrower, product, plan, row, user, cutover))
 
     return {
@@ -371,6 +373,9 @@ def _bring_over(borrower: Borrower, product: LoanProduct, plan: dict, row: dict,
         approved_at=datetime.combine(disbursed, datetime.min.time(), tzinfo=timezone.utc),
         approved_by=user, disbursement_date=disbursed, first_instalment_date=plan["first_due"],
         maturity_date=schedule[-1].due_date,
+        # Booked at the cut-over rate: that is the day the receivable enters this ledger.
+        currency=fx.normalise(product.currency) or fx.base_currency(),
+        fx_rate=fx.rate_on(product.currency, cutover),
     )
     rows = _create_schedule(loan, schedule)
     for ins, planned in zip(rows, plan["planned"]):

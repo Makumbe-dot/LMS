@@ -74,6 +74,11 @@ def post_repayment(loan: Loan, user: User, amount: Decimal, txn_date: date | Non
         method=method, reference=reference, narration=narration, posted_by=user,
     )
     refresh_balances(loan)
+    if loan.status == LoanStatus.CLOSED:
+        # Nothing left to spread the fees over (effective interest method only).
+        from .eir import release_deferred_fees
+
+        release_deferred_fees(loan, txn_date, user, f"{loan.loan_no} settled in full")
     return txn
 
 
@@ -107,6 +112,10 @@ def reverse_transaction(loan: Loan, txn: Transaction, user: User, narration: str
         loan=loan, txn_type=TxnType.REVERSAL, txn_date=date.today(), amount=txn.amount,
         principal_component=txn.principal_component, interest_component=txn.interest_component,
         penalty_component=txn.penalty_component, charge_component=txn.charge_component,
+        # The cash goes back at the rate it came in at, so the bank leg mirrors
+        # exactly; the receivable is restored at today's booked rate, as every
+        # posting is, and whatever lies between is an exchange difference.
+        fx_rate=txn.fx_rate,
         reversal_of=txn, narration=narration, posted_by=user,
     )
     if loan.status == LoanStatus.CLOSED:

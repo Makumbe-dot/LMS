@@ -22,6 +22,20 @@ from ..services.amortisation import add_months
 from .helpers import table_response, wants_table, paginate, parse_date, parse_int
 
 
+@api_view(["POST"])
+@permission_classes([IsAdmin])
+def accrue_interest(request):
+    """Month-end: recognise interest at the effective rate for every instalment
+    period that has ended. Only under the effective interest method."""
+    from ..services.eir import accrue_interest as run
+
+    as_of = parse_date(request, "as_of")
+    with transaction.atomic():
+        result = run(as_of, user=request.user)
+        audit(request.user, "accrue_interest", "system", None, str(result))
+    return Response(result)
+
+
 @api_view(["GET", "POST"])
 def accounts(request):
     if request.method == "GET":

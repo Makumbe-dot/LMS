@@ -14,6 +14,7 @@ import Borrowers from './pages/Borrowers.jsx'
 import BulkImport from './pages/BulkImport.jsx'
 import Charges from './pages/Charges.jsx'
 import Collections from './pages/Collections.jsx'
+import Currencies from './pages/Currencies.jsx'
 import Dashboard from './pages/Dashboard.jsx'
 import Funding from './pages/Funding.jsx'
 import Groups from './pages/Groups.jsx'
@@ -102,6 +103,7 @@ export default function App() {
           <Route path="/journals" element={<Journals />} />
           <Route path="/bank-reconciliation" element={<BankRec />} />
           <Route path="/funding" element={<Funding />} />
+          <Route path="/currencies" element={<Currencies />} />
           <Route path="/performance" element={<Performance />} />
           <Route path="/spreadsheets" element={<Spreadsheets />} />
           <Route path="/provisioning" element={<Provisioning />} />

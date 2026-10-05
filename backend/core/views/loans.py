@@ -53,6 +53,7 @@ from ..services import arrears as arrears_svc
 from ..services import charges as chg
 from ..services import loans as svc
 from ..services import repayments as rep
+from ..services import workdays
 from ..services.notifications import queue_receipt
 from ..services.penalties import accrue_penalties
 from ..services.reports import loan_statement
@@ -378,6 +379,7 @@ def agreement(request, loan_id: int):
         "frequency_label": loan.get_repayment_frequency_display(),
         "term_unit": svc.TERM_UNITS.get(loan.repayment_frequency, "instalments"),
         "first_due": first_due,
+        "closed_days": bool(workdays.load()),
     })
     return Response(html)
 

@@ -7,6 +7,7 @@ from .views import (
     bankrec,
     borrowers,
     charges,
+    currencies,
     funding,
     groups,
     journals,
@@ -40,6 +41,8 @@ urlpatterns = [
     re_path(r"^branches/?$", org.branches),
     re_path(r"^branches/(?P<branch_id>\d+)/?$", org.branch_detail),
     re_path(r"^settings/?$", org.settings_view),
+    re_path(r"^holidays/?$", org.holidays),
+    re_path(r"^holidays/(?P<holiday_id>\d+)/?$", org.holiday_detail),
     re_path(r"^search/?$", org.search),
 
     # ---- borrowers
@@ -49,6 +52,8 @@ urlpatterns = [
     re_path(r"^borrowers/(?P<borrower_id>\d+)/guarantors/?$", borrowers.add_guarantor),
     re_path(r"^borrowers/(?P<borrower_id>\d+)/guarantors/(?P<guarantor_id>\d+)/?$",
             borrowers.remove_guarantor),
+    re_path(r"^borrowers/(?P<borrower_id>\d+)/bureau/?$", borrowers.bureau),
+    re_path(r"^bureau/status/?$", borrowers.bureau_status),
     re_path(r"^borrowers/(?P<borrower_id>\d+)/documents/?$", borrowers.documents),
     re_path(r"^borrowers/(?P<borrower_id>\d+)/documents/(?P<document_id>\d+)/download/?$",
             borrowers.download_document),
@@ -113,6 +118,13 @@ urlpatterns = [
     re_path(r"^loans/(?P<loan_id>\d+)/collateral/(?P<collateral_id>\d+)/?$",
             loans.collateral_detail),
 
+    # ---- currencies and the revaluation of foreign-currency loans
+    re_path(r"^currencies/?$", currencies.currencies),
+    re_path(r"^currencies/rates/?$", currencies.rates),
+    re_path(r"^currencies/rates/(?P<rate_id>\d+)/?$", currencies.rate_detail),
+    re_path(r"^currencies/revaluations/preview/?$", currencies.revaluation_preview),
+    re_path(r"^currencies/revaluations/?$", currencies.revaluations),
+
     # ---- provisioning (the literal paths must precede the numeric id route)
     re_path(r"^provisions/preview/?$", provisions.preview),
     re_path(r"^provisions/run/?$", provisions.run),
@@ -152,6 +164,7 @@ urlpatterns = [
     re_path(r"^ledger/reconciliation/?$", ledger.reconciliation),
     re_path(r"^ledger/income-statement/?$", ledger.income_statement),
     re_path(r"^ledger/rebuild/?$", ledger.rebuild),
+    re_path(r"^ledger/accrue-interest/?$", ledger.accrue_interest),
 
     # ---- bank and mobile-money reconciliation (line routes before the numeric id ones)
     re_path(r"^bank-statements/lines/(?P<line_id>\d+)/candidates/?$", bankrec.line_candidates),

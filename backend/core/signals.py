@@ -86,6 +86,25 @@ def guard_savings_till(sender, instance, raw=False, **kwargs):
                      f"This savings {instance.get_txn_type_display().lower()}")
 
 
+# ---------------------------------------------------------------- exchange rates
+# Every posting on a foreign-currency loan carries the spot rate of its date and
+# the loan's booked rate at the time, so the ledger can convert it now and again
+# on a Rebuild. Here, for the reason the ledger hook is: the next service that
+# writes a Transaction should not have to remember. A base-currency loan gets 1.
+@receiver(pre_save, sender=Transaction, dispatch_uid="core.stamp_transaction_rates")
+def stamp_transaction_rates(sender, instance, raw=False, **kwargs):
+    if raw or not instance._state.adding:
+        return
+    from .services import fx
+
+    loan = instance.loan
+    if instance.book_rate is None:
+        instance.book_rate = loan.fx_rate or fx.ONE
+    if instance.fx_rate is None:
+        instance.fx_rate = (fx.rate_on(loan.currency, instance.txn_date)
+                            if fx.is_foreign(loan) else fx.ONE)
+
+
 # ---------------------------------------------------------------- the ledger
 @receiver(post_save, sender=Transaction, dispatch_uid="core.post_transaction_to_ledger")
 def post_transaction_to_ledger(sender, instance, created, **kwargs):

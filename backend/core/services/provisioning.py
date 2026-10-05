@@ -63,10 +63,20 @@ IMPAIRMENT = ledger.CODES["impairment"]    # 5100, the P&L charge
 
 # ---------------------------------------------------------------- measurement
 def carrying_amount(loan: Loan) -> Decimal:
-    """The recognised asset behind a loan: what 1100 + 1300 + 1400 actually hold."""
-    return q((loan.principal_outstanding or ZERO)
-             + (loan.penalties_outstanding or ZERO)
-             + (loan.charges_outstanding or ZERO))
+    """The recognised asset behind a loan: what 1100 + 1300 + 1400 actually hold,
+    in the organisation's currency (a foreign loan at its booked rate)."""
+    from .fx import to_base
+
+    return q(to_base(loan.principal_outstanding, loan.fx_rate)
+             + to_base(loan.penalties_outstanding, loan.fx_rate)
+             + to_base(loan.charges_outstanding, loan.fx_rate))
+
+
+def exposure_amount(loan: Loan) -> Decimal:
+    """Everything the loan is owed, in the organisation's currency."""
+    from .fx import to_base
+
+    return to_base(loan.total_outstanding, loan.fx_rate)
 
 
 def _rate_for(stage: str, cfg: OrganisationSetting) -> Decimal:
@@ -95,7 +105,7 @@ def assess(loan: Loan, cfg: OrganisationSetting, as_of: date,
         "loan_status": loan.status,
         "stage": stage,
         "days_past_due": days,
-        "exposure": q(loan.total_outstanding),
+        "exposure": exposure_amount(loan),
         "carrying_amount": carrying,
         "rate_pct": rate,
         "provision_required": required,

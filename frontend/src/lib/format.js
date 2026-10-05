@@ -24,7 +24,8 @@ export function fmt(value) {
   return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
-export const money = (value) => `${currency} ${fmt(value)}`
+/** Money in the organisation's currency, or in `code` when a loan is kept in another. */
+export const money = (value, code) => `${code || currency} ${fmt(value)}`
 
 /** 12.5 -> "12.50%"; null/blank -> "-", not "-%". */
 export const pct = (value) => (num(value) === null ? '-' : `${fmt(value)}%`)

@@ -11,6 +11,10 @@ by 12 / periods-a-year: a year of weekly instalments carries the same nominal
 interest as a year of monthly ones, so changing the frequency changes when the
 borrower pays, not what the product costs.
 
+A due date that lands on a closed day (a public holiday, or a weekday the offices
+are shut) moves to the next working day when a calendar is given; see
+services/workdays.py. The amounts do not change: interest is per period, not per day.
+
 All arithmetic is in Decimal, rounded to cents. The final instalment absorbs
 rounding so the schedule closes to exactly zero.
 """
@@ -75,6 +79,14 @@ def nth_due_date(first_due: date, n: int, frequency: str = MONTHLY) -> date:
     return add_months(first_due, n)
 
 
+def scheduled_due_date(first_due: date, n: int, frequency: str = MONTHLY,
+                       calendar=None) -> date:
+    """The nth due date, moved off a closed day. The count always runs from the
+    first due date as agreed, so a holiday moves one instalment, not every one after it."""
+    due = nth_due_date(first_due, n, frequency)
+    return calendar.next_working(due) if calendar else due
+
+
 def instalment_amount(principal, monthly_rate_pct, term: int, method: str = REDUCING,
                       frequency: str = MONTHLY) -> Decimal:
     """The level instalment over `term` instalments at the product's monthly rate."""
@@ -104,15 +116,18 @@ class Row:
 
 
 def build_schedule(principal, monthly_rate_pct, term: int, first_due: date,
-                   method: str = REDUCING, frequency: str = MONTHLY) -> list[Row]:
-    """`term` instalments of the given frequency, the first falling on `first_due`."""
+                   method: str = REDUCING, frequency: str = MONTHLY,
+                   calendar=None) -> list[Row]:
+    """`term` instalments of the given frequency, the first falling on `first_due`
+    (or the next working day after it, when `calendar` closes that day)."""
     if method == FLAT:
-        return _flat_schedule(principal, monthly_rate_pct, term, first_due, frequency)
-    return _reducing_schedule(principal, monthly_rate_pct, term, first_due, frequency)
+        return _flat_schedule(principal, monthly_rate_pct, term, first_due, frequency, calendar)
+    return _reducing_schedule(principal, monthly_rate_pct, term, first_due, frequency,
+                              calendar)
 
 
 def _reducing_schedule(principal, monthly_rate_pct, term: int, first_due: date,
-                       frequency: str = MONTHLY) -> list[Row]:
+                       frequency: str = MONTHLY, calendar=None) -> list[Row]:
     P = q(Decimal(principal))
     r = period_rate(monthly_rate_pct, frequency)
     inst = instalment_amount(P, monthly_rate_pct, term, REDUCING, frequency)
@@ -130,7 +145,7 @@ def _reducing_schedule(principal, monthly_rate_pct, term: int, first_due: date,
         rows.append(
             Row(
                 number=n,
-                due_date=nth_due_date(first_due, n - 1, frequency),
+                due_date=scheduled_due_date(first_due, n - 1, frequency, calendar),
                 opening_balance=bal,
                 principal_due=principal_part,
                 interest_due=interest,
@@ -143,7 +158,7 @@ def _reducing_schedule(principal, monthly_rate_pct, term: int, first_due: date,
 
 
 def _flat_schedule(principal, monthly_rate_pct, term: int, first_due: date,
-                   frequency: str = MONTHLY) -> list[Row]:
+                   frequency: str = MONTHLY, calendar=None) -> list[Row]:
     """Interest on the original principal, spread evenly across the term.
 
     Both the principal and the interest legs are levelled; the last instalment
@@ -172,7 +187,7 @@ def _flat_schedule(principal, monthly_rate_pct, term: int, first_due: date,
         rows.append(
             Row(
                 number=n,
-                due_date=nth_due_date(first_due, n - 1, frequency),
+                due_date=scheduled_due_date(first_due, n - 1, frequency, calendar),
                 opening_balance=bal,
                 principal_due=principal_part,
                 interest_due=interest,

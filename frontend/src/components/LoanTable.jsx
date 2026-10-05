@@ -27,7 +27,13 @@ export default function LoanTable({ loans, empty = 'No loans' }) {
           '-'
         ),
     },
-    { key: 'principal', header: 'Principal', num: true, render: (r) => fmt(r.principal) },
+    {
+      key: 'principal',
+      header: 'Principal',
+      num: true,
+      // A loan in another currency says so beside the figure.
+      render: (r) => (r.currency ? `${r.currency} ${fmt(r.principal)}` : fmt(r.principal)),
+    },
     { key: 'rate', header: 'Rate', num: true, render: (r) => pct(r.interest_rate_pct) },
     {
       key: 'term',
