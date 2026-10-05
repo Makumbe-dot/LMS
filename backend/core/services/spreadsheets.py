@@ -33,6 +33,7 @@ from ..models import (
 )
 from . import arrears as arrears_svc
 from .amortisation import q
+from .fx import to_base
 from .loans import TERM_UNITS
 from .reports import portfolio_at_risk
 
@@ -50,13 +51,15 @@ def _member_loans(as_of: date, branch_id=None) -> dict[int, dict]:
     for row in (arrears_svc.with_arrears(qs, as_of)
                 .values("borrower_id", "principal_outstanding", "interest_outstanding",
                         "penalties_outstanding", "charges_outstanding", "arrears_amount",
-                        "oldest_arrears_due")):
+                        "oldest_arrears_due", "fx_rate")):
         member = totals[row["borrower_id"]]
+        rate = row["fx_rate"] or 1   # the register is in the organisation's currency
         member["active_loans"] += 1
-        member["principal"] += row["principal_outstanding"]
-        member["interest"] += row["interest_outstanding"]
-        member["penalties_charges"] += row["penalties_outstanding"] + row["charges_outstanding"]
-        member["overdue"] += Decimal(row["arrears_amount"] or 0)
+        member["principal"] += to_base(row["principal_outstanding"], rate)
+        member["interest"] += to_base(row["interest_outstanding"], rate)
+        member["penalties_charges"] += (to_base(row["penalties_outstanding"], rate)
+                                        + to_base(row["charges_outstanding"], rate))
+        member["overdue"] += to_base(row["arrears_amount"] or 0, rate)
         member["days"] = max(member["days"],
                              arrears_svc.days_from(row["oldest_arrears_due"], as_of))
     return totals

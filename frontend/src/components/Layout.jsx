@@ -59,6 +59,7 @@ export const NAV = [
       { to: '/journals', label: 'Journals & expenses', icon: 'pen' },
       { to: '/bank-reconciliation', label: 'Bank reconciliation', icon: 'scale' },
       { to: '/funding', label: 'Funding & capital', icon: 'landmark' },
+      { to: '/currencies', label: 'Currencies', icon: 'coins' },
       { to: '/provisioning', label: 'Provisioning', icon: 'umbrella' },
       { to: '/periods', label: 'Period close', icon: 'lock' },
     ],

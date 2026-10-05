@@ -41,9 +41,9 @@ def borrower_queryset():
             .annotate(
                 active_loans=Count("loans", filter=active, distinct=True),
                 total_outstanding=Coalesce(
-                    Sum(F("loans__principal_outstanding")
-                        + F("loans__interest_outstanding")
-                        + F("loans__penalties_outstanding"),
+                    Sum((F("loans__principal_outstanding")
+                         + F("loans__interest_outstanding")
+                         + F("loans__penalties_outstanding")) * F("loans__fx_rate"),
                         filter=active, output_field=_money),
                     Value(Decimal("0"), output_field=_money)),
             ))

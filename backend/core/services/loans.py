@@ -27,7 +27,7 @@ from ..models import (
     TxnType,
     User,
 )
-from . import charges, periods, workdays
+from . import charges, fx, periods, workdays
 from .amortisation import (
     MONTHLY,
     add_months,
@@ -205,13 +205,19 @@ def quote(product: LoanProduct, principal: Decimal, term: int,
     fees = q(admin + ins + other)
     # Salaries are monthly, so a weekly instalment is measured as what it comes to
     # over a month. Comparing the raw weekly figure would pass a loan that takes
-    # four times the limit.
+    # four times the limit. Salaries are also in the organisation's currency, so a
+    # foreign-currency instalment is measured at today's rate.
+    currency = fx.normalise(product.currency) or fx.base_currency()
+    rate = fx.rate_on(currency, disb)
     per_month = monthly_equivalent(rows[0].instalment, frequency)
+    per_month_base = fx.to_base(per_month, rate)
     aff_pct = affordable = None
     if borrower and borrower.net_salary and borrower.net_salary > 0:
-        aff_pct = q(per_month / borrower.net_salary * 100)
+        aff_pct = q(per_month_base / borrower.net_salary * 100)
         affordable = aff_pct <= product.max_instalment_to_salary_pct
     return {
+        "currency": currency,
+        "fx_rate": rate,
         "principal": q(principal),
         "term_months": term,
         "repayment_frequency": frequency,
@@ -234,7 +240,7 @@ def quote(product: LoanProduct, principal: Decimal, term: int,
         "affordability_pct": aff_pct,
         "affordable": affordable,
         "schedule": [vars(r) for r in rows],
-        "scorecard": (score_application(borrower, product, principal, term, per_month)
+        "scorecard": (score_application(borrower, product, principal, term, per_month_base)
                       if borrower else None),
     }
 
@@ -311,7 +317,7 @@ def apply(borrower: Borrower, product: LoanProduct, principal: Decimal, term: in
         branch_id=borrower.branch_id or getattr(officer, "branch_id", None),
         principal=q(principal), interest_rate_pct=product.interest_rate_pct,
         rate_method=product.rate_method, repayment_frequency=product.repayment_frequency,
-        term_months=term,
+        term_months=term, currency=qt["currency"], fx_rate=qt["fx_rate"],
         purpose=purpose, admin_fee=qt["admin_fee"], insurance_fee=qt["insurance_fee"],
         other_charges=qt["other_charges"],
         instalment_amount=qt["instalment_amount"], total_interest=qt["total_interest"],
@@ -333,10 +339,14 @@ def approve(loan: Loan, user: User) -> Loan:
     if user.id == loan.officer_id and user.role != Role.ADMIN:
         raise BusinessRuleError("The originating officer cannot approve their own loan")
     limit = OrganisationSetting.load().officer_approval_limit
-    if user.role != Role.ADMIN and loan.principal > limit:
+    # The limit is in the organisation's currency; a foreign loan is measured at
+    # today's rate.
+    principal_base = fx.to_base(loan.principal, fx.rate_on(loan.currency))
+    if user.role != Role.ADMIN and principal_base > limit:
         raise BusinessRuleError(
-            f"{loan.principal} is above the {limit} a loan officer may approve; "
-            f"this one needs an administrator")
+            f"{loan.principal} {loan.currency or fx.base_currency()} "
+            f"({principal_base} {fx.base_currency()}) is above the {limit} a loan officer "
+            f"may approve; this one needs an administrator")
     loan.status = LoanStatus.APPROVED
     loan.approved_at = datetime.now(timezone.utc)
     loan.approved_by = user
@@ -371,6 +381,10 @@ def disburse(loan: Loan, user: User, disbursement_date: date | None,
     _create_schedule(loan, rows)
 
     loan.status = LoanStatus.ACTIVE
+    # The rate the ledger carries this loan at, until the next revaluation: the
+    # spot rate on the day the money went out. Set before the Transaction below,
+    # whose posting reads it.
+    loan.fx_rate = fx.rate_on(loan.currency, disb)
     loan.disbursement_date = disb
     loan.first_instalment_date = first_due
     loan.maturity_date = rows[-1].due_date
@@ -386,7 +400,7 @@ def disburse(loan: Loan, user: User, disbursement_date: date | None,
     loan.charges_outstanding = ZERO
     loan.total_paid = ZERO
     loan.save(update_fields=[
-        "status", "disbursement_date", "first_instalment_date", "maturity_date",
+        "status", "fx_rate", "disbursement_date", "first_instalment_date", "maturity_date",
         "instalment_amount", "total_interest", "apr_pct", "principal_outstanding",
         "interest_outstanding", "penalties_outstanding", "charges_outstanding", "total_paid",
     ])

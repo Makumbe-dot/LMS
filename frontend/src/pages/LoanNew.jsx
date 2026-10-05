@@ -234,19 +234,19 @@ export default function LoanNew() {
                 items={[
                   [
                     `${frequencyLabel(quote.repayment_frequency)} instalment`,
-                    <strong key="i">{money(quote.instalment_amount)}</strong>,
+                    <strong key="i">{money(quote.instalment_amount, quote.currency)}</strong>,
                   ],
                   ...(quote.repayment_frequency !== 'monthly'
-                    ? [['Over a month', money(quote.monthly_equivalent)]]
+                    ? [['Over a month', money(quote.monthly_equivalent, quote.currency)]]
                     : []),
                   ['Method', `${pct(quote.interest_rate_pct)} / month, ${rateMethodLabel(quote.rate_method).toLowerCase()}`],
-                  ['Total interest', money(quote.total_interest)],
-                  ['Total repayable', money(quote.total_repayable)],
-                  ['Admin fee', money(quote.admin_fee)],
-                  ['Credit life fee', money(quote.insurance_fee)],
-                  ...(quote.charges || []).map((c) => [c.name, money(c.amount)]),
-                  ['Net disbursed', <strong key="n">{money(quote.net_disbursed)}</strong>],
-                  ['Total cost of credit', money(quote.total_cost_of_credit)],
+                  ['Total interest', money(quote.total_interest, quote.currency)],
+                  ['Total repayable', money(quote.total_repayable, quote.currency)],
+                  ['Admin fee', money(quote.admin_fee, quote.currency)],
+                  ['Credit life fee', money(quote.insurance_fee, quote.currency)],
+                  ...(quote.charges || []).map((c) => [c.name, money(c.amount, quote.currency)]),
+                  ['Net disbursed', <strong key="n">{money(quote.net_disbursed, quote.currency)}</strong>],
+                  ['Total cost of credit', money(quote.total_cost_of_credit, quote.currency)],
                   [
                     'APR, fees included',
                     quote.apr_pct === null ? '-' : <strong key="apr">{pct(quote.apr_pct)} a year</strong>,

@@ -7,6 +7,7 @@ from .views import (
     bankrec,
     borrowers,
     charges,
+    currencies,
     funding,
     groups,
     journals,
@@ -116,6 +117,13 @@ urlpatterns = [
     re_path(r"^loans/(?P<loan_id>\d+)/collateral/?$", loans.collateral),
     re_path(r"^loans/(?P<loan_id>\d+)/collateral/(?P<collateral_id>\d+)/?$",
             loans.collateral_detail),
+
+    # ---- currencies and the revaluation of foreign-currency loans
+    re_path(r"^currencies/?$", currencies.currencies),
+    re_path(r"^currencies/rates/?$", currencies.rates),
+    re_path(r"^currencies/rates/(?P<rate_id>\d+)/?$", currencies.rate_detail),
+    re_path(r"^currencies/revaluations/preview/?$", currencies.revaluation_preview),
+    re_path(r"^currencies/revaluations/?$", currencies.revaluations),
 
     # ---- provisioning (the literal paths must precede the numeric id route)
     re_path(r"^provisions/preview/?$", provisions.preview),

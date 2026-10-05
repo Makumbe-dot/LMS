@@ -307,6 +307,23 @@ def preflight(year: int, month: int) -> dict:
                    f"they will have to be re-dated after the close"),
     })
 
+    # 10. Advisory: foreign-currency loans not yet restated at the closing rate.
+    #     A monetary asset in another currency is reported at the closing rate,
+    #     and the revaluation is what moves it there.
+    from .fx import unrevalued_loans
+
+    stale = unrevalued_loans(end)
+    checks.append({
+        "key": "foreign_loans_revalued",
+        "label": "Foreign-currency loans are carried at the month-end rate",
+        "passed": stale == 0,
+        "blocking": False,
+        "overridable": False,
+        "detail": ("None open, or all restated" if stale == 0 else
+                   f"{stale} loan(s) still at an earlier rate — add the closing rates and run "
+                   f"the revaluation on the Currencies page"),
+    })
+
     blocking_failures = [c for c in checks if c["blocking"] and not c["passed"]]
     hard_failures = [c for c in blocking_failures if not c["overridable"]]
     return {
@@ -357,11 +374,11 @@ def reconciliation_now() -> dict:
     from . import ledger as gl
 
     by_code = {row["code"]: row["balance"] for row in gl.trial_balance()["rows"]}
-    active = Loan.objects.filter(status=LoanStatus.ACTIVE)
+    ledger_view = {row["code"]: row["book"] for row in gl.reconciliation()["rows"]}
     book = {
-        "1100": active.aggregate(v=Sum("principal_outstanding"))["v"] or ZERO,
-        "1300": active.aggregate(v=Sum("penalties_outstanding"))["v"] or ZERO,
-        "1400": active.aggregate(v=Sum("charges_outstanding"))["v"] or ZERO,
+        "1100": ledger_view["1100"],
+        "1300": ledger_view["1300"],
+        "1400": ledger_view["1400"],
         "2000": SavingsAccount.objects.aggregate(v=Sum("balance"))["v"] or ZERO,
     }
     names = {
@@ -412,9 +429,10 @@ def close_period(year: int, month: int, user: User | None, note: str | None = No
     period.snapshot_debits = balance["total_debit"]
     period.snapshot_credits = balance["total_credit"]
     period.snapshot_entries = checks["entries"]
-    period.snapshot_principal_outstanding = (
-        Loan.objects.filter(status=LoanStatus.ACTIVE)
-        .aggregate(v=Sum("principal_outstanding"))["v"] or ZERO)
+    from . import ledger as gl
+
+    period.snapshot_principal_outstanding = next(
+        r["book"] for r in gl.reconciliation()["rows"] if r["code"] == "1100")
     period.snapshot_savings_balance = (
         SavingsAccount.objects.aggregate(v=Sum("balance"))["v"] or ZERO)
     period.snapshot_json = json.dumps({

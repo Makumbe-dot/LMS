@@ -56,7 +56,7 @@ from ..models import (
     TxnType,
     User,
 )
-from . import periods, workdays
+from . import fx, periods, workdays
 from .amortisation import annual_percentage_rate, build_schedule, q, total_interest
 from .loans import _create_schedule, default_first_due, next_number, refresh_balances, sched
 
@@ -373,6 +373,9 @@ def _bring_over(borrower: Borrower, product: LoanProduct, plan: dict, row: dict,
         approved_at=datetime.combine(disbursed, datetime.min.time(), tzinfo=timezone.utc),
         approved_by=user, disbursement_date=disbursed, first_instalment_date=plan["first_due"],
         maturity_date=schedule[-1].due_date,
+        # Booked at the cut-over rate: that is the day the receivable enters this ledger.
+        currency=fx.normalise(product.currency) or fx.base_currency(),
+        fx_rate=fx.rate_on(product.currency, cutover),
     )
     rows = _create_schedule(loan, schedule)
     for ins, planned in zip(rows, plan["planned"]):

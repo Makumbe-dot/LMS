@@ -14,11 +14,18 @@ the instalment.
 Account codes are held in CODES below and seeded by `manage.py seed`; if an
 account is missing the entry is skipped rather than blocking the posting, so a
 half-configured chart of accounts can never stop a teller taking money.
+
+The ledger is kept in the organisation's currency. A loan in another currency is
+converted as it is posted: receivables at the loan's booked rate, as the change
+in their base-currency carrying value so the postings telescope exactly; cash
+and income at the spot rate of the day; the difference to 4800. See
+services/fx.py for the rules and the revaluation run.
 """
 import logging
 from decimal import Decimal
 
 from django.db import transaction as db_transaction
+from django.db.models.functions import Coalesce as Coalesce_
 
 from ..models import (
     AccountType,
@@ -54,6 +61,7 @@ CODES = {
     "savings_interest": "5200",
     "borrowing_interest": "5300",
     "facility_fees": "5310",
+    "fx_differences": "4800",
 }
 
 # Deliberately NOT in CODES, which is documented as the accounts this module posts
@@ -91,6 +99,7 @@ DEFAULT_ACCOUNTS = [
     ("1690", "Accumulated depreciation", AccountType.ASSET, "Contra-asset; carries a credit balance against 1600"),
     ("2900", "Accruals and other payables", AccountType.LIABILITY, "Bills received or expenses incurred and not yet paid"),
     ("3900", "Opening balances", AccountType.EQUITY, "Balances brought forward from a previous system; clear to retained earnings once agreed"),
+    ("4800", "Exchange differences", AccountType.INCOME, "Realised and unrealised gains and losses on foreign-currency loans; a loss shows as a negative balance"),
     ("4900", "Other income", AccountType.INCOME, "Income outside the loan book, and cash over at the tills"),
     ("6000", "Staff costs", AccountType.EXPENSE, "Salaries, wages, allowances and statutory contributions"),
     ("6100", "Rent and premises", AccountType.EXPENSE, "Rent, rates, utilities, security and cleaning"),
@@ -147,95 +156,166 @@ def _next_entry_no() -> str:
     return next_number("JE", width=8)
 
 
+# How each transaction type moves the three receivables, in the loan's currency.
+# Summed over a loan's transactions in id order this is the loan's outstanding
+# principal, penalties and charges after each one: that is what the ledger carries,
+# converted, and why a posting is the change in the converted figure (see fx.py).
+_PRINCIPAL_SIGN = {
+    TxnType.DISBURSEMENT: 1, TxnType.OPENING_BALANCE: 1, TxnType.CAPITALISATION: 1,
+    TxnType.REVERSAL: 1, TxnType.REPAYMENT: -1, TxnType.WRITE_OFF: -1,
+}
+_PENALTY_SIGN = {
+    TxnType.PENALTY: 1, TxnType.OPENING_BALANCE: 1, TxnType.REVERSAL: 1,
+    TxnType.REPAYMENT: -1, TxnType.WAIVER: -1, TxnType.WRITE_OFF: -1, TxnType.CAPITALISATION: -1,
+}
+_CHARGE_SIGN = {
+    TxnType.CHARGE_ADDED: 1, TxnType.REVERSAL: 1,
+    TxnType.REPAYMENT: -1, TxnType.WRITE_OFF: -1, TxnType.CAPITALISATION: -1,
+}
+
+
+def _movement(txn: Transaction, signs: dict, field: str) -> Decimal:
+    sign = signs.get(txn.txn_type, 0)
+    if not sign:
+        return ZERO
+    value = txn.amount if field == "amount" else getattr(txn, field)
+    return q(sign * (value or ZERO))
+
+
+def _receivables_after(txn: Transaction) -> tuple[Decimal, Decimal, Decimal]:
+    """(principal, penalties, charges) outstanding on the loan once `txn` has
+    been applied, from the transactions themselves rather than the loan's
+    columns, which a service may not have refreshed yet when the hook fires."""
+    from django.db.models import Case, DecimalField, F, Sum, Value, When
+
+    money = DecimalField(max_digits=18, decimal_places=2)
+
+    def signed(signs, field):
+        return Coalesce_(Sum(Case(
+            *[When(txn_type=kind, then=F(field) * Value(sign)) for kind, sign in signs.items()],
+            default=Value(ZERO), output_field=money), output_field=money), Value(ZERO, output_field=money))
+
+    totals = (Transaction.objects.filter(loan_id=txn.loan_id, id__lte=txn.id)
+              .aggregate(p=signed(_PRINCIPAL_SIGN, "principal_component"),
+                         pen=signed({**{k: v for k, v in _PENALTY_SIGN.items() if k != TxnType.PENALTY}},
+                                    "penalty_component"),
+                         pen_raised=signed({TxnType.PENALTY: 1}, "amount"),
+                         chg=signed({**{k: v for k, v in _CHARGE_SIGN.items() if k != TxnType.CHARGE_ADDED}},
+                                    "charge_component"),
+                         chg_raised=signed({TxnType.CHARGE_ADDED: 1}, "amount")))
+    return (q(totals["p"]), q(totals["pen"] + totals["pen_raised"]),
+            q(totals["chg"] + totals["chg_raised"]))
+
+
+def _converted_movements(txn: Transaction) -> tuple[Decimal, Decimal, Decimal]:
+    """The change each receivable account takes for `txn`, in the base currency.
+
+    For a base-currency loan this is simply the component, signed. For a foreign
+    one it is q(after x rate) - q(before x rate) at the booked rate, so the ledger's
+    carrying value is always exactly the converted outstanding figure.
+    """
+    from .fx import to_base
+
+    moves = (_movement(txn, _PRINCIPAL_SIGN, "principal_component"),
+             _movement(txn, _PENALTY_SIGN, "amount" if txn.txn_type == TxnType.PENALTY
+                       else "penalty_component"),
+             _movement(txn, _CHARGE_SIGN, "amount" if txn.txn_type == TxnType.CHARGE_ADDED
+                       else "charge_component"))
+    rate = txn.book_rate or Decimal("1")
+    if rate == 1:
+        return moves
+    after = _receivables_after(txn)
+    before = tuple(q(a - m) for a, m in zip(after, moves))
+    return tuple(q(to_base(a, rate) - to_base(b, rate)) for a, b in zip(after, before))
+
+
 def _lines_for(txn: Transaction) -> list[tuple[str, Decimal, Decimal, str]]:
     """(account code, debit, credit, description) for one transaction.
 
-    Every branch below must balance: total debits == total credits.
+    Every branch below must balance: total debits == total credits. Amounts are in
+    the base currency; `spot` converts cash and income, `d_principal`, `d_penalty`
+    and `d_charge` are the receivables' converted movements.
     """
-    loan = txn.loan
-    amount = q(txn.amount)
-    principal = q(txn.principal_component)
-    interest = q(txn.interest_component)
-    penalty = q(txn.penalty_component)
-    charge = q(txn.charge_component)
+    from .fx import to_base
 
+    loan = txn.loan
+    spot = txn.fx_rate or Decimal("1")
+    amount = to_base(txn.amount, spot)
+    interest = to_base(txn.interest_component, spot)
+    d_principal, d_penalty, d_charge = _converted_movements(txn)
+
+    def dr(code, value, text):
+        return (code, value, ZERO, text) if value >= 0 else (code, ZERO, -value, text)
+
+    def cr(code, value, text):
+        return (code, ZERO, value, text) if value >= 0 else (code, -value, ZERO, text)
+
+    lines = []
     if txn.txn_type == TxnType.DISBURSEMENT:
         # Dr the receivable with the full principal; the borrower gets the principal
         # less the upfront fees, which fall straight to income.
         fees = q(loan.admin_fee + loan.insurance_fee + loan.other_charges)
-        lines = [
-            (CODES["loans_receivable"], principal, ZERO, "Principal advanced"),
-            (CODES["bank"], ZERO, q(principal - fees), "Net paid to the borrower"),
-        ]
+        net = to_base(q(txn.principal_component - fees), spot)
+        lines = [dr(CODES["loans_receivable"], d_principal, "Principal advanced"),
+                 cr(CODES["bank"], net, "Net paid to the borrower")]
         if fees > 0:
-            lines.append((CODES["fee_income"], ZERO, fees, "Admin and credit-life fees"))
-        return lines
+            lines.append(cr(CODES["fee_income"], q(d_principal - net), "Admin and credit-life fees"))
 
-    if txn.txn_type == TxnType.PENALTY:
-        return [
-            (CODES["penalties_receivable"], amount, ZERO, "Late-payment penalty charged"),
-            (CODES["penalty_income"], ZERO, amount, "Late-payment penalty charged"),
-        ]
+    elif txn.txn_type == TxnType.PENALTY:
+        lines = [dr(CODES["penalties_receivable"], d_penalty, "Late-payment penalty charged"),
+                 cr(CODES["penalty_income"], d_penalty, "Late-payment penalty charged")]
 
-    if txn.txn_type == TxnType.REPAYMENT:
-        lines = [(CODES["bank"], amount, ZERO, "Repayment received")]
-        if principal > 0:
-            lines.append((CODES["loans_receivable"], ZERO, principal, "Principal repaid"))
+    elif txn.txn_type == TxnType.REPAYMENT:
+        lines = [dr(CODES["bank"], amount, "Repayment received")]
+        if d_principal != 0:
+            lines.append(cr(CODES["loans_receivable"], -d_principal, "Principal repaid"))
         if interest > 0:
-            lines.append((CODES["interest_income"], ZERO, interest, "Interest collected"))
-        if penalty > 0:
-            lines.append((CODES["penalties_receivable"], ZERO, penalty, "Penalty collected"))
-        if charge > 0:
-            lines.append((CODES["charges_receivable"], ZERO, charge, "Charge collected"))
-        return lines
+            lines.append(cr(CODES["interest_income"], interest, "Interest collected"))
+        if d_penalty != 0:
+            lines.append(cr(CODES["penalties_receivable"], -d_penalty, "Penalty collected"))
+        if d_charge != 0:
+            lines.append(cr(CODES["charges_receivable"], -d_charge, "Charge collected"))
 
-    if txn.txn_type == TxnType.REVERSAL:
-        # The exact mirror of the repayment being undone.
-        lines = [(CODES["bank"], ZERO, amount, "Repayment reversed")]
-        if principal > 0:
-            lines.append((CODES["loans_receivable"], principal, ZERO, "Principal restored"))
+    elif txn.txn_type == TxnType.REVERSAL:
+        # The exact mirror of the repayment being undone, at the rates it was
+        # posted at (copied onto the reversal by repayments.reverse_transaction).
+        lines = [cr(CODES["bank"], amount, "Repayment reversed")]
+        if d_principal != 0:
+            lines.append(dr(CODES["loans_receivable"], d_principal, "Principal restored"))
         if interest > 0:
-            lines.append((CODES["interest_income"], interest, ZERO, "Interest income reversed"))
-        if penalty > 0:
-            lines.append((CODES["penalties_receivable"], penalty, ZERO, "Penalty restored"))
-        if charge > 0:
-            lines.append((CODES["charges_receivable"], charge, ZERO, "Charge restored"))
-        return lines
+            lines.append(dr(CODES["interest_income"], interest, "Interest income reversed"))
+        if d_penalty != 0:
+            lines.append(dr(CODES["penalties_receivable"], d_penalty, "Penalty restored"))
+        if d_charge != 0:
+            lines.append(dr(CODES["charges_receivable"], d_charge, "Charge restored"))
 
-    if txn.txn_type == TxnType.WAIVER:
+    elif txn.txn_type == TxnType.WAIVER:
         # Waiving a penalty reverses income already recognised. Waiving interest
         # (the early-settlement rebate) touches nothing, because interest is only
         # recognised when it is collected.
-        if penalty > 0:
-            return [
-                (CODES["penalty_income"], penalty, ZERO, "Penalty waived"),
-                (CODES["penalties_receivable"], ZERO, penalty, "Penalty waived"),
-            ]
-        return []
+        if d_penalty != 0:
+            lines = [dr(CODES["penalty_income"], -d_penalty, "Penalty waived"),
+                     cr(CODES["penalties_receivable"], -d_penalty, "Penalty waived")]
 
-    if txn.txn_type == TxnType.WRITE_OFF:
-        # Only recognised balances leave the ledger: principal and penalties.
-        # Unearned interest was never income, so it is not an expense now.
-        recognised = q(principal + penalty + charge)
-        if recognised <= 0:
-            return []
-        lines = [(CODES["write_off"], recognised, ZERO, "Balance written off")]
-        if principal > 0:
-            lines.append((CODES["loans_receivable"], ZERO, principal, "Principal written off"))
-        if penalty > 0:
-            lines.append((CODES["penalties_receivable"], ZERO, penalty, "Penalties written off"))
-        if charge > 0:
-            lines.append((CODES["charges_receivable"], ZERO, charge, "Charges written off"))
-        return lines
+    elif txn.txn_type == TxnType.WRITE_OFF:
+        # Only recognised balances leave the ledger: principal, penalties and
+        # charges. Unearned interest was never income, so it is not an expense now.
+        recognised = q(-(d_principal + d_penalty + d_charge))
+        if recognised > 0:
+            lines = [dr(CODES["write_off"], recognised, "Balance written off")]
+            if d_principal != 0:
+                lines.append(cr(CODES["loans_receivable"], -d_principal, "Principal written off"))
+            if d_penalty != 0:
+                lines.append(cr(CODES["penalties_receivable"], -d_penalty, "Penalties written off"))
+            if d_charge != 0:
+                lines.append(cr(CODES["charges_receivable"], -d_charge, "Charges written off"))
 
-    if txn.txn_type == TxnType.CHARGE:
+    elif txn.txn_type == TxnType.CHARGE:
         # Raised and settled at the counter, unlike the fees netted off an advance.
-        return [
-            (CODES["bank"], amount, ZERO, "Charge collected"),
-            (CODES["fee_income"], ZERO, amount, "Charge income"),
-        ]
+        lines = [dr(CODES["bank"], amount, "Charge collected"),
+                 cr(CODES["fee_income"], amount, "Charge income")]
 
-    if txn.txn_type == TxnType.CAPITALISATION:
+    elif txn.txn_type == TxnType.CAPITALISATION:
         # Rescheduling rolls overdue interest, penalties and charges into a new
         # principal. The receivable grows by exactly what the other three shed.
         #
@@ -244,42 +324,50 @@ def _lines_for(txn: Transaction) -> list[tuple[str, Decimal, Decimal, str]]:
         # it stops being interest and becomes principal the borrower owes, and
         # leaving it unrecognised would put an asset on 1100 with nothing on the
         # other side.
-        lines = [(CODES["loans_receivable"], principal, ZERO, "Capitalised into a new principal")]
-        if interest > 0:
-            lines.append((CODES["interest_income"], ZERO, interest, "Overdue interest capitalised"))
-        if penalty > 0:
-            lines.append((CODES["penalties_receivable"], ZERO, penalty, "Penalties capitalised"))
-        if charge > 0:
-            lines.append((CODES["charges_receivable"], ZERO, charge, "Charges capitalised"))
-        return lines
+        lines = [dr(CODES["loans_receivable"], d_principal, "Capitalised into a new principal")]
+        capitalised_interest = q(d_principal + d_penalty + d_charge)
+        if capitalised_interest > 0:
+            lines.append(cr(CODES["interest_income"], capitalised_interest,
+                            "Overdue interest capitalised"))
+        if d_penalty != 0:
+            lines.append(cr(CODES["penalties_receivable"], -d_penalty, "Penalties capitalised"))
+        if d_charge != 0:
+            lines.append(cr(CODES["charges_receivable"], -d_charge, "Charges capitalised"))
 
-    if txn.txn_type == TxnType.CHARGE_ADDED:
+    elif txn.txn_type == TxnType.CHARGE_ADDED:
         # Added to the loan balance: a receivable now, cash when the borrower pays.
-        return [
-            (CODES["charges_receivable"], amount, ZERO, "Charge added to the balance"),
-            (CODES["fee_income"], ZERO, amount, "Charge income"),
-        ]
+        lines = [dr(CODES["charges_receivable"], d_charge, "Charge added to the balance"),
+                 cr(CODES["fee_income"], d_charge, "Charge income")]
 
-    if txn.txn_type == TxnType.RECOVERY:
-        return [
-            (CODES["bank"], amount, ZERO, "Recovery received"),
-            (CODES["recovery_income"], ZERO, amount, "Recovery on a written-off loan"),
-        ]
+    elif txn.txn_type == TxnType.RECOVERY:
+        lines = [dr(CODES["bank"], amount, "Recovery received"),
+                 cr(CODES["recovery_income"], amount, "Recovery on a written-off loan")]
 
-    if txn.txn_type == TxnType.OPENING_BALANCE:
+    elif txn.txn_type == TxnType.OPENING_BALANCE:
         # A loan brought over from another system: the receivables arrive, no cash
         # moves. The other side is 3900 Opening balances, which an accountant clears
         # against retained earnings once the migrated book is agreed. Interest is
         # not brought over, because it is recognised when collected.
-        lines = [(CODES["loans_receivable"], principal, ZERO, "Principal brought forward")]
-        if penalty > 0:
-            lines.append((CODES["penalties_receivable"], penalty, ZERO,
-                          "Penalties brought forward"))
-        lines.append((OPENING_BALANCES, ZERO, q(principal + penalty), "Opening balance"))
-        return lines
+        lines = [dr(CODES["loans_receivable"], d_principal, "Principal brought forward")]
+        if d_penalty != 0:
+            lines.append(dr(CODES["penalties_receivable"], d_penalty, "Penalties brought forward"))
+        lines.append(cr(OPENING_BALANCES, q(d_principal + d_penalty), "Opening balance"))
 
     # TxnType.FEE is informational: the fee is already inside the disbursement entry.
-    return []
+    lines = [(c, d, cr_, t) for c, d, cr_, t in lines if d > 0 or cr_ > 0]
+    if not lines:
+        return []
+
+    # On a foreign-currency loan the cash came in at today's rate and the
+    # receivable was carried at the booked one; what is left between them is a
+    # realised exchange difference. On a base-currency loan the rates are 1 and
+    # this is always zero.
+    gap = q(sum((d - c for _, d, c, _ in lines), ZERO))
+    if gap > 0:
+        lines.append((CODES["fx_differences"], ZERO, gap, "Realised exchange gain"))
+    elif gap < 0:
+        lines.append((CODES["fx_differences"], -gap, ZERO, "Realised exchange loss"))
+    return lines
 
 
 def would_post(txn: Transaction) -> bool:
@@ -666,10 +754,17 @@ def _backfill(limit: int | None = None) -> dict:
     tills = repost_variances()
     posted += tills["reposted"]
 
+    # And the restatement of foreign-currency loans at a closing rate.
+    from .fx import repost_runs as repost_revaluations
+
+    revaluations = repost_revaluations()
+    posted += revaluations["reposted"]
+
     return {"posted": posted, "skipped": skipped, "by_source": per_source,
             "provision_runs_reposted": reposted["reposted"],
             "manual_journals_reposted": journals["reposted"],
-            "till_variances_reposted": tills["reposted"]}
+            "till_variances_reposted": tills["reposted"],
+            "revaluation_runs_reposted": revaluations["reposted"]}
 
 
 def trial_balance(start=None, end=None, branch_id=None) -> dict:
@@ -830,6 +925,14 @@ def reconciliation(as_of=None) -> dict:
     def total(queryset, field):
         return queryset.aggregate(v=Sum(field))["v"] or ZERO
 
+    def converted(queryset, field):
+        # Each loan at its booked rate, rounded per loan: exactly what the ledger
+        # carries (see services/fx.py), so a foreign book reconciles to the cent.
+        from .fx import to_base
+
+        return q(sum((to_base(value, rate) for value, rate
+                      in queryset.values_list(field, "fx_rate")), ZERO))
+
     by_code = {row["code"]: row["balance"] for row in trial_balance(None, as_of)["rows"]}
     active = Loan.objects.filter(status=LoanStatus.ACTIVE)
     facilities = FundingFacility.objects.all()
@@ -839,12 +942,12 @@ def reconciliation(as_of=None) -> dict:
         txn_type=CapitalTxnType.REVERSAL)
 
     claims = [
-        ("1100", "Loans receivable", total(active, "principal_outstanding"),
-         "principal outstanding on active loans"),
-        ("1300", "Penalties receivable", total(active, "penalties_outstanding"),
-         "penalties outstanding on active loans"),
-        ("1400", "Charges receivable", total(active, "charges_outstanding"),
-         "charges outstanding on active loans"),
+        ("1100", "Loans receivable", converted(active, "principal_outstanding"),
+         "principal outstanding on active loans, at the booked rates"),
+        ("1300", "Penalties receivable", converted(active, "penalties_outstanding"),
+         "penalties outstanding on active loans, at the booked rates"),
+        ("1400", "Charges receivable", converted(active, "charges_outstanding"),
+         "charges outstanding on active loans, at the booked rates"),
         ("1900", "Provision for credit losses", -total(Loan.objects.all(), "provision_held"),
          "provision held across every loan"),
         ("2000", "Client funds payable", total(SavingsAccount.objects.all(), "balance"),

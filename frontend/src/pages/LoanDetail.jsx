@@ -227,6 +227,8 @@ export default function LoanDetail() {
   const minPostingDate = useMinPostingDate()
   const { toast, toastError } = useToast()
   const { data: loan, error, loading, reload } = useApi(`/api/loans/${id}`)
+  // Everything on this page is in the loan's own currency.
+  const lmoney = (value) => money(value, loan?.currency)
 
   const [tab, setTab] = useState('schedule')
   const [action, setAction] = useState(null) // { kind, txnId? }
@@ -401,7 +403,7 @@ export default function LoanDetail() {
                 </Link>,
               ],
               ['Product', loan.product_name],
-              ['Principal', money(loan.principal)],
+              ['Principal', lmoney(loan.principal)],
               [
                 'Rate',
                 `${pct(loan.interest_rate_pct)} per month, ${rateMethodLabel(loan.rate_method).toLowerCase()}`,
@@ -409,18 +411,18 @@ export default function LoanDetail() {
               ['Term', `${loan.term_months} ${termUnit(loan.repayment_frequency)}`],
               [
                 `${frequencyLabel(loan.repayment_frequency)} instalment`,
-                money(loan.instalment_amount),
+                lmoney(loan.instalment_amount),
               ],
-              ['Total interest', money(loan.total_interest)],
+              ['Total interest', lmoney(loan.total_interest)],
               [
                 'Upfront fees',
-                money(
+                lmoney(
                   (num(loan.admin_fee) ?? 0) +
                     (num(loan.insurance_fee) ?? 0) +
                     (num(loan.other_charges) ?? 0),
                 ),
               ],
-              ['Total cost of credit', money(loan.total_cost_of_credit)],
+              ['Total cost of credit', lmoney(loan.total_cost_of_credit)],
               [
                 'APR, fees included',
                 loan.apr_pct === null || loan.apr_pct === undefined ? '-' : `${pct(loan.apr_pct)} a year`,
@@ -461,19 +463,19 @@ export default function LoanDetail() {
           <h3>Balances</h3>
           <KeyValues
             items={[
-              ['Principal outstanding', money(loan.principal_outstanding)],
-              ['Interest outstanding', money(loan.interest_outstanding)],
-              ['Penalties outstanding', money(loan.penalties_outstanding)],
+              ['Principal outstanding', lmoney(loan.principal_outstanding)],
+              ['Interest outstanding', lmoney(loan.interest_outstanding)],
+              ['Penalties outstanding', lmoney(loan.penalties_outstanding)],
               ...((num(loan.charges_outstanding) ?? 0) > 0
-                ? [['Charges outstanding', money(loan.charges_outstanding)]]
+                ? [['Charges outstanding', lmoney(loan.charges_outstanding)]]
                 : []),
-              ['Total outstanding', <strong key="t">{money(loan.total_outstanding)}</strong>],
-              ['Total paid', money(loan.total_paid)],
+              ['Total outstanding', <strong key="t">{lmoney(loan.total_outstanding)}</strong>],
+              ['Total paid', lmoney(loan.total_paid)],
               [
                 'Arrears',
                 arrears > 0 ? (
                   <span className="tag-danger">
-                    {money(loan.arrears_amount)} ({loan.days_in_arrears} days)
+                    {lmoney(loan.arrears_amount)} ({loan.days_in_arrears} days)
                   </span>
                 ) : (
                   <span className="tag-ok">None</span>
@@ -700,12 +702,12 @@ export default function LoanDetail() {
           {(loan.collateral || []).length > 0 ? (
             <p className="muted" style={{ fontSize: 12, marginBottom: 0 }}>
               Total valuation{' '}
-              {money(
+              {lmoney(
                 (loan.collateral || [])
                   .filter((c) => c.status === 'pledged')
                   .reduce((sum, c) => sum + (num(c.estimated_value) ?? 0), 0),
               )}{' '}
-              against {money(loan.total_outstanding)} outstanding.
+              against {lmoney(loan.total_outstanding)} outstanding.
             </p>
           ) : null}
 
@@ -1125,7 +1127,7 @@ export default function LoanDetail() {
           <Field label="Narration" name="narration" />
           <p className="muted">
             Allocation order is penalties, then interest, then principal, oldest instalment first.
-            Total outstanding is {money(loan.total_outstanding)}; more than that is refused.
+            Total outstanding is {lmoney(loan.total_outstanding)}; more than that is refused.
           </p>
         </FormModal>
       ) : null}
@@ -1177,7 +1179,7 @@ export default function LoanDetail() {
           onSubmit={(v) => run(post(`/api/loans/${id}/write-off`, v), 'Loan written off')}
         >
           <p>
-            This writes off <strong>{money(loan.total_outstanding)}</strong> and closes the loan. It
+            This writes off <strong>{lmoney(loan.total_outstanding)}</strong> and closes the loan. It
             cannot be undone.
           </p>
           <Field as="textarea" label="Reason" name="narration" rows={3} required />
@@ -1231,26 +1233,26 @@ export default function LoanDetail() {
           <KeyValues
             items={[
               ['Quoted as at', settlement.as_of],
-              ['Principal outstanding', money(settlement.principal_outstanding)],
-              ['Interest accrued to date', money(settlement.interest_accrued)],
-              ['Penalties outstanding', money(settlement.penalties_outstanding)],
+              ['Principal outstanding', lmoney(settlement.principal_outstanding)],
+              ['Interest accrued to date', lmoney(settlement.interest_accrued)],
+              ['Penalties outstanding', lmoney(settlement.penalties_outstanding)],
               [
                 'Interest rebate',
                 <span key="r" className="tag-ok">
-                  −{money(settlement.interest_rebate)}
+                  −{lmoney(settlement.interest_rebate)}
                 </span>,
               ],
               [
                 'Settlement figure',
                 <strong key="s" style={{ fontSize: 16 }}>
-                  {money(settlement.settlement_amount)}
+                  {lmoney(settlement.settlement_amount)}
                 </strong>,
               ],
-              ['If run to term', money(settlement.total_outstanding)],
+              ['If run to term', lmoney(settlement.total_outstanding)],
               [
                 'Borrower saves',
                 <span key="v" className="tag-ok">
-                  {money(settlement.saving_vs_running_to_term)}
+                  {lmoney(settlement.saving_vs_running_to_term)}
                 </span>,
               ],
             ]}
@@ -1280,7 +1282,7 @@ export default function LoanDetail() {
             <Field label="Narration" name="narration" defaultValue="Early settlement" />
             <div className="row">
               <button className="btn primary" type="submit" disabled={busy}>
-                Take {money(settlement.settlement_amount)} and close
+                Take {lmoney(settlement.settlement_amount)} and close
               </button>
               <button type="button" className="btn" onClick={() => setSettlement(null)}>
                 Cancel
@@ -1327,7 +1329,7 @@ export default function LoanDetail() {
               ['Product', statement.product],
               [
                 'Principal',
-                `${money(statement.principal)} at ${pct(statement.rate_pct)}/month over ${statement.term} months`,
+                `${lmoney(statement.principal)} at ${pct(statement.rate_pct)}/month over ${statement.term} months`,
               ],
               [
                 'Disbursed',
@@ -1336,7 +1338,7 @@ export default function LoanDetail() {
               [
                 'Total outstanding',
                 <strong key="o">
-                  {money(statement.total_outstanding)} (principal{' '}
+                  {lmoney(statement.total_outstanding)} (principal{' '}
                   {fmt(statement.principal_outstanding)}, interest{' '}
                   {fmt(statement.interest_outstanding)}, penalties{' '}
                   {fmt(statement.penalties_outstanding)})

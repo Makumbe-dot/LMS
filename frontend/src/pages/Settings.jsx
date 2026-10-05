@@ -138,7 +138,7 @@ export default function Settings() {
             onChange={set('currency')}
             required
             maxLength={8}
-            hint="Shown against every amount in the app"
+            hint="The organisation's own currency: the ledger, savings and tills are kept in it. Loans may be in others; see Currencies."
           />
           <Field label="Phone" value={values.phone || ''} onChange={set('phone')} />
           <Field label="Email" value={values.email || ''} onChange={set('email')} />

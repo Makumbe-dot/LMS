@@ -11,6 +11,10 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 
 from core.models import (
+    BureauEnquiry,
+    ExchangeRate,
+    RevaluationLine,
+    RevaluationRun,
     AccountingPeriod,
     AuditLog,
     Borrower,
@@ -55,6 +59,7 @@ from core.models import (
 from core.services import loans as svc
 from core.services.amortisation import add_months, instalment_amount, monthly_equivalent, q
 from core.services import funding as funding_svc
+from core.services import fx
 from core.services import groups as group_svc
 from core.services import provisioning as provisioning_svc
 from core.services import savings as savings_svc
@@ -120,6 +125,13 @@ PRODUCTS = [
          min_amount=Decimal("200"), max_amount=Decimal("3000"),
          min_term_months=3, max_term_months=4, admin_fee_pct=Decimal("2"),
          insurance_fee_pct=Decimal("1"), penalty_rate_pct_per_day=Decimal("0.5"), grace_days=3),
+    # In another currency, to exercise the rate table and the revaluation run. The
+    # ledger stays in USD; this book is carried at the booked rate (see services/fx.py).
+    dict(code="ZWG-SAL", name="ZWG Salary Advance", currency="ZWG",
+         description="Short-term salary loan in local currency, repaid monthly",
+         interest_rate_pct=Decimal("10"), min_amount=Decimal("2000"), max_amount=Decimal("60000"),
+         min_term_months=1, max_term_months=6, admin_fee_pct=Decimal("3"),
+         insurance_fee_pct=Decimal("1"), penalty_rate_pct_per_day=Decimal("0.5"), grace_days=3),
     # Weekly, to exercise the repayment frequencies. Terms are in weeks.
     dict(code="GRP-WK", name="Group Business Loan",
          description="Working capital for group members, repaid weekly at the group meeting",
@@ -171,6 +183,10 @@ class Command(BaseCommand):
                 LoanNote.objects.all().delete()
                 ProvisionRunLine.objects.all().delete()
                 ProvisionRun.objects.all().delete()
+                RevaluationLine.objects.all().delete()
+                RevaluationRun.objects.all().delete()
+                ExchangeRate.objects.all().delete()
+                BureauEnquiry.objects.all().delete()
                 JournalLine.objects.all().delete()
                 JournalEntry.objects.all().delete()
                 LedgerAccount.objects.all().delete()
@@ -220,6 +236,13 @@ class Command(BaseCommand):
                 username=username, password=password, full_name=name, role=role,
                 branch=branches[index % len(branches)],
                 is_staff=(role == Role.ADMIN), is_superuser=(role == Role.ADMIN))
+        # The ZWG has been easing against the dollar for two years; one rate a
+        # quarter, so a loan disbursed a year ago is booked at a rate the
+        # revaluation run can move.
+        for months_back, rate in [(24, "0.040000"), (18, "0.038500"), (12, "0.037000"),
+                                  (6, "0.036000"), (3, "0.035200"), (0, "0.034800")]:
+            ExchangeRate.objects.create(code="ZWG", rate_date=add_months(date.today(), -months_back),
+                                        rate=Decimal(rate), note="Reserve Bank mid-rate")
         products = [LoanProduct.objects.create(**p) for p in PRODUCTS]
 
         # The charges catalogue, attached to the two salary products.
@@ -292,6 +315,9 @@ class Command(BaseCommand):
             # principal capped by affordability
             max_inst = (borrower.net_salary * product.max_instalment_to_salary_pct / 100
                         * Decimal("0.95"))
+            if product.currency:
+                # The salary is in USD; the instalment will be in the product's currency.
+                max_inst = max_inst / fx.rate_on(product.currency, today)
             per_thousand = monthly_equivalent(
                 instalment_amount(Decimal(1000), product.interest_rate_pct, term,
                                   product.rate_method, product.repayment_frequency),

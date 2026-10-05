@@ -23,6 +23,7 @@ from ..models import (
 )
 from . import arrears as arrears_svc
 from .amortisation import add_months, q
+from .fx import to_base
 from .arrears import BUCKETS, bucket_for  # noqa: F401 - re-exported; callers import from here
 from .loans import arrears
 
@@ -161,7 +162,8 @@ def portfolio_at_risk(as_of: date | None = None, branch_id=None) -> list[dict]:
             "phone": l.borrower.phone, "employer": l.borrower.employer,
             "officer": l.officer.full_name if l.officer else "-",
             "branch": l.branch.name if l.branch else "-",
-            "product": l.product.name, "principal_outstanding": l.principal_outstanding,
+            "product": l.product.name, "currency": l.currency or "",
+            "principal_outstanding": l.principal_outstanding,
             "total_outstanding": l.total_outstanding, "arrears_amount": amt,
             "days_in_arrears": days, "bucket": bucket_for(days),
             "penalties_outstanding": l.penalties_outstanding,
@@ -207,7 +209,7 @@ def loan_book(as_of: date | None = None) -> list[dict]:
         days = arrears_svc.days_from(l.oldest_arrears_due, as_of)
         out.append({
             "loan_no": l.loan_no, "loan_id": l.id, "borrower": l.borrower.full_name,
-            "product": l.product.name, "status": l.status,
+            "product": l.product.name, "status": l.status, "currency": l.currency or "",
             "disbursement_date": l.disbursement_date, "maturity_date": l.maturity_date,
             "principal": l.principal, "rate_pct": l.interest_rate_pct, "term": l.term_months,
             "instalment": l.instalment_amount,
@@ -367,16 +369,18 @@ def _performance_rows(loans, key_fn, label_fn, as_of: date | None = None) -> lis
             "total_outstanding": ZERO, "arrears_amount": ZERO, "loans_in_arrears": 0,
             "par_30_amount": ZERO,
         })
-        amount = q(Decimal(loan.arrears_amount or 0))
+        # In the organisation's currency, at each loan's booked rate.
+        rate = loan.fx_rate or 1
+        amount = to_base(loan.arrears_amount or 0, rate)
         days = arrears_svc.days_from(loan.oldest_arrears_due, as_of)
         row["active_loans"] += 1
-        row["principal_outstanding"] += loan.principal_outstanding
-        row["total_outstanding"] += loan.total_outstanding
+        row["principal_outstanding"] += to_base(loan.principal_outstanding, rate)
+        row["total_outstanding"] += to_base(loan.total_outstanding, rate)
         row["arrears_amount"] += amount
         if amount > 0:
             row["loans_in_arrears"] += 1
         if days > 30:
-            row["par_30_amount"] += loan.principal_outstanding
+            row["par_30_amount"] += to_base(loan.principal_outstanding, rate)
 
     out = []
     for row in groups.values():
@@ -487,9 +491,10 @@ def employers_with_active_loans(branch_id=None) -> list[dict]:
     # against.
     rows = (qs.values("borrower__employer")
             .annotate(loans=Count("id"),
-                      outstanding=Coalesce(Sum(F("principal_outstanding") + F("interest_outstanding")
-                                               + F("penalties_outstanding")
-                                               + F("charges_outstanding"), output_field=_money),
+                      outstanding=Coalesce(Sum((F("principal_outstanding") + F("interest_outstanding")
+                                                + F("penalties_outstanding")
+                                                + F("charges_outstanding")) * F("fx_rate"),
+                                               output_field=_money),
                                            Value(ZERO, output_field=_money)))
             .order_by("borrower__employer"))
     return [{"employer": r["borrower__employer"], "active_loans": r["loans"],

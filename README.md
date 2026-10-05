@@ -135,6 +135,20 @@ so a journal can never open a reconciliation break. Paying out more than the ban
 a closed month is refused, and a posted journal is reversed rather than deleted. Rebuild re-posts
 journals, so a journal wipe does not quietly drop every salary from the books.
 
+**Multi-currency** — the ledger, savings, funding and the tills are kept in the organisation's
+currency; a **product may lend in another**, and a loan sold under it is kept in that currency
+instalment by instalment. A **rate table** (base units per one unit of the currency, the latest
+rate on or before a date applies) converts every posting: the receivables are carried at the
+loan's **booked rate** (the spot rate on the day it was disbursed) as the change in their
+base-currency value, so the ledger equals outstanding-times-rate to the cent; cash and income go
+in at the day's spot rate; whatever lies between is a **realised exchange difference** on 4800. A
+**month-end revaluation** (the Currencies page, or `manage.py revalue_fx`) restates every open
+foreign loan at the closing rate, posts the unrealised difference, and moves the booked rate on;
+the period-close checks say when a loan is still at an earlier rate. Dashboards, PAR, provisions,
+exposure and the registers add foreign loans in at their booked rates; a loan's own pages and
+statement show its own currency. Affordability and the officer approval limit measure a foreign
+instalment or principal at today's rate.
+
 **Bank reconciliation** — a bank or mobile-money statement, exported as CSV (one signed amount
 column or money-in / money-out columns, ISO or day-first dates), is matched line by line against
 the ledger. Each line pairs with the one journal entry that moved exactly the same amount through
@@ -433,6 +447,7 @@ cd backend
 ..\.venv\Scripts\python.exe manage.py run_savings_interest [--dormant-after 6] [--skip-closed]
 ..\.venv\Scripts\python.exe manage.py accrue_borrowing_interest [--as-of 2026-09-30] [--skip-closed]
 ..\.venv\Scripts\python.exe manage.py run_provisions [--as-of 2026-09-30] [--dry-run] [--force]
+..\.venv\Scripts\python.exe manage.py revalue_fx [--as-of 2026-09-30] [--dry-run]
 ```
 
 The three monthly steps — savings interest, borrowing interest and the provision — run on the 1st
@@ -552,6 +567,7 @@ backend/                        Django project
       groups.py                 joint-liability groups and the borrowing rule
       savings.py                deposit accounts, interest, fees, dormancy
       ledger.py                 double-entry posting rules, trial balance, income statement
+      fx.py                     currencies, the rate table, conversion rules, revaluation runs
       imports.py                bulk repayment CSV: parse, validate, commit
       notifications.py          reminder and arrears message generation, outbox
       provisioning.py           booking the IFRS 9 expected credit loss movement
@@ -684,9 +700,9 @@ claims that can genuinely break — nine accounts against the sub-ledgers they a
 
 | Account | Equals |
 |---|---|
-| 1100 Loans receivable | principal outstanding on active loans |
-| 1300 Penalties receivable | penalties outstanding on active loans |
-| 1400 Charges receivable | charges outstanding on active loans |
+| 1100 Loans receivable | principal outstanding on active loans, each at its booked rate |
+| 1300 Penalties receivable | penalties outstanding on active loans, each at its booked rate |
+| 1400 Charges receivable | charges outstanding on active loans, each at its booked rate |
 | 1900 Provision for credit losses | provision held across every loan |
 | 2000 Client funds payable | savings balances |
 | 2100 Funder borrowings | principal outstanding on funding facilities |
@@ -941,5 +957,3 @@ What is deliberately not here, and why:
   management accounts in a small lender; statements audited under IFRS 9 would expect interest
   accrued at the effective rate with integral fees spread over the loan. Changing it rewrites the
   ledger rule the reconciliation tests protect, so it is an auditor's decision first.
-- **Multi-currency.** One currency per organisation. It needs a currency on product and loan, a
-  rate table, and a revaluation run.

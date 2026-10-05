@@ -6,7 +6,7 @@ import { useToast } from '../components/Toast.jsx'
 import { Check, ErrorBanner, Field, Loading, PageHeader } from '../components/ui.jsx'
 import { patch, post } from '../lib/api.js'
 import { useAuth } from '../lib/auth.jsx'
-import { fmt, frequencyLabel, pct, rateMethodLabel, termUnit } from '../lib/format.js'
+import { fmt, frequencyLabel, getCurrency, pct, rateMethodLabel, termUnit } from '../lib/format.js'
 import { useApi } from '../lib/useApi.js'
 
 const NUMERIC = [
@@ -72,6 +72,7 @@ export default function Products() {
           columns={[
             { key: 'code', header: 'Code', render: (r) => r.code },
             { key: 'name', header: 'Name', render: (r) => r.name },
+            { key: 'currency', header: 'Currency', render: (r) => r.currency || getCurrency() },
             {
               key: 'rate',
               header: 'Rate/month',
@@ -147,6 +148,14 @@ export default function Products() {
               hint={product ? 'The code identifies the product in the loan book' : undefined}
             />
             <Field label="Name" name="name" required defaultValue={product?.name || ''} />
+            <Field
+              label="Currency"
+              name="currency"
+              maxLength={8}
+              defaultValue={product?.currency || ''}
+              placeholder={getCurrency()}
+              hint={`Leave blank for ${getCurrency()}. Another currency needs a rate on the Currencies page first.`}
+            />
             <Field
               label="Interest %/month"
               name="interest_rate_pct"
