@@ -25,6 +25,11 @@ const NAV = [
       { to: '/arrears', label: 'Arrears / PAR' },
       { to: '/payroll', label: 'Payroll deductions' },
       { to: '/imports', label: 'Bulk repayments', roles: ['admin', 'loan_officer', 'teller'] },
+      {
+        to: '/payments/incoming',
+        label: 'Incoming payments',
+        roles: ['admin', 'loan_officer', 'teller'],
+      },
       { to: '/notifications', label: 'Messages' },
     ],
   },

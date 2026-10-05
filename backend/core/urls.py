@@ -9,6 +9,7 @@ from .views import (
     charges,
     funding,
     groups,
+    incoming,
     journals,
     ledger,
     loans,
@@ -42,6 +43,12 @@ urlpatterns = [
     re_path(r"^settings/?$", org.settings_view),
     re_path(r"^holidays/?$", org.holidays),
     re_path(r"^holidays/(?P<holiday_id>\d+)/?$", org.holiday_detail),
+
+    # ---- payments reported by mobile-money providers and banks
+    re_path(r"^payments/incoming/?$", incoming.payments),
+    re_path(r"^payments/incoming/(?P<payment_id>\d+)/assign/?$", incoming.assign),
+    re_path(r"^payments/incoming/(?P<payment_id>\d+)/dismiss/?$", incoming.dismiss),
+    re_path(r"^payments/incoming/(?P<provider>[A-Za-z][\w-]*)/?$", incoming.receive),
     re_path(r"^search/?$", org.search),
 
     # ---- borrowers

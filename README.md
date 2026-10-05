@@ -31,6 +31,18 @@ one falls a period after disbursement, moved to the group's meeting day when the
 group. Affordability is always measured on what the instalments come to over a month, because
 salaries are monthly. A loan keeps the frequency it was sold with.
 
+**Incoming payments** — a mobile-money provider or bank reports each payment as it arrives, and a
+payment that names a loan is posted to it at once, through the same waterfall as a teller's
+posting, with a receipt queued. The account the payer typed is read as a loan number (including
+a migrated loan's old number), then as a national id or borrower number, and failing that the
+number paid from is matched to a borrower; either of the last two only places the payment when it
+leads to exactly one active loan. Anything that cannot be placed safely, or that the loan would
+refuse (more than it owes, a closed month), waits on the **Incoming payments** page for a teller
+to place on a loan or an officer to set aside with the reason. Every delivery must be signed with
+the provider's shared secret, a provider retrying the same payment posts it once, and providers
+are configured entirely in `.env` (see `INCOMING_PAYMENT_PROVIDERS`), so a new one is not a code
+change.
+
 **Holiday calendar** — an administrator keeps a list of public holidays (a single date, or one that
 falls on the same day every year) and ticks the weekdays the offices are closed. No instalment
 falls due on a closed day: it moves to the next working day, for the same amount, since interest is
@@ -362,6 +374,9 @@ case-insensitive default collation. It covers:
 - sessions — renewal, rotation, sign-out, and revocation when an account is disabled or a role
   changes;
 - performance and payroll reports;
+- incoming payments — signatures refused, a provider's own field names, retries posting once,
+  matching by loan number, national id and phone, two possible loans held for a person, an
+  overpayment held, placing and setting aside, and the ledger still tied afterwards;
 - the holiday calendar — weekends and holidays moving a due date, a run of closed days, annual
   holidays, the amounts unchanged and the rest of the schedule unmoved, a late-declared holiday
   reaching unpaid future instalments but not past ones, and the maturity date following;
@@ -531,6 +546,8 @@ backend/                        Django project
     services/
       amortisation.py           reducing-balance and flat-rate schedules, monthly, fortnightly
                                 or weekly (Decimal, cent-exact), and the APR
+      incoming.py               payments reported by mobile-money providers and banks: the
+                                signature, matching to a loan, posting, the unmatched queue
       workdays.py               the holiday calendar: closed weekdays, public holidays, and
                                 moving a due date to the next working day
       loans.py                  quote, apply, approve, reject, disburse, balances, arrears,

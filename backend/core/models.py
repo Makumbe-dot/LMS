@@ -1180,6 +1180,55 @@ class TillSession(models.Model):
         return f"{self.session_no} {self.teller_id} {self.status}"
 
 
+# ---------------------------------------------------------------- incoming payments
+class IncomingPaymentStatus(models.TextChoices):
+    POSTED = "posted", "Posted to a loan"
+    UNMATCHED = "unmatched", "Waiting for someone to place it"
+    DISMISSED = "dismissed", "Dismissed"
+
+
+class IncomingPayment(models.Model):
+    """A payment a mobile-money provider or bank told us about, as it arrived.
+
+    One row per provider reference, so a provider delivering the same payment twice
+    (they all retry) posts it once. A payment that names a loan it can be posted to
+    is posted at once; anything else waits as unmatched until someone places it on
+    a loan or dismisses it (refunded, or not ours).
+    """
+    provider = models.CharField(max_length=40)
+    reference = models.CharField(max_length=80)
+    amount = models.DecimalField(**MONEY)
+    received_on = models.DateField()
+    # What the payer typed as the account (a loan number, national id or borrower
+    # number), and the number they paid from.
+    account = models.CharField(max_length=80, null=True, blank=True)
+    payer_phone = models.CharField(max_length=30, null=True, blank=True)
+    payer_name = models.CharField(max_length=120, null=True, blank=True)
+    payload = models.TextField(help_text="The body exactly as the provider sent it")
+    status = models.CharField(max_length=20, choices=IncomingPaymentStatus.choices,
+                              default=IncomingPaymentStatus.UNMATCHED, db_index=True)
+    note = models.CharField(max_length=255, null=True, blank=True)
+    loan = models.ForeignKey("Loan", on_delete=models.PROTECT, null=True, blank=True,
+                             related_name="incoming_payments")
+    transaction = models.OneToOneField("Transaction", on_delete=models.PROTECT, null=True,
+                                       blank=True, related_name="incoming_payment")
+    resolved_by = models.ForeignKey("User", on_delete=models.SET_NULL, null=True, blank=True,
+                                    related_name="+")
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "incoming_payments"
+        ordering = ["-id"]
+        constraints = [
+            models.UniqueConstraint(fields=["provider", "reference"],
+                                    name="uq_incoming_payment_provider_ref"),
+        ]
+
+    def __str__(self):
+        return f"{self.provider} {self.reference} {self.amount}"
+
+
 # ---------------------------------------------------------------- bank reconciliation
 class BankStatement(models.Model):
     """A bank or mobile-money statement, uploaded to be matched against the ledger.
