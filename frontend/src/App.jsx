@@ -13,10 +13,12 @@ import BorrowerForm from './pages/BorrowerForm.jsx'
 import Borrowers from './pages/Borrowers.jsx'
 import BulkImport from './pages/BulkImport.jsx'
 import Charges from './pages/Charges.jsx'
+import Claims from './pages/Claims.jsx'
 import Collections from './pages/Collections.jsx'
 import Dashboard from './pages/Dashboard.jsx'
 import Funding from './pages/Funding.jsx'
 import Groups from './pages/Groups.jsx'
+import IncomingPayments from './pages/IncomingPayments.jsx'
 import Journals from './pages/Journals.jsx'
 import Ledger from './pages/Ledger.jsx'
 import LoanBookImport from './pages/LoanBookImport.jsx'
@@ -95,6 +97,15 @@ export default function App() {
               </RequireRole>
             }
           />
+          <Route
+            path="/payments/incoming"
+            element={
+              <RequireRole roles={['admin', 'loan_officer', 'teller']}>
+                <IncomingPayments />
+              </RequireRole>
+            }
+          />
+          <Route path="/claims" element={<Claims />} />
           <Route path="/notifications" element={<Notifications />} />
 
           <Route path="/transactions" element={<Transactions />} />

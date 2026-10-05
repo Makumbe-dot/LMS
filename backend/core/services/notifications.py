@@ -58,8 +58,11 @@ def generate_reminders(as_of: date | None = None, days_before: int | None = None
     horizon = as_of + timedelta(days=days_before)
     currency = settings_row.currency
 
+    # No reminders or arrears notices while a credit-life claim is open: the
+    # borrower may have died.
     loans = (Loan.objects
              .filter(status=LoanStatus.ACTIVE)
+             .exclude(claims__status="lodged")
              .select_related("borrower", "product")
              .prefetch_related(Prefetch("instalments",
                                         queryset=Instalment.objects.order_by("number"))))

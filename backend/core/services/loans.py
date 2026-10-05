@@ -27,7 +27,7 @@ from ..models import (
     TxnType,
     User,
 )
-from . import charges, periods
+from . import charges, periods, workdays
 from .amortisation import (
     MONTHLY,
     add_months,
@@ -197,7 +197,7 @@ def quote(product: LoanProduct, principal: Decimal, term: int,
     first_due = default_first_due(disb, borrower.payday if borrower else None, frequency,
                                   meeting_day_of(borrower) if frequency != MONTHLY else None)
     rows = build_schedule(principal, product.interest_rate_pct, term, first_due,
-                          product.rate_method, frequency)
+                          product.rate_method, frequency, workdays.load())
     admin, ins = _fees(product, principal)
     catalogue = charges.quote_for(product, principal)
     other = q(sum((row["amount"] for row in catalogue), ZERO))
@@ -367,7 +367,7 @@ def disburse(loan: Loan, user: User, disbursement_date: date | None,
     if first_due <= disb:
         raise BusinessRuleError("First instalment date must be after the disbursement date")
     rows = build_schedule(loan.principal, loan.interest_rate_pct, loan.term_months, first_due,
-                          loan.rate_method, loan.repayment_frequency)
+                          loan.rate_method, loan.repayment_frequency, workdays.load())
     _create_schedule(loan, rows)
 
     loan.status = LoanStatus.ACTIVE
@@ -663,7 +663,7 @@ def reschedule(loan: Loan, user: User, new_term: int, new_rate: Decimal | None,
 
     loan.instalments.all().delete()
     rows = build_schedule(new_principal, rate, new_term, first, loan.rate_method,
-                          loan.repayment_frequency)
+                          loan.repayment_frequency, workdays.load())
     _create_schedule(loan, rows)
 
     loan.principal = new_principal

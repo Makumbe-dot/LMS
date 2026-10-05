@@ -36,6 +36,10 @@ from .models import (
     ManualJournal,
     ManualJournalLine,
     Guarantor,
+    ClaimCause,
+    Holiday,
+    IncomingPayment,
+    InsuranceClaim,
     Instalment,
     Loan,
     LoanNote,
@@ -599,8 +603,29 @@ class OrganisationSettingSerializer(serializers.ModelSerializer):
                   # The Settings page has always shown these; the API silently dropped
                   # them, so an edited approval limit was never saved.
                   "officer_approval_limit", "min_credit_score", "group_arrears_block_days",
-                  "require_open_till", "updated_at"]
+                  "require_open_till", "closed_weekdays", "updated_at"]
         read_only_fields = ["updated_at"]
+
+    def validate_closed_weekdays(self, value):
+        from .services.workdays import format_weekdays, parse_weekdays
+
+        try:
+            days = parse_weekdays(value)
+        except ValueError as exc:
+            raise serializers.ValidationError(str(exc))
+        if len(days) == 7:
+            raise serializers.ValidationError("The offices must open on at least one day a week")
+        return format_weekdays(days)
+
+
+class HolidaySerializer(serializers.ModelSerializer):
+    created_by_name = serializers.CharField(source="created_by.full_name", read_only=True,
+                                            default=None)
+
+    class Meta:
+        model = Holiday
+        fields = ["id", "date", "name", "recurs_annually", "created_by_name", "created_at"]
+        read_only_fields = ["created_at"]
 
 
 class DocumentUploadSerializer(serializers.Serializer):
@@ -1338,3 +1363,66 @@ STATUS_CHOICES = [s.value for s in LoanStatus]
 TXN_TYPE_CHOICES = [t.value for t in TxnType]
 RATE_METHOD_CHOICES = [m.value for m in RateMethod]
 NOTIFICATION_STATUS_CHOICES = [s.value for s in NotificationStatus]
+
+
+class IncomingPaymentSerializer(serializers.ModelSerializer):
+    loan_no = serializers.CharField(source="loan.loan_no", read_only=True, default=None)
+    borrower_name = serializers.CharField(source="loan.borrower.full_name", read_only=True,
+                                          default=None)
+    resolved_by_name = serializers.CharField(source="resolved_by.full_name", read_only=True,
+                                             default=None)
+
+    class Meta:
+        model = IncomingPayment
+        fields = ["id", "provider", "reference", "amount", "received_on", "account",
+                  "payer_phone", "payer_name", "status", "note", "loan", "loan_no",
+                  "borrower_name", "transaction", "resolved_by_name", "resolved_at",
+                  "created_at"]
+
+
+class IncomingAssignSerializer(serializers.Serializer):
+    loan_no = serializers.CharField(max_length=40)
+
+
+class IncomingDismissSerializer(serializers.Serializer):
+    note = serializers.CharField(max_length=255)
+
+
+class InsuranceClaimSerializer(serializers.ModelSerializer):
+    loan_no = serializers.CharField(source="loan.loan_no", read_only=True)
+    borrower_name = serializers.CharField(source="loan.borrower.full_name", read_only=True)
+    cause_label = serializers.CharField(source="get_cause_display", read_only=True)
+    lodged_by_name = serializers.CharField(source="lodged_by.full_name", read_only=True,
+                                           default=None)
+    decided_by_name = serializers.CharField(source="decided_by.full_name", read_only=True,
+                                            default=None)
+
+    class Meta:
+        model = InsuranceClaim
+        fields = ["id", "claim_no", "loan", "loan_no", "borrower_name", "cause", "cause_label",
+                  "event_date", "lodged_on", "lodged_by_name", "amount_claimed",
+                  "insurer_reference", "notes", "status", "amount_paid", "paid_on",
+                  "transaction", "remainder_written_off", "decided_by_name", "decided_at",
+                  "decision_note"]
+
+
+class ClaimLodgeSerializer(serializers.Serializer):
+    loan_no = serializers.CharField(max_length=40)
+    cause = serializers.ChoiceField(choices=ClaimCause.choices)
+    event_date = serializers.DateField()
+    insurer_reference = serializers.CharField(required=False, allow_null=True, allow_blank=True,
+                                              max_length=80)
+    notes = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+
+
+class ClaimPaySerializer(serializers.Serializer):
+    amount = money(min_value=Decimal("0.01"))
+    paid_on = serializers.DateField(required=False, allow_null=True)
+    reference = serializers.CharField(required=False, allow_null=True, allow_blank=True,
+                                      max_length=80)
+    write_off_remainder = serializers.BooleanField(default=False)
+    note = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+
+
+class ClaimRejectSerializer(serializers.Serializer):
+    note = serializers.CharField()

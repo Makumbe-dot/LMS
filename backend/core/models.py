@@ -293,6 +293,12 @@ class OrganisationSetting(models.Model):
     # has never used tills keeps posting until someone decides to start.
     require_open_till = models.BooleanField(default=False)
 
+    # Weekdays the offices are shut every week, as three-letter names ("sat,sun").
+    # An instalment never falls due on one of these, or on a public holiday; it moves
+    # to the next working day. Empty by default, so a book that has never set it
+    # keeps the due dates it always had.
+    closed_weekdays = models.CharField(max_length=40, default="", blank=True)
+
     updated_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
@@ -310,6 +316,28 @@ class OrganisationSetting(models.Model):
     def load(cls) -> "OrganisationSetting":
         obj, _ = cls.objects.get_or_create(pk=1)
         return obj
+
+
+class Holiday(models.Model):
+    """A public holiday: a day the offices are shut, so nothing falls due on it.
+
+    A holiday that `recurs_annually` is shut on the same day and month every year
+    (Christmas); one that does not is a single date (a moving feast, or a day
+    declared at short notice).
+    """
+    date = models.DateField(unique=True)
+    name = models.CharField(max_length=120)
+    recurs_annually = models.BooleanField(default=False)
+    created_by = models.ForeignKey("User", on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="+")
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "holidays"
+        ordering = ["date"]
+
+    def __str__(self):
+        return f"{self.date} - {self.name}"
 
 
 # ---------------------------------------------------------------- users
@@ -1150,6 +1178,115 @@ class TillSession(models.Model):
 
     def __str__(self):
         return f"{self.session_no} {self.teller_id} {self.status}"
+
+
+# ---------------------------------------------------------------- incoming payments
+class IncomingPaymentStatus(models.TextChoices):
+    POSTED = "posted", "Posted to a loan"
+    UNMATCHED = "unmatched", "Waiting for someone to place it"
+    DISMISSED = "dismissed", "Dismissed"
+
+
+class IncomingPayment(models.Model):
+    """A payment a mobile-money provider or bank told us about, as it arrived.
+
+    One row per provider reference, so a provider delivering the same payment twice
+    (they all retry) posts it once. A payment that names a loan it can be posted to
+    is posted at once; anything else waits as unmatched until someone places it on
+    a loan or dismisses it (refunded, or not ours).
+    """
+    provider = models.CharField(max_length=40)
+    reference = models.CharField(max_length=80)
+    amount = models.DecimalField(**MONEY)
+    received_on = models.DateField()
+    # What the payer typed as the account (a loan number, national id or borrower
+    # number), and the number they paid from.
+    account = models.CharField(max_length=80, null=True, blank=True)
+    payer_phone = models.CharField(max_length=30, null=True, blank=True)
+    payer_name = models.CharField(max_length=120, null=True, blank=True)
+    payload = models.TextField(help_text="The body exactly as the provider sent it")
+    status = models.CharField(max_length=20, choices=IncomingPaymentStatus.choices,
+                              default=IncomingPaymentStatus.UNMATCHED, db_index=True)
+    note = models.CharField(max_length=255, null=True, blank=True)
+    loan = models.ForeignKey("Loan", on_delete=models.PROTECT, null=True, blank=True,
+                             related_name="incoming_payments")
+    transaction = models.OneToOneField("Transaction", on_delete=models.PROTECT, null=True,
+                                       blank=True, related_name="incoming_payment")
+    resolved_by = models.ForeignKey("User", on_delete=models.SET_NULL, null=True, blank=True,
+                                    related_name="+")
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "incoming_payments"
+        ordering = ["-id"]
+        constraints = [
+            models.UniqueConstraint(fields=["provider", "reference"],
+                                    name="uq_incoming_payment_provider_ref"),
+        ]
+
+    def __str__(self):
+        return f"{self.provider} {self.reference} {self.amount}"
+
+
+# ---------------------------------------------------------------- credit-life claims
+class ClaimCause(models.TextChoices):
+    DEATH = "death", "Death"
+    DISABILITY = "disability", "Permanent disability"
+    RETRENCHMENT = "retrenchment", "Retrenchment"
+    OTHER = "other", "Other"
+
+
+class ClaimStatus(models.TextChoices):
+    LODGED = "lodged", "Lodged with the insurer"
+    PAID = "paid", "Paid"
+    REJECTED = "rejected", "Rejected"
+
+
+class InsuranceClaim(models.Model):
+    """A credit-life claim on a loan: the borrower died, was disabled or lost their
+    job, and the cover the credit-life fee bought is claimed against the balance.
+
+    While a claim is lodged the loan accrues no penalties and its borrower is sent
+    no reminders or arrears notices. When the insurer pays, the payout is posted to
+    the loan like any repayment, and whatever it does not cover may be written off.
+    """
+    claim_no = models.CharField(max_length=20, unique=True)
+    loan = models.ForeignKey("Loan", on_delete=models.PROTECT, related_name="claims")
+    cause = models.CharField(max_length=20, choices=ClaimCause.choices)
+    event_date = models.DateField()
+    lodged_on = models.DateField()
+    lodged_by = models.ForeignKey("User", on_delete=models.SET_NULL, null=True, blank=True,
+                                  related_name="+")
+    # What the loan owed when the claim was lodged: the figure the insurer is asked for.
+    amount_claimed = models.DecimalField(**MONEY)
+    insurer_reference = models.CharField(max_length=80, null=True, blank=True)
+    notes = models.TextField(null=True, blank=True)
+
+    status = models.CharField(max_length=20, choices=ClaimStatus.choices,
+                              default=ClaimStatus.LODGED, db_index=True)
+    amount_paid = models.DecimalField(null=True, blank=True, **MONEY)
+    paid_on = models.DateField(null=True, blank=True)
+    transaction = models.OneToOneField("Transaction", on_delete=models.PROTECT, null=True,
+                                       blank=True, related_name="claim")
+    remainder_written_off = models.DecimalField(default=ZERO, **MONEY)
+    decided_by = models.ForeignKey("User", on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="+")
+    decided_at = models.DateTimeField(null=True, blank=True)
+    decision_note = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "insurance_claims"
+        ordering = ["-id"]
+        constraints = [
+            # One open claim per loan: a second would claim the same balance twice.
+            models.UniqueConstraint(fields=["loan"], condition=models.Q(status="lodged"),
+                                    name="uq_claim_one_open_per_loan"),
+        ]
+
+    def __str__(self):
+        return f"{self.claim_no} {self.loan_id} {self.status}"
 
 
 # ---------------------------------------------------------------- bank reconciliation

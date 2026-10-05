@@ -298,6 +298,31 @@ MESSAGE_HTTP = {
     "headers": _pairs(env("MESSAGE_HTTP_HEADERS", "")),
 }
 
+# ---------------------------------------------------------------- incoming payments
+# Mobile-money providers and banks that tell this system about payments as they
+# arrive, at POST /api/payments/incoming/<provider>. See core/services/incoming.py.
+#
+# INCOMING_PAYMENT_PROVIDERS names them ("ecocash,bank"). For each NAME:
+#   INCOMING_<NAME>_SECRET    the shared secret the provider signs the body with
+#                             (HMAC-SHA256, hex). Required: a provider with no
+#                             secret is refused, never trusted.
+#   INCOMING_<NAME>_SIGNATURE_HEADER   where the signature arrives (X-Signature)
+#   INCOMING_<NAME>_METHOD    mobile_money (default) or bank_transfer
+#   INCOMING_<NAME>_FIELDS    where each value sits in the provider's body, as
+#                             "reference=transactionId|amount=amount|account=billRef|
+#                             phone=msisdn|name=payerName|date=transTime"; a dotted
+#                             path reaches into nested JSON. Unnamed fields keep
+#                             their own name.
+INCOMING_PAYMENTS = {
+    name.lower(): {
+        "secret": env(f"INCOMING_{name.upper()}_SECRET", ""),
+        "signature_header": env(f"INCOMING_{name.upper()}_SIGNATURE_HEADER", "X-Signature"),
+        "method": env(f"INCOMING_{name.upper()}_METHOD", "mobile_money"),
+        "fields": _pairs(env(f"INCOMING_{name.upper()}_FIELDS", "")),
+    }
+    for name in env_list("INCOMING_PAYMENT_PROVIDERS")
+}
+
 # Email, for the email channel when MESSAGE_EMAIL_BACKEND is "smtp".
 EMAIL_BACKEND = env("EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend")
 EMAIL_HOST = env("EMAIL_HOST", "")
