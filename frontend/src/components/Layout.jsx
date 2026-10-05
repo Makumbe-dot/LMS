@@ -2,10 +2,9 @@ import { NavLink, Outlet } from 'react-router-dom'
 
 import { useAuth } from '../lib/auth.jsx'
 import { humanise } from '../lib/format.js'
-import { useOrg } from '../lib/org.jsx'
 import { useTheme } from '../lib/theme.jsx'
-import { GroupLogos, GroupMark, GroupWordmark } from '../brand/brand.jsx'
 import GlobalSearch from './GlobalSearch.jsx'
+import { HexMark } from './ui.jsx'
 
 const NAV = [
   {
@@ -44,10 +43,6 @@ const NAV = [
     ],
   },
   {
-    heading: 'Governance',
-    items: [{ to: '/risks', label: 'Risk register' }],
-  },
-  {
     heading: 'Administration',
     items: [
       { to: '/products', label: 'Products' },
@@ -65,18 +60,15 @@ const THEME_LABEL = { system: 'Theme: auto', light: 'Theme: light', dark: 'Theme
 
 export default function Layout() {
   const { user, signOut, can } = useAuth()
-  const { orgName } = useOrg()
   const { theme, cycle } = useTheme()
 
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        {/* the group's wordmark beside the parent company's logo, as on the ERM app */}
-        <div className="brand" title={orgName || undefined}>
-          <GroupMark height={30} />
+        <div className="brand">
+          <HexMark />
           <div className="brand-text">
-            <GroupWordmark className="brand-name" />
-            <span className="brand-sub">Loan management</span>
+            <span className="brand-name">Loan Management System</span>
           </div>
         </div>
         <nav aria-label="Main">
@@ -99,8 +91,6 @@ export default function Layout() {
             )
           })}
         </nav>
-        {/* the group's companies */}
-        <GroupLogos height={28} className="sidebar-logos" />
         <div className="userbox">
           <div>{user?.full_name}</div>
           <div className="muted">

@@ -1,11 +1,11 @@
 import { useState } from 'react'
 
-import { GroupLogos, GroupWordmark } from '../brand/brand.jsx'
+import { HexMark } from '../components/ui.jsx'
 import { useAuth } from '../lib/auth.jsx'
 
 /**
- * One centred card on the honeycomb page, as on the group's ERM sign-in: the
- * companies' logos, "Welcome to", the wordmark, then the form.
+ * One centred card on the honeycomb page: the hexagon, "Welcome to", the
+ * wordmark, then the form.
  */
 export default function Login() {
   const { signIn, completeSignIn } = useAuth()
@@ -44,9 +44,13 @@ export default function Login() {
   return (
     <div className="login-page">
       <form className="signin-card" onSubmit={onSubmit} aria-labelledby="signin-title">
-        <GroupLogos height={mfaToken ? 64 : 84} className="signin-logos" />
+        <div className="signin-mark">
+          <HexMark size={mfaToken ? 40 : 48} />
+        </div>
         <p className="signin-welcome">Welcome to</p>
-        <GroupWordmark as="h1" className="signin-wordmark" id="signin-title" suffix="LMS" />
+        <h1 className="signin-wordmark" id="signin-title">
+          Loan Management System
+        </h1>
 
         {error ? (
           <p className="signin-err" role="alert">

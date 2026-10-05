@@ -13,7 +13,6 @@ from . import (  # noqa: F401
     products,
     provisions,
     reports,
-    risks,
     savings,
     tills,
 )

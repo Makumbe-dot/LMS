@@ -17,7 +17,6 @@ from .views import (
     products,
     provisions,
     reports,
-    risks,
     savings,
     tills,
 )
@@ -171,14 +170,6 @@ urlpatterns = [
     re_path(r"^journals/(?P<journal_id>\d+)/reject/?$", journals.reject_journal),
     re_path(r"^journals/(?P<journal_id>\d+)/reverse/?$", journals.reverse_journal),
     re_path(r"^journals/(?P<journal_id>\d+)/?$", journals.journal_detail),
-
-    # ---- risk register (the literal path must precede the numeric id routes)
-    re_path(r"^risks/summary/?$", risks.summary),
-    re_path(r"^risks/?$", risks.risks),
-    re_path(r"^risks/(?P<risk_id>\d+)/reviews/?$", risks.reviews),
-    re_path(r"^risks/(?P<risk_id>\d+)/close/?$", risks.close),
-    re_path(r"^risks/(?P<risk_id>\d+)/reopen/?$", risks.reopen),
-    re_path(r"^risks/(?P<risk_id>\d+)/?$", risks.risk_detail),
 
     # ---- reports
     re_path(r"^reports/dashboard/?$", reports.dashboard),

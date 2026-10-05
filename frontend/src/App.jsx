@@ -31,7 +31,6 @@ import Spreadsheets from './pages/Spreadsheets.jsx'
 import Periods from './pages/Periods.jsx'
 import Products from './pages/Products.jsx'
 import Provisioning from './pages/Provisioning.jsx'
-import Risks from './pages/Risks.jsx'
 import Savings from './pages/Savings.jsx'
 import Settings from './pages/Settings.jsx'
 import Till from './pages/Till.jsx'
@@ -108,7 +107,6 @@ export default function App() {
           <Route path="/provisioning" element={<Provisioning />} />
           <Route path="/periods" element={<Periods />} />
 
-          <Route path="/risks" element={<Risks />} />
 
           <Route path="/products" element={<Products />} />
           <Route path="/charges" element={<Charges />} />

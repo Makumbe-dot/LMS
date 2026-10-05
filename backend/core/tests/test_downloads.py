@@ -168,7 +168,7 @@ class ExcelEverywhereTests(DownloadBase):
     ENDPOINTS = ["/api/reports/loan-book", "/api/reports/par?as_of=2026-09-01",
                  "/api/reports/transactions?start=2026-01-01&end=2026-12-31",
                  "/api/ledger/trial-balance", "/api/ledger/journal", "/api/savings/accounts",
-                 "/api/reports/audit", "/api/journals", "/api/tills", "/api/risks",
+                 "/api/reports/audit", "/api/journals", "/api/tills",
                  "/api/funding/capital", "/api/groups/performance"]
 
     def test_each_listing_downloads_as_excel(self):

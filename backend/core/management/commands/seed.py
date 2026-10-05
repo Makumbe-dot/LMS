@@ -44,9 +44,6 @@ from core.models import (
     ProvisionRunLine,
     RateMethod,
     RepaymentFrequency,
-    Risk,
-    RiskCategory,
-    RiskReview,
     Role,
     SavingsAccount,
     SavingsProduct,
@@ -60,7 +57,6 @@ from core.services.amortisation import add_months, instalment_amount, monthly_eq
 from core.services import funding as funding_svc
 from core.services import groups as group_svc
 from core.services import provisioning as provisioning_svc
-from core.services import risks as risk_svc
 from core.services import savings as savings_svc
 from core.services.ledger import (
     balance_sheet,
@@ -144,55 +140,6 @@ EMPLOYERS = ["Ministry of Education", "City of Harare", "ZESA Holdings", "Econet
              "Harare City Council"]
 PURPOSES = ["School fees", "Medical expenses", "Home improvement", "Business stock",
             "Funeral expenses", "Rent", "Vehicle repair"]
-# (owner, months since raised, risk). Owners are spread across roles on purpose:
-# the teller and the read-only board member each maintain one, which is the point
-# of ownership being the permission rather than the role.
-RISKS = [
-    ("teller", 4, dict(
-        title="Cash shortages and theft at branch counters", category=RiskCategory.FRAUD,
-        description="Cash handled at the counter can go missing through error or theft, "
-                    "and a shortage found late is hard to attribute.",
-        inherent_likelihood=4, inherent_impact=3, residual_likelihood=3, residual_impact=3,
-        controls="Dual custody of the vault; tills counted and signed off at close; "
-                 "a cash limit per teller.",
-        action_plan="Install CCTV over the tills at Bulawayo and Mutare.")),
-    ("officer", 4, dict(
-        title="Employer collects payroll deductions but does not remit them",
-        category=RiskCategory.CREDIT,
-        description="Salary-based loans depend on employers passing deductions on. A "
-                    "struggling employer can hold them for months.",
-        inherent_likelihood=4, inherent_impact=4, residual_likelihood=3, residual_impact=4,
-        controls="Signed stop-order mandates; remittances reconciled monthly per employer.",
-        action_plan="Escalation letter after 30 days unremitted; suspend new lending to "
-                    "that employer's staff after 60.")),
-    ("admin", 2, dict(
-        title="Over-reliance on a single wholesale funder", category=RiskCategory.LIQUIDITY,
-        description="The book is funded by one facility. If it is not renewed, lending stops.",
-        inherent_likelihood=4, inherent_impact=5, residual_likelihood=3, residual_impact=5,
-        controls="Facility headroom watched weekly; outflows refused if cash would go negative.",
-        action_plan="Negotiate a second facility before the current one matures.")),
-    ("officer2", 1, dict(
-        title="Ghost borrowers created by a loan officer", category=RiskCategory.FRAUD,
-        inherent_likelihood=3, inherent_impact=5, residual_likelihood=2, residual_impact=4,
-        controls="Maker-checker approval; identity documents and payslips on file; every "
-                 "decision in the audit trail.")),
-    ("admin", 1, dict(
-        title="Core system outage or loss of data", category=RiskCategory.TECHNOLOGY,
-        inherent_likelihood=3, inherent_impact=5, residual_likelihood=2, residual_impact=4,
-        controls="Nightly checksummed backup, restored to prove it; borrower documents "
-                 "archived with it.",
-        action_plan="Move the database to full recovery with 15-minute log backups.")),
-    ("viewer", 1, dict(
-        title="Breach of data protection law over borrower records",
-        category=RiskCategory.COMPLIANCE,
-        inherent_likelihood=3, inherent_impact=4, residual_likelihood=2, residual_impact=3,
-        controls="Role-based access; sessions revoked on disable; audit log of every change.")),
-    ("officer", 1, dict(
-        title="Loan book concentrated in civil-service employers",
-        category=RiskCategory.CREDIT,
-        inherent_likelihood=3, inherent_impact=4, residual_likelihood=3, residual_impact=3,
-        controls="Exposure by employer reviewed at the monthly credit meeting.")),
-]
 
 STREETS = ["Samora Machel Ave", "Borrowdale Rd", "Chiremba Rd", "Seke Rd", "Bulawayo Rd"]
 JOBS = ["Teacher", "Clerk", "Nurse", "Technician", "Officer", "Driver", "Accountant"]
@@ -217,8 +164,6 @@ class Command(BaseCommand):
                 # which is a baffling way to learn the tool.
                 AccountingPeriod.objects.all().delete()
                 AuditLog.objects.all().delete()
-                RiskReview.objects.all().delete()
-                Risk.objects.all().delete()
                 Notification.objects.all().delete()
                 FacilityTransaction.objects.all().delete()
                 CapitalTransaction.objects.all().delete()
@@ -523,20 +468,6 @@ class Command(BaseCommand):
         with transaction.atomic():
             provision = provisioning_svc.run_provision(users["admin"], today)
 
-        # The risk register. Raised in the past, so the quarterly ones raised four
-        # months ago are overdue and the page opens with something to act on; the
-        # counter risk has since been reviewed once, so it shows a history.
-        with transaction.atomic():
-            for owner, months_ago, fields in RISKS:
-                risk_svc.raise_risk(owner=users[owner], raised_by=users["admin"],
-                                    today=add_months(today, -months_ago), **fields)
-            counter = Risk.objects.get(title__startswith="Cash shortages")
-            risk_svc.record_review(
-                counter, users["teller"], residual_likelihood=2, residual_impact=3,
-                note="No shortage above the tolerance since the per-teller cash limit came "
-                     "in. CCTV quote received.",
-                reviewed_on=today - timedelta(days=20), today=today)
-
         balance = trial_balance()
         sheet = balance_sheet()
         ties = reconciliation()
@@ -562,9 +493,6 @@ class Command(BaseCommand):
         self.stdout.write(
             f"Provision: {provision.run_no} for {provision.period_end}, required "
             f"{provision.provision_required}, movement {provision.movement}")
-        self.stdout.write(
-            f"Risk register: {Risk.objects.count()} risks, "
-            f"{Risk.objects.filter(next_review_on__lt=today).count()} overdue for review.")
         self.stdout.write(
             f"Ledger: {JournalEntry.objects.count()} entries, "
             f"Dr {balance['total_debit']} / Cr {balance['total_credit']}, "

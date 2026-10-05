@@ -48,9 +48,6 @@
   --accent-ink:      #0f1f3d;
   --link:            #1b5c9e;
   --link-strong:     #13457a;
-  /* "Insurance" in the group wordmark: the ERM app's gold word, in blue, deep
-     enough to read on white at the wordmark's size */
-  --brand-accent:    #1f8fd6;
   --focus-ring:      rgba(79, 179, 240, 0.35);
   /* kept for anything that still asks for "primary": the readable blue */
   --primary:         #1b5c9e;
@@ -84,12 +81,6 @@
   --badge-active-bg:  var(--good-soft);     --badge-active-fg:  #2b7a4b;
   --badge-closed-bg:  var(--surface-3);     --badge-closed-fg:  #5b6b82;
   --badge-bad-bg:     var(--critical-soft); --badge-bad-fg:     #ad3a29;
-
-  /* risk rating bands - always paired with the band written out */
-  --risk-low-bg:      #d8f3e4;  --risk-low-fg:      #105434;
-  --risk-medium-bg:   #fff3d6;  --risk-medium-fg:   #7d5100;
-  --risk-high-bg:     #ffe0c2;  --risk-high-fg:     #7a3500;
-  --risk-critical-bg: #f9cdc6;  --risk-critical-fg: #7d1d13;
 
   /* panels lift slightly off the honeycomb; only overlays cast real shadows */
   --shadow:      0 1px 2px rgba(15, 31, 61, 0.04), 0 6px 18px rgba(15, 31, 61, 0.05);
@@ -129,7 +120,6 @@
     --accent-ink:      #0b1322;
     --link:            #9dcbf0;
     --link-strong:     #c2e1f8;
-    --brand-accent:    #5dbbf2;
     --focus-ring:      rgba(93, 187, 242, 0.4);
     --primary:         #9dcbf0;
     --primary-hover:   #c2e1f8;
@@ -159,11 +149,6 @@
     --badge-active-fg:  #4cc486;
     --badge-closed-fg:  #a7b4c1;
     --badge-bad-fg:     #f07167;
-
-    --risk-low-bg:      #12392a;  --risk-low-fg:      #5fd19d;
-    --risk-medium-bg:   #3d2f10;  --risk-medium-fg:   #f0c060;
-    --risk-high-bg:     #4a2810;  --risk-high-fg:     #f6a35e;
-    --risk-critical-bg: #5a1d18;  --risk-critical-fg: #ff9e91;
 
     --shadow:      none;
     --shadow-pop:  0 16px 40px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.4);
@@ -197,7 +182,6 @@
   --accent-ink:      #0b1322;
   --link:            #9dcbf0;
   --link-strong:     #c2e1f8;
-  --brand-accent:    #5dbbf2;
   --focus-ring:      rgba(93, 187, 242, 0.4);
   --primary:         #9dcbf0;
   --primary-hover:   #c2e1f8;
@@ -227,11 +211,6 @@
   --badge-active-fg:  #4cc486;
   --badge-closed-fg:  #a7b4c1;
   --badge-bad-fg:     #f07167;
-
-  --risk-low-bg:      #12392a;  --risk-low-fg:      #5fd19d;
-  --risk-medium-bg:   #3d2f10;  --risk-medium-fg:   #f0c060;
-  --risk-high-bg:     #4a2810;  --risk-high-fg:     #f6a35e;
-  --risk-critical-bg: #5a1d18;  --risk-critical-fg: #ff9e91;
 
   --shadow:      none;
   --shadow-pop:  0 16px 40px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.4);
@@ -264,7 +243,7 @@ h2 { font-size: 26px; font-weight: 700; margin: 0; letter-spacing: -0.02em; line
 h3 { font-size: 15px; font-weight: 700; margin: 0 0 12px; letter-spacing: -0.01em; }
 
 /* ---------------------------------------------------------------- layout */
-.app-shell { display: grid; grid-template-columns: 252px 1fr; min-height: 100vh; }
+.app-shell { display: grid; grid-template-columns: 236px 1fr; min-height: 100vh; }
 
 .sidebar {
   background: var(--nav-bg);
@@ -282,17 +261,16 @@ h3 { font-size: 15px; font-weight: 700; margin: 0 0 12px; letter-spacing: -0.01e
   scrollbar-color: var(--border-strong) transparent;
 }
 
-/* wordmark: the parent company's logo, the group's name, and what this app is */
+/* wordmark: the hexagon, the name, and the organisation under it */
 .brand {
   display: flex; align-items: center; gap: 10px; flex: none;
-  height: var(--topbar-h); padding: 0 14px 0 16px;
+  height: var(--topbar-h); padding: 0 18px;
   border-bottom: 1px solid var(--border);
 }
 .brand-mark { flex: none; display: block; }
 .brand-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.15; }
 .brand-name {
-  font: 800 14.5px/1.15 var(--font-head); letter-spacing: -0.01em; color: var(--text);
-  white-space: nowrap;
+  font: 800 15px/1.2 var(--font-head); letter-spacing: -0.01em; color: var(--text);
 }
 .brand-sub {
   font-size: 12px; color: var(--nav-ink-2);
@@ -589,46 +567,6 @@ dl.kv > div:last-child > dt, dl.kv > div:last-child > dd { border-bottom: none; 
 .badge.posted, .badge.verified, .badge.matched { background: var(--badge-active-bg); color: var(--badge-active-fg); }
 .badge.reversed, .badge.ignored { background: var(--badge-closed-bg); color: var(--badge-closed-fg); }
 
-/* ---------------------------------------------------------------- risk register */
-.rating {
-  display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 12px;
-  font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap;
-}
-.rating-low      { background: var(--risk-low-bg);      color: var(--risk-low-fg); }
-.rating-medium   { background: var(--risk-medium-bg);   color: var(--risk-medium-fg); }
-.rating-high     { background: var(--risk-high-bg);     color: var(--risk-high-fg); }
-.rating-critical { background: var(--risk-critical-bg); color: var(--risk-critical-fg); }
-
-.risk-overview { display: grid; grid-template-columns: max-content 1fr; gap: 24px; align-items: start; }
-.heatmap { display: grid; grid-template-columns: auto auto; grid-template-rows: auto auto; gap: 4px 8px; }
-.heatmap-y-title {
-  writing-mode: vertical-rl; transform: rotate(180deg); text-align: center;
-  font: 600 11px var(--font-head); color: var(--muted); text-transform: uppercase; letter-spacing: .06em;
-}
-.heatmap-x-title {
-  grid-column: 2; text-align: center; font: 600 11px var(--font-head); color: var(--muted);
-  text-transform: uppercase; letter-spacing: .06em;
-}
-.heatmap-grid { display: flex; flex-direction: column; gap: 3px; }
-.heatmap-row { display: flex; gap: 3px; align-items: center; }
-.heatmap-y, .heatmap-x {
-  width: 40px; text-align: center; font-size: 11px; color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-.heatmap-y { width: 16px; }
-.heatmap-cell {
-  width: 40px; height: 40px; border: 2px solid transparent; border-radius: 4px;
-  font: inherit; font-weight: 700; cursor: pointer; padding: 0;
-}
-.heatmap-cell.empty { opacity: .45; cursor: default; }
-.heatmap-cell.selected { border-color: var(--text); }
-.heatmap-cell:hover:not(:disabled) { filter: brightness(1.06); }
-.risk-text { white-space: pre-wrap; margin: 4px 0 12px; }
-
-@media (max-width: 720px) {
-  .risk-overview { grid-template-columns: 1fr; }
-}
-
 .tag-danger { color: var(--danger); font-weight: 600; }
 .tag-ok { color: var(--ok); font-weight: 600; }
 .tag-warn { color: var(--warn); font-weight: 600; }
@@ -649,44 +587,6 @@ dl.kv > div:last-child > dt, dl.kv > div:last-child > dd { border-bottom: none; 
   border-radius: 2px 2px 0 0; background: var(--accent-strong);
 }
 
-/* ---------------------------------------------------------------- brand */
-/* Cell Insurance Group: the companies in one row of equal slots, whatever the
-   shape of each logo (src/brand/brand.jsx) */
-.brand-logos {
-  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
-  align-items: center; gap: 10px;
-}
-.brand-cell { display: flex; align-items: center; justify-content: center; min-width: 0; }
-.brand-logo { display: block; max-width: 100%; max-height: 100%; object-fit: contain; }
-.brand-parent-logo { display: block; flex: none; width: auto; max-width: 64px; object-fit: contain; }
-/* a company whose logo file has not been added yet: its name in the brand type */
-.brand-name-tile {
-  display: flex; align-items: center; justify-content: center;
-  width: 100%; height: 100%; padding: 0 6px;
-  border: 1px solid var(--border); border-radius: 8px; background: var(--surface);
-  color: var(--text); font-family: var(--font-head); font-weight: 800;
-  letter-spacing: -0.01em; line-height: 1.1; text-align: center; overflow: hidden;
-}
-.brand-accent { color: var(--brand-accent); }
-
-/* the logos carry navy lettering, which disappears on a dark surface */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme='light']) .brand-logo,
-  :root:not([data-theme='light']) .brand-parent-logo {
-    padding: 2px 4px; border-radius: 6px; background: #f5f7fa;
-  }
-}
-:root[data-theme='dark'] .brand-logo,
-:root[data-theme='dark'] .brand-parent-logo {
-  padding: 2px 4px; border-radius: 6px; background: #f5f7fa;
-}
-
-.sidebar-logos {
-  flex: none; gap: 6px; margin-top: auto; padding: 10px 14px;
-  border-top: 1px solid var(--border);
-}
-.sidebar-logos + .userbox { margin-top: 0; }
-
 /* ---------------------------------------------------------------- sign-in */
 .login-page {
   min-height: 100vh; display: flex; align-items: center; justify-content: center;
@@ -700,7 +600,7 @@ dl.kv > div:last-child > dt, dl.kv > div:last-child > dd { border-bottom: none; 
   border: 1px solid var(--border); border-radius: 14px; background: var(--surface);
   box-shadow: 0 12px 40px rgba(8, 17, 35, 0.1);
 }
-.signin-logos { margin-bottom: 22px; gap: 14px; }
+.signin-mark { display: flex; justify-content: center; margin-bottom: 16px; }
 .signin-welcome {
   margin: 0 0 2px; text-align: center; color: var(--muted);
   font: 500 15px/1.3 var(--font-sans);

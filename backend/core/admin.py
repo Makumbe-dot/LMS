@@ -33,8 +33,6 @@ from .models import (
     ProvisionRun,
     ProvisionRunLine,
     RevokedToken,
-    Risk,
-    RiskReview,
     SavingsAccount,
     SavingsProduct,
     SavingsTransaction,
@@ -225,27 +223,6 @@ class CollateralAdmin(admin.ModelAdmin):
     list_display = ("loan", "type", "description", "estimated_value", "status", "valuation_date")
     list_filter = ("type", "status")
     search_fields = ("description", "reference", "loan__loan_no")
-
-
-class RiskReviewInline(admin.TabularInline):
-    model = RiskReview
-    extra = 0
-    can_delete = False
-    readonly_fields = ("reviewed_on", "reviewed_by", "residual_likelihood", "residual_impact",
-                       "note", "next_review_on")
-
-    # The history is what makes a rating change accountable; it is not edited.
-    def has_add_permission(self, request, obj=None):
-        return False
-
-
-@admin.register(Risk)
-class RiskAdmin(admin.ModelAdmin):
-    list_display = ("risk_no", "title", "category", "owner", "residual_likelihood",
-                    "residual_impact", "next_review_on", "status")
-    list_filter = ("status", "category", "treatment", "branch")
-    search_fields = ("risk_no", "title", "description")
-    inlines = [RiskReviewInline]
 
 
 @admin.register(Charge)
