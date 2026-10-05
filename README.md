@@ -31,6 +31,16 @@ one falls a period after disbursement, moved to the group's meeting day when the
 group. Affordability is always measured on what the instalments come to over a month, because
 salaries are monthly. A loan keeps the frequency it was sold with.
 
+**Holiday calendar** — an administrator keeps a list of public holidays (a single date, or one that
+falls on the same day every year) and ticks the weekdays the offices are closed. No instalment
+falls due on a closed day: it moves to the next working day, for the same amount, since interest is
+charged per period, not per day. Only that one instalment moves. The dates after it still count
+from the first due date as agreed, so a holiday never drags the rest of the schedule along with it.
+Adding a holiday, or closing another weekday, also moves the unpaid instalments of running loans
+that now fall on a closed day, so a holiday declared at short notice reaches the loans already on
+the book. An instalment already due never moves, because that would rewrite its arrears history.
+Removing a holiday moves nothing back. The agreement says that a closed day moves the instalment.
+
 **Loan products** — **reducing-balance or flat-rate** interest, amount and term limits, upfront
 admin and credit-life fees (deducted at disbursement), daily penalty rate, grace days, and a
 maximum instalment-to-salary ratio, plus a **charges catalogue** of additional fees defined once
@@ -353,6 +363,9 @@ case-insensitive default collation. It covers:
 - sessions — renewal, rotation, sign-out, and revocation when an account is disabled or a role
   changes;
 - performance and payroll reports;
+- the holiday calendar — weekends and holidays moving a due date, a run of closed days, annual
+  holidays, the amounts unchanged and the rest of the schedule unmoved, a late-declared holiday
+  reaching unpaid future instalments but not past ones, and the maturity date following;
 - repayment frequencies — weekly and fortnightly schedules, the monthly rate scaled per period, the
   monthly schedule unchanged row for row, the group meeting day, affordability on a month of weekly
   instalments;
@@ -507,7 +520,7 @@ backend/                        Django project
     settings.py                 env-driven config, SQL Server connection, DRF + JWT
     urls.py                     /api, /admin, and the React SPA fallback
   core/
-    models.py                   branches, settings, users, borrowers, guarantors, documents,
+    models.py                   branches, settings, holidays, users, borrowers, guarantors, documents,
                                 products, loans, instalments, transactions, notes,
                                 notifications, manual journals, tills, bank statements,
                                 audit_log, sequences
@@ -519,6 +532,8 @@ backend/                        Django project
     services/
       amortisation.py           reducing-balance and flat-rate schedules, monthly, fortnightly
                                 or weekly (Decimal, cent-exact), and the APR
+      workdays.py               the holiday calendar: closed weekdays, public holidays, and
+                                moving a due date to the next working day
       loans.py                  quote, apply, approve, reject, disburse, balances, arrears,
                                 early settlement, top-up, reschedule, write-off, recoveries
       repayments.py             waterfall allocation, reversals, waivers
@@ -921,5 +936,3 @@ What is deliberately not here, and why:
   contract and its API.
 - **Multi-currency.** One currency per organisation. It needs a currency on product and loan, a
   rate table, and a revaluation run.
-- **A public-holiday calendar.** Instalments can fall due on a closed day; the product's grace days
-  already keep that from costing anyone a penalty.

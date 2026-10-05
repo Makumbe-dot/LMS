@@ -36,6 +36,7 @@ from .models import (
     ManualJournal,
     ManualJournalLine,
     Guarantor,
+    Holiday,
     Instalment,
     Loan,
     LoanNote,
@@ -599,8 +600,29 @@ class OrganisationSettingSerializer(serializers.ModelSerializer):
                   # The Settings page has always shown these; the API silently dropped
                   # them, so an edited approval limit was never saved.
                   "officer_approval_limit", "min_credit_score", "group_arrears_block_days",
-                  "require_open_till", "updated_at"]
+                  "require_open_till", "closed_weekdays", "updated_at"]
         read_only_fields = ["updated_at"]
+
+    def validate_closed_weekdays(self, value):
+        from .services.workdays import format_weekdays, parse_weekdays
+
+        try:
+            days = parse_weekdays(value)
+        except ValueError as exc:
+            raise serializers.ValidationError(str(exc))
+        if len(days) == 7:
+            raise serializers.ValidationError("The offices must open on at least one day a week")
+        return format_weekdays(days)
+
+
+class HolidaySerializer(serializers.ModelSerializer):
+    created_by_name = serializers.CharField(source="created_by.full_name", read_only=True,
+                                            default=None)
+
+    class Meta:
+        model = Holiday
+        fields = ["id", "date", "name", "recurs_annually", "created_by_name", "created_at"]
+        read_only_fields = ["created_at"]
 
 
 class DocumentUploadSerializer(serializers.Serializer):

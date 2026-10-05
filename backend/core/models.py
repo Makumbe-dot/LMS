@@ -293,6 +293,12 @@ class OrganisationSetting(models.Model):
     # has never used tills keeps posting until someone decides to start.
     require_open_till = models.BooleanField(default=False)
 
+    # Weekdays the offices are shut every week, as three-letter names ("sat,sun").
+    # An instalment never falls due on one of these, or on a public holiday; it moves
+    # to the next working day. Empty by default, so a book that has never set it
+    # keeps the due dates it always had.
+    closed_weekdays = models.CharField(max_length=40, default="", blank=True)
+
     updated_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
@@ -310,6 +316,28 @@ class OrganisationSetting(models.Model):
     def load(cls) -> "OrganisationSetting":
         obj, _ = cls.objects.get_or_create(pk=1)
         return obj
+
+
+class Holiday(models.Model):
+    """A public holiday: a day the offices are shut, so nothing falls due on it.
+
+    A holiday that `recurs_annually` is shut on the same day and month every year
+    (Christmas); one that does not is a single date (a moving feast, or a day
+    declared at short notice).
+    """
+    date = models.DateField(unique=True)
+    name = models.CharField(max_length=120)
+    recurs_annually = models.BooleanField(default=False)
+    created_by = models.ForeignKey("User", on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="+")
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "holidays"
+        ordering = ["date"]
+
+    def __str__(self):
+        return f"{self.date} - {self.name}"
 
 
 # ---------------------------------------------------------------- users
