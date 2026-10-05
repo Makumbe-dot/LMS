@@ -588,48 +588,167 @@ dl.kv > div:last-child > dt, dl.kv > div:last-child > dd { border-bottom: none; 
 }
 
 /* ---------------------------------------------------------------- sign-in */
+/* A story panel on the left, always dark whatever the theme (it sits on a photo or
+   the brand gradient), and the form on the page surface to its right. */
 .login-page {
-  min-height: 100vh; display: flex; align-items: center; justify-content: center;
-  padding: 20px;
+  min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(400px, 1fr);
   background-color: var(--page);
   background-image: var(--page-pattern);
   background-size: 56px 98px;
 }
+
+.story {
+  position: relative; overflow: hidden; isolation: isolate;
+  display: flex; flex-direction: column; min-height: 100vh;
+  padding: clamp(28px, 4.5vw, 64px);
+  color: #fff;
+  background:
+    radial-gradient(60% 50% at 85% 15%, rgba(79, 179, 240, 0.38), transparent 70%),
+    radial-gradient(55% 45% at 10% 95%, rgba(43, 155, 227, 0.32), transparent 70%),
+    linear-gradient(160deg, #0b1a33 0%, #0f2a52 48%, #0a1a35 100%);
+}
+/* The honeycomb, in white, faint, over the gradient. */
+.story::before {
+  content: ''; position: absolute; inset: 0; z-index: -1; opacity: 0.07;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='49' viewBox='0 0 28 49'%3E%3Cpath fill='%23ffffff' fill-rule='evenodd' d='M13.99 9.25l13 7.5v15l-13 7.5L1 31.75v-15l12.99-7.5zM3 17.9v12.7l10.99 6.34 11-6.35V17.9l-11-6.34L3 17.9zM0 15l12.98-7.5V0h-2v6.35L0 12.69v2.3zm0 18.5L12.98 41v8h-2v-6.85L0 35.81v-2.3zM15 0v7.5L27.99 15H28v-2.31h-.01L17 6.35V0h-2zm0 49v-8l12.99-7.5H28v2.31h-.01L17 42.15V49h-2z'/%3E%3C/svg%3E");
+  background-size: 56px 98px;
+  mask-image: linear-gradient(115deg, transparent 10%, #000 60%);
+}
+/* A photo per slide when one is supplied; a missing file simply leaves the gradient. */
+.story-photo {
+  position: absolute; inset: 0; z-index: -2;
+  background: var(--photo) center / cover no-repeat;
+  opacity: 0; transform: scale(1.06);
+  transition: opacity 1.2s ease, transform 7s ease-out;
+}
+.story-photo.on { opacity: 1; transform: scale(1); }
+.story-shade {
+  position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background: linear-gradient(90deg, rgba(6, 14, 30, 0.82) 0%, rgba(6, 14, 30, 0.45) 60%, rgba(6, 14, 30, 0.2) 100%),
+              linear-gradient(0deg, rgba(6, 14, 30, 0.85) 0%, transparent 45%);
+}
+
+.story-brand { display: flex; align-items: center; gap: 14px; }
+.story-logo {
+  display: grid; place-items: center; width: 58px; height: 58px; border-radius: 50%;
+  background: #fff; box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.14), 0 10px 30px rgba(0, 0, 0, 0.3);
+}
+.story-logo .brand-mark path:last-child { stroke: #0f1f3d; }
+.story-brand strong { display: block; font: 700 21px/1.2 var(--font-head); letter-spacing: -0.01em; }
+.story-brand small { display: block; margin-top: 2px; color: rgba(255, 255, 255, 0.72); font-size: 13.5px; }
+
+.story-copy { margin-top: auto; max-width: 640px; padding-top: 48px; animation: story-in 0.7s ease both; }
+@keyframes story-in { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+.story-tag {
+  display: inline-flex; align-items: center; gap: 9px; padding: 8px 16px; border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.22); background: rgba(79, 179, 240, 0.22);
+  backdrop-filter: blur(6px);
+  font: 600 13.5px/1 var(--font-sans);
+}
+.story-copy h2 {
+  margin: 22px 0 16px; color: #fff;
+  font: 800 clamp(34px, 4.6vw, 60px)/1.04 var(--font-head); letter-spacing: -0.03em;
+}
+.story-copy p {
+  max-width: 560px; margin: 0; color: rgba(255, 255, 255, 0.78);
+  font-size: clamp(15px, 1.35vw, 18.5px); line-height: 1.6;
+}
+
+.story-progress { display: flex; gap: 10px; max-width: 640px; margin: 34px 0 0; }
+.story-progress button {
+  flex: 1; height: 18px; padding: 7px 0; border: 0; background: none; cursor: pointer;
+}
+.story-progress button span {
+  display: block; height: 4px; border-radius: 4px; overflow: hidden;
+  background: rgba(255, 255, 255, 0.22); position: relative;
+}
+.story-progress button span::after {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; background: #fff;
+  transform-origin: left; transform: scaleX(0);
+}
+.story-progress button.done span::after { transform: scaleX(1); }
+.story-progress button.on span::after { animation: story-fill var(--slide-ms) linear forwards; }
+.story-progress button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; border-radius: 4px; }
+@keyframes story-fill { to { transform: scaleX(1); } }
+
+.story-features {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px;
+  margin: 40px 0 0; padding: 0; list-style: none;
+}
+.story-features li {
+  display: flex; align-items: center; gap: 13px; padding: 15px 16px; border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.14); background: rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(8px);
+}
+.story-icon {
+  display: grid; place-items: center; flex: none; width: 40px; height: 40px; border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1); color: #bfe4fb;
+}
+.story-features strong { display: block; font: 700 14.5px/1.25 var(--font-head); }
+.story-features small { display: block; margin-top: 2px; color: rgba(255, 255, 255, 0.62); font-size: 12.5px; }
+
+.signin-side {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 32px clamp(20px, 4vw, 56px);
+}
 .signin-card {
-  width: 100%; max-width: 440px; padding: 34px 32px;
-  border: 1px solid var(--border); border-radius: 14px; background: var(--surface);
-  box-shadow: 0 12px 40px rgba(8, 17, 35, 0.1);
+  width: 100%; max-width: 420px; padding: 38px 36px;
+  border: 1px solid var(--border); border-radius: 20px; background: var(--surface);
+  box-shadow: 0 1px 2px rgba(8, 17, 35, 0.04), 0 24px 60px rgba(8, 17, 35, 0.12);
 }
-.signin-mark { display: flex; justify-content: center; margin-bottom: 16px; }
-.signin-welcome {
-  margin: 0 0 2px; text-align: center; color: var(--muted);
-  font: 500 15px/1.3 var(--font-sans);
-}
+.signin-mark { display: flex; margin-bottom: 20px; }
 .signin-wordmark {
-  margin: 0 0 22px; text-align: center; color: var(--text);
-  font: 800 27px/1.15 var(--font-head); letter-spacing: -0.02em;
+  margin: 0 0 6px; color: var(--text);
+  font: 800 28px/1.15 var(--font-head); letter-spacing: -0.025em;
 }
+.signin-welcome { margin: 0 0 26px; color: var(--muted); font: 400 15px/1.45 var(--font-sans); }
 .signin-label {
-  display: block; margin-bottom: 5px; color: var(--muted);
-  font: 600 11.5px/1.3 var(--font-sans); letter-spacing: 0.09em; text-transform: uppercase;
+  display: block; margin-bottom: 6px; color: var(--text-secondary);
+  font: 600 13px/1.3 var(--font-sans);
 }
 .signin-input {
-  display: block; width: 100%; height: 42px; margin-bottom: 15px; padding: 0 12px;
-  border-radius: 7px; font-size: 15px;
+  display: block; width: 100%; height: 46px; margin-bottom: 18px; padding: 0 14px;
+  border-radius: 10px; font-size: 15px;
 }
-.signin-btn { width: 100%; min-height: 42px; margin-top: 2px; font-size: 14.5px; font-weight: 600; }
+.signin-code { letter-spacing: 0.3em; font: 600 20px/1 var(--font-mono); text-align: center; }
+.signin-password { position: relative; }
+.signin-password .signin-input { padding-right: 68px; }
+.signin-reveal {
+  position: absolute; top: 7px; right: 7px; height: 32px; padding: 0 10px; border: 0;
+  border-radius: 7px; background: var(--surface-sunken); color: var(--link);
+  font: 600 12.5px/1 var(--font-sans); cursor: pointer;
+}
+.signin-reveal:hover { background: var(--surface-3); }
+.signin-btn {
+  width: 100%; min-height: 48px; margin-top: 4px; border-radius: 10px;
+  font-size: 15px; font-weight: 700;
+}
 .signin-err, .signin-note {
-  margin: 0 0 16px; padding: 9px 12px; border-radius: 7px;
+  margin: 0 0 18px; padding: 10px 13px; border-radius: 10px;
   font-size: 13px; font-weight: 500; line-height: 1.45;
 }
 .signin-err { background: var(--critical-soft); color: var(--danger); }
 .signin-note { background: var(--info-soft); color: var(--info); }
 .signin-hint {
-  margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border);
-  color: var(--muted); font-size: 12px; line-height: 1.6;
+  margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--border);
+  color: var(--muted); font-size: 12.5px; line-height: 1.6;
 }
 .signin-hint .demo { display: block; margin-top: 6px; color: var(--faint); }
 .signin-hint .btn-link { font-weight: 600; font-size: 12.5px; }
+
+/* Narrow screens: the story becomes a banner above the form, without the cards. */
+@media (max-width: 960px) {
+  .login-page { grid-template-columns: 1fr; }
+  .story { min-height: 0; padding: 28px 20px 30px; }
+  .story-copy { padding-top: 36px; }
+  .story-features { display: none; }
+  .signin-side { padding: 28px 16px 40px; justify-content: flex-start; }
+  .signin-card { padding: 30px 22px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .story-copy, .story-photo { animation: none; transition: none; }
+  .story-progress button.on span::after { animation: none; transform: scaleX(1); }
+}
 
 /* ---------------------------------------------------------------- overlays */
 .modal-backdrop {

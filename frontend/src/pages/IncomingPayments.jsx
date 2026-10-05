@@ -112,7 +112,15 @@ export default function IncomingPayments() {
                   r.loan ? <Link to={`/loans/${r.loan}`}>{r.loan_no}</Link> : '-',
               },
               { key: 'status', header: 'Status', render: (r) => <Badge value={r.status} /> },
-              { key: 'note', header: 'Note', render: (r) => r.note || '-' },
+              {
+                key: 'note',
+                header: 'Note',
+                render: (r) => (
+                  <span style={{ display: 'inline-block', maxWidth: 260, whiteSpace: 'normal' }}>
+                    {r.note || '-'}
+                  </span>
+                ),
+              },
               {
                 key: 'act',
                 header: '',
