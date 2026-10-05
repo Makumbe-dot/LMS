@@ -397,6 +397,15 @@ case-insensitive default collation. It covers:
   across a book put through repayments, penalties, charges, waivers, reversals and a reschedule;
 - **query counts** — each report is run against a book, then against twice the book, and the count
   must not change. A regression to a query per loan fails the suite rather than merely getting slow;
+- the holiday calendar — due dates stepping over closed days, and running loans moved when a
+  holiday is declared;
+- the credit bureau — the register, the three backends (the http one against a fake bureau),
+  what is kept from a report, and how the scorecard reads it;
+- multi-currency — a foreign loan reconciling to the cent through disbursement, repayment at a new
+  rate, reversal, nine rounded repayments, the revaluation run and a rebuild;
+- the effective interest method — the schedule's totals, the deferral at disbursement, the accrual,
+  repayments before and after it, settlement, write-off, reschedule, rebuild, and that the basis
+  cannot change on a running book;
 - sessions — renewal, rotation, sign-out, and revocation when an account is disabled or a role
   changes;
 - performance and payroll reports;
@@ -604,27 +613,31 @@ backend/                        Django project
     exports.py                  Excel workbooks: header styling, filters, totals that follow them
     documents.py                statements as Excel and as PDF (reportlab)
     templates/core/             the printable loan agreement
-    views/                      auth, borrowers, products, charges, loans, groups, savings,
-                                ledger, journals, funding, provisions, periods, reports,
-                                tills, bankrec, org
+    views/                      auth, borrowers (and the bureau), products, charges, loans,
+                                groups, savings, ledger, journals, funding, currencies,
+                                provisions, periods, reports, tills, bankrec, org
     authentication.py           JWT auth that honours revocation
     management/commands/        seed, run_penalties, run_savings_interest, run_provisions,
-                                accrue_borrowing_interest, send_reminders, close_period,
-                                reopen_period, prune_tokens, reset_mfa
+                                accrue_borrowing_interest, accrue_interest, revalue_fx,
+                                send_reminders, close_period, reopen_period, prune_tokens,
+                                reset_mfa
     tests/                      the test suite
 frontend/                       React + Vite single-page app
   src/
     lib/        api.js (fetch + JWT), auth.jsx, org.jsx, periods.jsx, theme.jsx, format.js,
                 useApi.js
-    components/ Layout, GlobalSearch, DataTable, Modal, Toast, GroupedBars, HBars,
+    components/ Layout (the sidebar in sections, the top bar, the rail and the drawer),
+                Icons, GlobalSearch, DataTable, Modal, Toast, GroupedBars, HBars, Donut,
                 LoanTable, ui.jsx
-    pages/      Login, Dashboard, Borrowers, Groups, Loans, Savings, Collections, Till, Arrears,
-                Payroll, BulkImport, LoanBookImport, Notifications, Transactions, Ledger,
-                Journals, BankRec, Funding, Performance, Provisioning, Periods, Products,
-                Charges, Users, Settings, Account, Audit
+    pages/      Login (the slideshow), Dashboard, Borrowers, Groups, Loans, Savings,
+                Collections, Till, Arrears, Payroll, BulkImport, LoanBookImport,
+                Notifications, Transactions, Ledger, Journals, BankRec, Funding, Currencies,
+                Performance, Provisioning, Periods, Products, Charges, Users, Settings,
+                Account, Audit
     test/       setup.js (jsdom, storage, a loud default fetch) and harness.jsx
                 (renderPage with the providers stubbed, stubApi by path fragment)
-    styles.css  design tokens, light and dark themes
+    styles.css  design tokens, light and dark themes, the shell, the sign-in scenes
+  public/login/ drop slide-1.jpg .. slide-4.jpg here for photographs on the sign-in page
 sql/
   01_create_database.sql        create the LMS database (run first)
   02_app_login.sql              optional SQL login and a read-only analyst login
