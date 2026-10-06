@@ -68,27 +68,40 @@ export function Delta({ dir, text, vs, good }) {
  * tinted icon chip (tone: brand | ink | blue | green | amber | red | violet | slate); with `to`
  * the whole tile is a link to the page behind the number. The foot holds either
  * a `delta` (which way it moved) or a line of context (`foot`), and a `trend`.
+ * A `lead` tile is one of the few figures the page opens with: a larger value,
+ * and its trend drawn across the full width of the tile. `title` is shown on
+ * hover over the value, for the exact figure behind a shortened one.
  */
-export function Kpi({ label, value, sub, icon, tone, to, delta, foot, trend, trendLabel }) {
-  const className = `kpi${tone ? ` tone-${tone}` : ''}${to ? ' linked' : ''}`
+export function Kpi({ label, value, sub, icon, tone, to, delta, foot, trend, trendLabel, lead = false, title }) {
+  const className = `kpi${lead ? ' lead' : ''}${tone ? ` tone-${tone}` : ''}${to ? ' linked' : ''}`
   const body = (
     <>
-      {icon ? (
-        <span className="kpi-icon" aria-hidden="true">
-          <Icon name={icon} size={18} />
-        </span>
-      ) : null}
-      <div className="kpi-body">
+      <div className="kpi-top">
+        {icon ? (
+          <span className="kpi-icon" aria-hidden="true">
+            <Icon name={icon} size={lead ? 18 : 16} />
+          </span>
+        ) : null}
         <div className="label">{label}</div>
-        <div className="value">{value}</div>
+        {to ? <Icon name="chevron" size={14} className="kpi-go" /> : null}
+      </div>
+      <div className="kpi-body">
+        <div className="value" title={title}>
+          {value}
+        </div>
         <div className="sub">{sub || ''}</div>
-        {delta || foot || trend ? (
+        {delta || foot || (trend && !lead) ? (
           <div className="kpi-foot">
             {delta ? <Delta {...delta} /> : <span className="kpi-note">{foot}</span>}
-            {trend ? <Sparkline values={trend} label={trendLabel} /> : null}
+            {trend && !lead ? <Sparkline values={trend} label={trendLabel} /> : null}
           </div>
         ) : null}
       </div>
+      {trend && lead ? (
+        <div className="kpi-trend">
+          <Sparkline values={trend} label={trendLabel} fluid height={44} />
+        </div>
+      ) : null}
     </>
   )
   if (to) {

@@ -67,6 +67,22 @@ export function compact(value) {
   return String(Math.round(n))
 }
 
+/**
+ * Money short enough for a headline: "USD 2.86M", "USD 94.3K", "USD 845".
+ * The full figure belongs beside it (a title, a tooltip), never instead of it.
+ */
+export function moneyShort(value, code) {
+  const n = num(value) ?? 0
+  const abs = Math.abs(n)
+  const trim = (s) => s.replace(/\.0+$/, '').replace(/(\.\d*[1-9])0+$/, '$1')
+  let text
+  if (abs >= 1_000_000_000) text = `${trim((n / 1_000_000_000).toFixed(2))}B`
+  else if (abs >= 1_000_000) text = `${trim((n / 1_000_000).toFixed(2))}M`
+  else if (abs >= 10_000) text = `${trim((n / 1_000).toFixed(1))}K`
+  else text = Math.round(n).toLocaleString('en-US')
+  return `${code || currency} ${text}`
+}
+
 export const today = () => new Date().toISOString().slice(0, 10)
 export const firstOfMonth = () => `${today().slice(0, 8)}01`
 

@@ -5,6 +5,7 @@ import {
   fmt,
   humanise,
   money,
+  moneyShort,
   num,
   pct,
   setCurrency,
@@ -143,5 +144,18 @@ describe('term units', () => {
   it('reads a loan with no frequency as monthly, which every older loan is', () => {
     expect(termUnit(undefined)).toBe('months')
     expect(termShort(6, null)).toBe('6m')
+  })
+})
+
+describe('moneyShort', () => {
+  it('shortens large sums for a headline and keeps small ones whole', () => {
+    setCurrency('USD')
+    expect(moneyShort('2864310.55')).toBe('USD 2.86M')
+    expect(moneyShort('2000000.00')).toBe('USD 2M')
+    expect(moneyShort('94310.40')).toBe('USD 94.3K')
+    expect(moneyShort('64500.00')).toBe('USD 64.5K')
+    expect(moneyShort('8450.75')).toBe('USD 8,451')
+    expect(moneyShort('0')).toBe('USD 0')
+    expect(moneyShort('1250000', 'ZWG')).toBe('ZWG 1.25M')
   })
 })

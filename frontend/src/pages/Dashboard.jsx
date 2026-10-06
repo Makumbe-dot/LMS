@@ -9,10 +9,10 @@ import HBars from '../components/HBars.jsx'
 import Icon from '../components/Icons.jsx'
 import { useToast } from '../components/Toast.jsx'
 import TrendLine from '../components/TrendLine.jsx'
-import { ErrorBanner, Kpi } from '../components/ui.jsx'
+import { Delta, ErrorBanner, Kpi } from '../components/ui.jsx'
 import { post, qs } from '../lib/api.js'
 import { useAuth } from '../lib/auth.jsx'
-import { getCurrency, humanise, money, num, pct, today } from '../lib/format.js'
+import { getCurrency, humanise, money, moneyShort, num, pct, today } from '../lib/format.js'
 import { useOrg } from '../lib/org.jsx'
 import { useApi } from '../lib/useApi.js'
 
@@ -196,7 +196,8 @@ export default function Dashboard() {
     }))
   const totalLoans = statuses.reduce((sum, s) => sum + s.value, 0)
   const parTone = toneFor(data.par_30_pct, 5, 10, true)
-  const rateTone = toneFor(data.collection_rate_pct, RATE_TARGET, 75)
+  // Toned by the last full month: a month in progress is always "behind" on the 6th.
+  const rateTone = toneFor(data.previous_month.collection_rate_pct, RATE_TARGET, 75)
   const firstName = (user?.full_name || '').split(' ')[0]
   const prev = data.previous_month
   const soon = data.due_next_7_days
@@ -293,82 +294,99 @@ export default function Dashboard() {
       </section>
 
       <div className={switching ? 'dash-body switching' : 'dash-body'} aria-busy={switching}>
-      <div className="stat-grid">
+      <div className="stat-grid lead-row">
         <Kpi
+          lead
           icon="wallet"
           tone="brand"
           label="Portfolio outstanding"
-          value={<CountUp value={data.portfolio_outstanding} format={money} />}
-          sub={`Principal ${money(data.principal_outstanding)}`}
-          foot={`${count(data.active_loans)} active loan${data.active_loans === 1 ? '' : 's'}`}
+          value={<CountUp value={data.portfolio_outstanding} format={(n) => moneyShort(n)} />}
+          title={money(data.portfolio_outstanding)}
+          sub={`${money(data.principal_outstanding)} of it principal`}
+          foot={`${count(data.active_loans)} active loan${data.active_loans === 1 ? '' : 's'} · ${count(
+            data.borrowers,
+          )} borrowers`}
         />
+        <Kpi
+          lead
+          icon="arrowDown"
+          tone="green"
+          label="Collected this month"
+          value={<CountUp value={data.collected_this_month} format={(n) => moneyShort(n)} />}
+          title={money(data.collected_this_month)}
+          sub={
+            <Delta
+              {...change(data.collected_this_month, prev.collected_to_date)}
+              vs={`vs ${prevMonth} 1–${asOfDay}`}
+            />
+          }
+          trend={settled.map((m) => m.collected)}
+          trendLabel={sparkLabel('Collected', settled, 'collected', money)}
+          to="/collections"
+        />
+        <Kpi
+          lead
+          icon="arrowUp"
+          tone="blue"
+          label="Disbursed this month"
+          value={<CountUp value={data.disbursed_this_month} format={(n) => moneyShort(n)} />}
+          title={money(data.disbursed_this_month)}
+          sub={
+            <Delta
+              {...change(data.disbursed_this_month, prev.disbursed_to_date)}
+              good={null}
+              vs={`vs ${prevMonth} 1–${asOfDay}`}
+            />
+          }
+          trend={settled.map((m) => m.disbursed)}
+          trendLabel={sparkLabel('Disbursed', settled, 'disbursed', money)}
+        />
+        <Kpi
+          lead
+          icon="percent"
+          tone={rateTone}
+          label="Collection rate"
+          value={<CountUp value={prev.collection_rate_pct} format={pct} />}
+          sub={`${prevMonth}, the last full month · target ${RATE_TARGET}%`}
+          trend={settled.map((m) => m.collection_rate_pct)}
+          trendLabel={sparkLabel('Collection rate', settled, 'collection_rate_pct', pct)}
+          to="/collections"
+        />
+      </div>
+      <div className="stat-grid">
         <Kpi
           icon="alert"
           tone={parTone}
           label="PAR > 30 days"
           value={<CountUp value={data.par_30_pct} format={pct} />}
-          sub={`${money(data.par_30_amount)} at risk`}
-          foot={`${count(data.par_30_loans)} loan${data.par_30_loans === 1 ? '' : 's'} · target under 5%`}
+          sub={`${moneyShort(data.par_30_amount)} at risk on ${count(data.par_30_loans)} loan${
+            data.par_30_loans === 1 ? '' : 's'
+          }`}
+          foot="target under 5%"
           to="/arrears"
-        />
-        <Kpi
-          icon="percent"
-          tone={rateTone}
-          label="Collection rate"
-          value={<CountUp value={data.collection_rate_pct} format={pct} />}
-          sub={`${money(data.collected_this_month)} of ${money(data.due_this_month)} due`}
-          foot={`${prevMonth} closed at ${pct(prev.collection_rate_pct)}`}
-          trend={settled.map((m) => m.collection_rate_pct)}
-          trendLabel={sparkLabel('Collection rate', settled, 'collection_rate_pct', pct)}
-          to="/collections"
         />
         <Kpi
           icon="history"
           tone={Number(data.arrears_total) > 0 ? 'amber' : 'green'}
           label="Overdue now"
-          value={<CountUp value={data.arrears_total} format={money} />}
+          value={<CountUp value={data.arrears_total} format={(n) => moneyShort(n)} />}
+          title={money(data.arrears_total)}
           sub={`${count(data.loans_in_arrears)} loan${data.loans_in_arrears === 1 ? '' : 's'} behind on payments`}
           foot="instalments past their due date"
           to="/arrears"
         />
         <Kpi
-          icon="arrowUp"
-          tone="ink"
-          label="Disbursed this month"
-          value={<CountUp value={data.disbursed_this_month} format={money} />}
-          sub="principal advanced"
-          delta={{
-            ...change(data.disbursed_this_month, prev.disbursed_to_date),
-            good: null,
-            vs: `vs ${prevMonth} 1–${asOfDay}`,
-          }}
-          trend={settled.map((m) => m.disbursed)}
-          trendLabel={sparkLabel('Disbursed', settled, 'disbursed', money)}
-        />
-        <Kpi
-          icon="arrowDown"
-          tone="green"
-          label="Collected this month"
-          value={<CountUp value={data.collected_this_month} format={money} />}
-          sub="repayments received"
-          delta={{
-            ...change(data.collected_this_month, prev.collected_to_date),
-            vs: `vs ${prevMonth} 1–${asOfDay}`,
-          }}
-          trend={settled.map((m) => m.collected)}
-          trendLabel={sparkLabel('Collected', settled, 'collected', money)}
-        />
-        <Kpi
           icon="calendar"
-          tone="slate"
+          tone="violet"
           label="Due in the next 7 days"
-          value={<CountUp value={soon.amount} format={money} />}
+          value={<CountUp value={soon.amount} format={(n) => moneyShort(n)} />}
+          title={money(soon.amount)}
           sub={
             soon.instalments
               ? `${count(soon.instalments)} instalment${soon.instalments === 1 ? '' : 's'} on ${count(soon.loans)} loan${soon.loans === 1 ? '' : 's'}`
               : 'nothing falls due this week'
           }
-          foot="still unpaid"
+          foot={`This month so far: ${pct(data.collection_rate_pct)} of ${moneyShort(data.due_this_month)} due`}
           to="/collections"
         />
         <Kpi
@@ -387,92 +405,88 @@ export default function Dashboard() {
       </div>
 
       <div className="dash-grid">
-        <div className="dash-main">
-          <div className="card chart-card">
-            <GroupedBars
-              title="Disbursements and collections"
-              subtitle={`Last 12 months, ${getCurrency()}. Hover a month for the exact figures.`}
-              data={data.monthly_series}
-            />
-          </div>
-          <div className="card chart-card">
-            <TrendLine
-              title="Collection rate"
-              subtitle="Repayments received as a share of principal and interest due, per month. The current month is drawn hollow: it is still being collected."
-              data={data.monthly_series}
-              target={RATE_TARGET}
-              partialLast
-            />
-          </div>
+        <div className="card chart-card area-flow">
+          <GroupedBars
+            title="Disbursements and collections"
+            subtitle={`Last 12 months, ${getCurrency()}. Hover a month for the exact figures.`}
+            data={data.monthly_series}
+          />
         </div>
-        <div className="dash-side">
-          <div className="card">
-            <div className="card-head">
-              <h3>Arrears ageing</h3>
-              <Link to="/arrears" className="card-link">
-                Arrears report
-                <Icon name="chevron" size={14} />
-              </Link>
-            </div>
-            <p className="chart-sub">Principal outstanding by days overdue.</p>
-            <p className={`card-reading${over30 > 0 ? ' warn' : ' good'}`}>
-              {over30 > 0 ? (
-                <>
-                  <strong>{money(over30)}</strong> ({share(over30, data.principal_outstanding)} of
-                  principal) is more than 30 days overdue.
-                </>
-              ) : (
-                <>Nothing is more than 30 days overdue.</>
-              )}
-            </p>
-            <HBars rows={buckets} overview />
+        <div className="card area-status">
+          <div className="card-head">
+            <h3>Loans by status</h3>
+            <Link to="/loans" className="card-link">
+              All loans
+              <Icon name="chevron" size={14} />
+            </Link>
           </div>
-          <div className="card">
-            <div className="card-head">
-              <h3>Loans by status</h3>
-              <Link to="/loans" className="card-link">
-                All loans
-                <Icon name="chevron" size={14} />
-              </Link>
-            </div>
-            <p className="chart-sub">The whole book, not only active loans.</p>
-            <Donut
-              slices={statuses}
-              total={totalLoans}
-              centreLabel="loans"
-              aria-label="Loans by status"
-            />
-            <p className="card-reading">
-              <strong>{count(data.active_loans)}</strong> running ·{' '}
-              <strong>{count(data.pending_applications)}</strong> awaiting a decision ·{' '}
-              <strong>{count(data.status_counts.closed ?? 0)}</strong> settled in full
-            </p>
+          <p className="chart-sub">The whole book, not only active loans.</p>
+          <Donut
+            slices={statuses}
+            total={totalLoans}
+            centreLabel="loans"
+            aria-label="Loans by status"
+          />
+          <p className="card-reading">
+            <strong>{count(data.active_loans)}</strong> running ·{' '}
+            <strong>{count(data.pending_applications)}</strong> awaiting a decision ·{' '}
+            <strong>{count(data.status_counts.closed ?? 0)}</strong> settled in full
+          </p>
+        </div>
+        <div className="card chart-card area-rate">
+          <TrendLine
+            title="Collection rate"
+            subtitle="Repayments received as a share of principal and interest due, per month. The current month is drawn hollow: it is still being collected."
+            data={data.monthly_series}
+            target={RATE_TARGET}
+            partialLast
+          />
+        </div>
+        <div className="card area-ageing">
+          <div className="card-head">
+            <h3>Arrears ageing</h3>
+            <Link to="/arrears" className="card-link">
+              Arrears report
+              <Icon name="chevron" size={14} />
+            </Link>
           </div>
-          <div className="card">
-            <div className="card-head">
-              <h3>Portfolio by product</h3>
-              <Link to="/products" className="card-link">
-                Products
-                <Icon name="chevron" size={14} />
-              </Link>
-            </div>
-            <p className="chart-sub">Principal outstanding on active loans, {getCurrency()}.</p>
-            {products.length ? (
+          <p className="chart-sub">Principal outstanding by days overdue.</p>
+          <p className={`card-reading${over30 > 0 ? ' warn' : ' good'}`}>
+            {over30 > 0 ? (
               <>
-                <p className="card-reading">
-                  <strong>{topProduct.product}</strong> is {share(topProduct.principal, data.principal_outstanding)}{' '}
-                  of the book across {count(products.length)} product{products.length === 1 ? '' : 's'}.
-                </p>
-                <HBars wide rows={products} overview />
+                <strong>{money(over30)}</strong> ({share(over30, data.principal_outstanding)} of
+                principal) is more than 30 days overdue.
               </>
             ) : (
-              <p className="dash-empty">No active loans yet.</p>
+              <>Nothing is more than 30 days overdue.</>
             )}
-          </div>
+          </p>
+          <HBars rows={buckets} overview />
         </div>
       </div>
 
       <div className="dash-row">
+        <div className="card">
+          <div className="card-head">
+            <h3>Portfolio by product</h3>
+            <Link to="/products" className="card-link">
+              Products
+              <Icon name="chevron" size={14} />
+            </Link>
+          </div>
+          <p className="chart-sub">Principal outstanding on active loans, {getCurrency()}.</p>
+          {products.length ? (
+            <>
+              <p className="card-reading">
+                <strong>{topProduct.product}</strong> is {share(topProduct.principal, data.principal_outstanding)}{' '}
+                of the book across {count(products.length)} product{products.length === 1 ? '' : 's'}.
+              </p>
+              <HBars wide rows={products} overview />
+            </>
+          ) : (
+            <p className="dash-empty">No active loans yet.</p>
+          )}
+        </div>
         <div className="card">
           <div className="card-head">
             <h3>Most overdue</h3>
