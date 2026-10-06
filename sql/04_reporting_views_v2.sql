@@ -105,6 +105,9 @@ SELECT
     p.allow_withdrawals,
     br.name                         AS branch,
     s.status,
+    -- the balance is in the account's currency; blank is the organisation's
+    s.currency,
+    s.fx_rate                       AS booked_rate,
     s.balance,
     CASE WHEN s.balance - p.min_balance > 0 AND p.allow_withdrawals = 1
          THEN s.balance - p.min_balance ELSE 0 END AS available_balance,
@@ -328,21 +331,24 @@ BEGIN
 
     DECLARE @gl decimal(18, 2), @book decimal(18, 2);
 
-    /* ---- the loan book */
+    /* ---- the loan book. A loan, savings account or facility in another currency
+       is carried at its booked rate (fx_rate, 1 in the organisation's currency),
+       each rounded to the cent on its own row, which is exactly what the ledger
+       holds; see backend/core/services/fx.py. */
     SELECT @gl = ISNULL((SELECT balance FROM dbo.vw_trial_balance WHERE code = '1100'), 0),
-           @book = ISNULL((SELECT SUM(principal_outstanding) FROM dbo.loans
+           @book = ISNULL((SELECT SUM(ROUND(principal_outstanding * fx_rate, 2)) FROM dbo.loans
                            WHERE status = 'active'), 0);
     INSERT INTO @results VALUES ('Loans receivable', @gl, @book, @gl - @book,
         CASE WHEN @gl = @book THEN 'OK' ELSE 'MISMATCH' END);
 
     SELECT @gl = ISNULL((SELECT balance FROM dbo.vw_trial_balance WHERE code = '1300'), 0),
-           @book = ISNULL((SELECT SUM(penalties_outstanding) FROM dbo.loans
+           @book = ISNULL((SELECT SUM(ROUND(penalties_outstanding * fx_rate, 2)) FROM dbo.loans
                            WHERE status = 'active'), 0);
     INSERT INTO @results VALUES ('Penalties receivable', @gl, @book, @gl - @book,
         CASE WHEN @gl = @book THEN 'OK' ELSE 'MISMATCH' END);
 
     SELECT @gl = ISNULL((SELECT balance FROM dbo.vw_trial_balance WHERE code = '1400'), 0),
-           @book = ISNULL((SELECT SUM(charges_outstanding) FROM dbo.loans
+           @book = ISNULL((SELECT SUM(ROUND(charges_outstanding * fx_rate, 2)) FROM dbo.loans
                            WHERE status = 'active'), 0);
     INSERT INTO @results VALUES ('Charges receivable', @gl, @book, @gl - @book,
         CASE WHEN @gl = @book THEN 'OK' ELSE 'MISMATCH' END);
@@ -359,18 +365,20 @@ BEGIN
 
     /* ---- the savings book */
     SELECT @gl = ISNULL((SELECT balance FROM dbo.vw_trial_balance WHERE code = '2000'), 0),
-           @book = ISNULL((SELECT SUM(balance) FROM dbo.savings_accounts), 0);
+           @book = ISNULL((SELECT SUM(ROUND(balance * fx_rate, 2)) FROM dbo.savings_accounts), 0);
     INSERT INTO @results VALUES ('Client funds payable', @gl, @book, @gl - @book,
         CASE WHEN @gl = @book THEN 'OK' ELSE 'MISMATCH' END);
 
     /* ---- funder borrowings */
     SELECT @gl = ISNULL((SELECT balance FROM dbo.vw_trial_balance WHERE code = '2100'), 0),
-           @book = ISNULL((SELECT SUM(principal_outstanding) FROM dbo.funding_facilities), 0);
+           @book = ISNULL((SELECT SUM(ROUND(principal_outstanding * fx_rate, 2))
+                           FROM dbo.funding_facilities), 0);
     INSERT INTO @results VALUES ('Funder borrowings', @gl, @book, @gl - @book,
         CASE WHEN @gl = @book THEN 'OK' ELSE 'MISMATCH' END);
 
     SELECT @gl = ISNULL((SELECT balance FROM dbo.vw_trial_balance WHERE code = '2110'), 0),
-           @book = ISNULL((SELECT SUM(interest_accrued) FROM dbo.funding_facilities), 0);
+           @book = ISNULL((SELECT SUM(ROUND(interest_accrued * fx_rate, 2))
+                           FROM dbo.funding_facilities), 0);
     INSERT INTO @results VALUES ('Accrued borrowing interest', @gl, @book, @gl - @book,
         CASE WHEN @gl = @book THEN 'OK' ELSE 'MISMATCH' END);
 
@@ -418,6 +426,10 @@ SELECT f.facility_no,
        state                         = CASE WHEN f.closed_on IS NOT NULL THEN 'closed'
                                             WHEN f.is_revolving = 1 THEN 'revolving'
                                             ELSE 'term' END,
+       /* every amount below is in the facility's currency; blank is the
+          organisation's, and booked_rate is what 2100 and 2110 carry it at */
+       f.currency,
+       f.fx_rate                     AS booked_rate,
        f.facility_limit,
        f.principal_outstanding,
        f.interest_accrued,
