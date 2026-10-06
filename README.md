@@ -418,6 +418,49 @@ Run it behind a real server (IIS with HttpPlatformHandler, or nginx in front of 
 rather than `runserver`, put the media directory somewhere backed up, and schedule the nightly job
 and the backups.
 
+## Running with Docker
+
+The scripts above assume Windows. On Linux, macOS or Windows with Docker installed, the whole
+system (SQL Server, the API and the React app) runs from `docker-compose.yml` instead:
+
+```sh
+cp .env.example .env              # then set MSSQL_SA_PASSWORD, DB_PASSWORD and SECRET_KEY
+docker compose up -d --build
+docker compose exec backend python manage.py seed      # optional demo data
+```
+
+The app is then on <http://localhost:8080>. Four containers do the work:
+
+- **sqlserver** — SQL Server 2022 (Developer edition unless `MSSQL_PID` says otherwise), with the
+  `SQL_Latin1_General_CP1_CI_AS` collation. Its data lives in the `sqldata` volume, so it survives
+  `docker compose down`; only `down -v` deletes it. It listens on `127.0.0.1:1433` for SSMS; set
+  `SQLSERVER_PORT` if a local instance already has that port.
+- **db-init** — runs once and exits: creates the database with read-committed snapshot on (what
+  `sql/01_create_database.sql` does) and the app's `lms_app` login (what `sql/02_app_login.sql`
+  does). It is safe to run every time.
+- **backend** — applies migrations, then serves the API with gunicorn. Uploaded borrower documents
+  go in the `media` volume.
+- **frontend** — nginx serving the built app, forwarding `/api` and `/admin` to the backend, so the
+  browser sees one origin and CORS never comes into it.
+
+Settings come from `.env` beside `docker-compose.yml`, not from `backend/.env`; anything listed in
+`backend/.env.example` can be added to it. The defaults are `DEBUG=0` with the SSL redirect off,
+which suits a workstation. On a server, put a TLS-terminating proxy in front, then set
+`SECURE_SSL_REDIRECT=1` and add the server's name to `ALLOWED_HOSTS` and `CORS_ALLOWED_ORIGINS`.
+
+The nightly batch is the `jobs` service. It runs the same steps as `run_nightly_jobs.ps1`, then
+takes a checksummed, verified backup and archives the borrower documents into the `backups`
+volume, keeping `BACKUP_RETENTION_DAYS` (14) days of them. `up` does not start it; schedule it
+instead, for example from cron:
+
+```sh
+docker compose run --rm jobs                                 # what cron runs at 22:00
+docker compose run --rm jobs --as-of 2026-09-30 --skip-backup
+```
+
+To take the backups off the machine, copy them out of the volume:
+`docker compose cp sqlserver:/backups ./lms-backups`.
+
 ## Configuration
 
 Everything lives in `backend/.env` (see `backend/.env.example` for development and
@@ -452,18 +495,21 @@ One script runs everything that has to pass:
 ```powershell
 .\scripts\verify.ps1                      # checks, migrations, both suites, a production build
 .\scripts\verify.ps1 -SkipBackendTests    # the slow one, for a quick loop
+.\scripts\verify.ps1 -Parallel 1          # backend tests in one process
 ```
 
 Or each piece on its own:
 
 ```powershell
 cd backend
-..\.venv\Scripts\python.exe manage.py test                                  # the backend suite
+..\.venv\Scripts\python.exe manage.py test --parallel 8                      # the backend suite
+..\.venv\Scripts\python.exe manage.py test core.tests.test_fx                # one module
 ..\.venv\Scripts\python.exe manage.py makemigrations --check --dry-run core  # nothing unmigrated
 
 cd ..\frontend
 npm test              # the frontend suite
 npm run test:coverage
+npm run e2e           # the browser tests; see below for their database
 ```
 
 `.github/workflows/ci.yml` runs the same set on every push and pull request, against SQL Server
@@ -472,7 +518,21 @@ npm run test:coverage
 **The backend suite** runs against a real SQL Server database (`LMS_test`, created and dropped
 automatically) rather than SQLite, because three of the behaviours this code works around are the
 engine's: `bulk_create` returning no primary keys, `select_for_update` compiling to `UPDLOCK`, and a
-case-insensitive default collation. It covers:
+case-insensitive default collation.
+
+It runs in parallel. Each worker gets its own copy of the test database, `LMS_test_1`, `LMS_test_2`
+and so on, restored from a backup of `LMS_test` taken once the migrations have run; that is the
+`lms_backend.sqlserver` engine, which is mssql-django with the cloning it lacks. Twice as many
+workers as cores is about right, since each spends much of its time waiting on SQL Server: on four
+cores the suite takes about three minutes at `--parallel 8`, against seven in one process.
+`--keepdb` keeps the clones as well, and replaces any that a new migration has left behind. The
+SQL login needs rights to back up and restore, which `sa` and any member of `sysadmin` have.
+
+Under test the password hasher is MD5 rather than PBKDF2 (`lms_backend/test_runner.py`). PBKDF2
+costs about a second a hash, and before the change it was most of the suite's run time. The
+password rules, lockout, change and reset tests run as before; only the stored hash differs.
+
+It covers:
 
 - the amortisation engine, both methods — annuity maths, flat-rate levelling, month-end clamping,
   schedules closing to zero and totals landing exactly on the advance;
@@ -550,6 +610,37 @@ until someone clicks:
 
 Both suites are in the repository's own idiom: a test asserts the rule, and its name says what
 breaks if the rule does.
+
+**The end-to-end tests** (Playwright, in `frontend/e2e/`) drive the real application in Chromium:
+the React app on the Vite dev server, its `/api` proxied to Django, Django on SQL Server. They
+follow the journeys that matter most when they break:
+
+- signing in, and a wrong password refused;
+- an officer registering a borrower, previewing a quote and applying;
+- maker-checker — the officer who applied is refused at Approve, a second officer approves and
+  disburses, and the schedule appears;
+- a teller opening a till, posting a cash repayment, and the first instalment, the balances, the
+  transactions and the till all showing it;
+- the loan statement downloading as a real PDF;
+- access rights — a read-only viewer seeing no button that changes anything, and a right ticked on
+  the Users page reaching that user on their next page load.
+
+They need a database of their own, because every run empties it: create `LMS_e2e` as in step 1 of
+the quick start (any name works if it contains `e2e`; set `E2E_DB_NAME`). The connection settings
+come from `backend/.env` as usual; only the database name is overridden. Then:
+
+```powershell
+cd frontend
+npx playwright install chromium   # once
+npm run e2e
+```
+
+Playwright starts Django on port 8765 and Vite on 5174 (`E2E_API_PORT`, `E2E_WEB_PORT`), so a
+development server already running on 8000 and 5173 is left alone. Before the first test it
+migrates, flushes and seeds the database, so every run starts from the same book; the steps take
+about two minutes, most of it the seed. Python is taken from `E2E_PYTHON`, else the repository's
+`.venv`, else the `python` on the PATH. `E2E_CHROMIUM_PATH` points at a Chromium installed some
+other way, and `E2E_SERVER_LOG=1` shows Django's request log. CI runs them as a separate job.
 
 ## Scheduled jobs
 

@@ -5,7 +5,6 @@ SQL Server, reached through the mssql-django backend and the Microsoft ODBC
 driver, so the schema is manageable from SQL Server Management Studio.
 """
 import os
-import sys
 from datetime import timedelta
 from pathlib import Path
 
@@ -78,6 +77,9 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    # Serves STATIC_ROOT (the admin's and the browsable API's files) after
+    # collectstatic, so gunicorn needs no web server beside it for them.
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -126,9 +128,11 @@ _db_options: dict = {
 if env_bool("DB_TRUSTED_CONNECTION", True):
     _db_options["trusted_connection"] = "yes"
 
+# The engine is mssql-django with test-database cloning added, so that
+# `manage.py test --parallel` works; see lms_backend/sqlserver/creation.py.
 DATABASES = {
     "default": {
-        "ENGINE": "mssql",
+        "ENGINE": "lms_backend.sqlserver",
         "NAME": env("DB_NAME", "LMS"),
         "HOST": env("DB_HOST", r"localhost\SQLEXPRESS"),
         "PORT": env("DB_PORT", ""),
@@ -141,6 +145,9 @@ DATABASES = {
 }
 
 DEFAULT_AUTO_FIELD = "django.db.models.AutoField"
+
+# Django's runner with a cheap password hasher under test; see the module.
+TEST_RUNNER = "lms_backend.test_runner.TestRunner"
 
 # ---------------------------------------------------------------- auth
 AUTH_USER_MODEL = "core.User"
@@ -191,12 +198,6 @@ REST_FRAMEWORK = {
         "portal_login": env("THROTTLE_PORTAL_LOGIN", "10/min"),
     },
 }
-
-# The rate limits count in the cache. A test run signs in hundreds of times a minute
-# from one address, so it counts nowhere; the throttle tests switch a real cache on
-# for themselves.
-if len(sys.argv) > 1 and sys.argv[1] == "test":
-    CACHES = {"default": {"BACKEND": "django.core.cache.backends.dummy.DummyCache"}}
 
 SIMPLE_JWT = {
     # Thirty minutes, not eight hours. An access token cannot be revoked — it is
