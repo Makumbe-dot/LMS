@@ -120,7 +120,12 @@ is compared with what the system recorded. A short or over count needs a reason 
 closes, the teller cannot verify their own, and on verification the difference is posted —
 Dr 6800 Cash shortages / Cr 1000 for a shortage, Dr 1000 / Cr 4900 for an overage — because until it
 is, the ledger claims cash the building does not hold. A setting makes every cash posting need an
-open till; it is off by default so a book that has never used tills keeps posting.
+open till; it is off by default so a book that has never used tills keeps posting. A drawer holds
+one currency: a teller taking cash in two opens two drawers, one each, and cash on a loan or
+savings account in another currency is counted in the drawer of that currency, in that currency,
+never converted. With the setting on, a cash posting needs an open drawer in its own currency. A
+foreign drawer's difference goes to the ledger at the day's rate, stamped on the till so a Rebuild
+posts the same figure.
 
 **Collections** — collections-due listing, arrears / PAR, **payroll deduction schedules per
 employer**, **follow-up notes** on a loan (what was tried, what was promised, what is next), and a
@@ -205,19 +210,28 @@ join the reconciliation, and the period-close checks say when a month has not be
 basis **cannot change while loans are running**: half a book on each would reconcile to nothing,
 so the change is made on an empty active book, or at a cut-over agreed with the auditor.
 
-**Multi-currency** — the ledger, savings, funding and the tills are kept in the organisation's
-currency; a **product may lend in another**, and a loan sold under it is kept in that currency
-instalment by instalment. A **rate table** (base units per one unit of the currency, the latest
-rate on or before a date applies) converts every posting: the receivables are carried at the
-loan's **booked rate** (the spot rate on the day it was disbursed) as the change in their
-base-currency value, so the ledger equals outstanding-times-rate to the cent; cash and income go
-in at the day's spot rate; whatever lies between is a **realised exchange difference** on 4800. A
+**Multi-currency** — the ledger is kept in the organisation's currency; a **product may lend in
+another**, and a loan sold under it is kept in that currency instalment by instalment. A **rate
+table** (base units per one unit of the currency, the latest rate on or before a date applies)
+converts every posting: the receivables are carried at the loan's **booked rate** (the spot rate
+on the day it was disbursed) as the change in their base-currency value, so the ledger equals
+outstanding-times-rate to the cent; cash and income go in at the day's spot rate; whatever lies
+between is a **realised exchange difference** on 4800. A **savings product** may take deposits in
+another currency, and a **funding facility** may be drawn in one, by the same rules from the
+other side of the balance sheet: an account's balance (2000) and a facility's principal and
+accrued interest (2100, 2110) are carried at the account's or the facility's own booked rate (the
+spot rate on the day it was opened), cash, savings interest, fees and borrowing costs at the
+day's, and the difference is realised on 4800. A reversal puts the cash back at the rate it came
+in at. A product's or a facility's currency is fixed once it has an account or a movement. A
 **month-end revaluation** (the Currencies page, or `manage.py revalue_fx`) restates every open
-foreign loan at the closing rate, posts the unrealised difference, and moves the booked rate on;
-the period-close checks say when a loan is still at an earlier rate. Dashboards, PAR, provisions,
-exposure and the registers add foreign loans in at their booked rates; a loan's own pages and
-statement show its own currency. Affordability and the approval limit measure a foreign
-instalment or principal at today's rate.
+foreign loan, savings account and facility at the closing rate, posts the unrealised difference,
+and moves the booked rates on; a receivable that rises in value is a gain, a liability that rises
+is a loss. The period-close checks say when any of them is still at an earlier rate. Dashboards,
+PAR, provisions, exposure, the savings and funding totals and the registers add foreign balances
+in at their booked rates; a loan's or an account's own pages and statement show its own currency,
+and a facility's amounts are in its own. Affordability and the approval limit measure a foreign
+instalment or principal at today's rate, and the cash guard on a facility payment measures it at
+today's rate too. Cash is counted in a till drawer of its own currency (above).
 
 **Bank reconciliation** — a bank or mobile-money statement, exported as CSV (one signed amount
 column or money-in / money-out columns, ISO or day-first dates), is matched line by line against
@@ -562,7 +576,12 @@ It covers:
 - the credit bureau — the register, the three backends (the http one against a fake bureau),
   what is kept from a report, and how the scorecard reads it;
 - multi-currency — a foreign loan reconciling to the cent through disbursement, repayment at a new
-  rate, reversal, nine rounded repayments, the revaluation run and a rebuild;
+  rate, reversal, nine rounded repayments, the revaluation run and a rebuild; a foreign savings
+  account through deposit, withdrawal and interest at a new rate, a reversal, the revaluation (a
+  liability, so the sign turns over) and a rebuild; a foreign facility through drawdown, accrual,
+  interest payment, repayment, reversal, fee, the cash guard and the revaluation; one run
+  restating a loan, an account and a facility together; and that a product's or a facility's
+  currency cannot change once it has accounts or movements;
 - the effective interest method — the schedule's totals, the deferral at disbursement, the accrual,
   repayments before and after it, settlement, write-off, reschedule, rebuild, and that the basis
   cannot change on a running book;
@@ -589,7 +608,8 @@ It covers:
 - the cost of credit — the APR against a textbook case, fees raising it, and the agreement stating it;
 - guarantors per loan, the loan-book migration (arrears, the opening posting, no double penalties,
   re-running a file), teller tills (expected cash, the count, verification posting the difference,
-  the open-till setting), bank reconciliation (exact matches only, one entry per line, cash never on
+  the open-till setting, a drawer per currency counted in its own and its difference booked at the
+  day's rate), bank reconciliation (exact matches only, one entry per line, cash never on
   a bank statement, ambiguity left alone), and two-factor sign-in against the RFC 6238 vectors;
 - branches, settings, search, documents, pagination, password change and account lockout.
 
@@ -606,7 +626,10 @@ until someone clicks:
   screen;
 - the period notice telling the truth about which dates are closed, including the boundary day;
 - the auth provider — that signing out tells the server to retire the token, and that it still
-  signs out locally when the server cannot be reached.
+  signs out locally when the server cannot be reached;
+- currencies on savings, facilities and tills — blank read as the organisation's, only currencies
+  with a rate offered, a teller's open drawers shown each in its own currency, and a new drawer
+  offered only in a currency not already open.
 
 Both suites are in the repository's own idiom: a test asserts the rule, and its name says what
 breaks if the rule does.
@@ -837,7 +860,7 @@ backend/                        Django project
       periods.py                period close, and the guard that refuses a closed date
       journals.py               manual journals: four eyes, control accounts refused
       loanbook.py               bringing a running loan book over from another system
-      tills.py                  teller tills: expected cash, the count, the difference booked
+      tills.py                  teller tills: a drawer per currency, expected cash, the count, the difference booked
       bankrec.py                bank and mobile-money statements matched against the ledger
       totp.py                   RFC 6238 codes for two-factor sign-in
       reports.py                dashboard, PAR, collections due, loan book, statement,
@@ -969,9 +992,9 @@ claims that can genuinely break — nine accounts against the sub-ledgers they a
 | 1300 Penalties receivable | penalties outstanding on active loans, each at its booked rate |
 | 1400 Charges receivable | charges outstanding on active loans, each at its booked rate |
 | 1900 Provision for credit losses | provision held across every loan |
-| 2000 Client funds payable | savings balances |
-| 2100 Funder borrowings | principal outstanding on funding facilities |
-| 2110 Accrued interest on borrowings | interest accrued and unpaid on facilities |
+| 2000 Client funds payable | savings balances, each account at its booked rate |
+| 2100 Funder borrowings | principal outstanding on funding facilities, each at its booked rate |
+| 2110 Accrued interest on borrowings | interest accrued and unpaid on facilities, each at its booked rate |
 | 3100 Share capital | capital injected less capital returned |
 | 3200 Distributions | dividends paid |
 | 1200 Interest receivable | interest accrued and not collected (effective interest method only) |
@@ -1013,6 +1036,15 @@ or the **Funding and capital** page. Two asymmetries with the loan book are deli
 capital, a dividend — is refused if it would take account 1000 below zero. A dividend also needs the
 equity for it. A slice that exists to stop cash going negative must not be the thing that puts it
 there.
+
+**A facility may be in another currency.** Its limit and every movement are then in that
+currency. A drawdown is Dr 1000 at the day's rate / Cr 2100 at the facility's booked rate; a
+repayment and an interest payment relieve 2100 or 2110 at the booked rate and take cash out at the
+day's; an accrual is Dr 5300 at the day's rate / Cr 2110 at the booked one; a fee is Dr 5310 /
+Cr 1000, both at the day's. Whatever an entry leaves between its legs is a realised exchange
+difference on 4800, and the month-end revaluation restates 2100 and 2110 at the closing rate. The
+cash guard measures a foreign payment at the day's rate, which is what it takes out of the bank.
+Capital stays in the organisation's currency.
 
 Retained earnings (3000) is **derived**, never posted: nothing writes a year-end closing entry, so
 the balance sheet computes income less expense since inception and folds in any manual posting to
@@ -1222,9 +1254,6 @@ What is deliberately not here, and why:
 - **A bureau or mobile-money contract.** The credit bureau check and the message gateway are
   configuration (`BUREAU_BACKEND`, `MESSAGE_SMS_BACKEND`): the code speaks to any JSON API, but a
   real bureau or aggregator needs a contract, credentials and the paths to its fields in `.env`.
-- **Savings, funding and tills in a foreign currency.** Loans may be in another currency; the
-  deposit book, the facilities and the drawers stay in the organisation's. A foreign-currency
-  repayment taken in cash is counted in the drawer at the day's rate.
 - **Changing the interest method on a running book.** The effective interest method is chosen on
   an empty active book. Moving a book already carrying loans across needs a cut-over agreed with
   the auditor, and a migration written for that cut-over.
