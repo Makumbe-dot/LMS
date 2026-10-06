@@ -18,7 +18,7 @@ def loan_queryset(with_transactions: bool = False):
     instalment to compute one number per loan is pure cost.
     """
     qs = (Loan.objects
-          .select_related("borrower", "product", "officer", "branch")
+          .select_related("borrower", "product", "officer", "collector", "branch")
           .prefetch_related(Prefetch("instalments", queryset=Instalment.objects.order_by("number"))))
     if with_transactions:
         qs = qs.prefetch_related(

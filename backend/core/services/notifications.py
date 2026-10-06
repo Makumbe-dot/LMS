@@ -17,6 +17,7 @@ from django.utils import timezone
 from ..models import (
     Instalment,
     Loan,
+    LoanNote,
     LoanStatus,
     Notification,
     NotificationChannel,
@@ -95,12 +96,30 @@ def generate_reminders(as_of: date | None = None, days_before: int | None = None
                       scheduled_for=as_of, dedupe_key=f"arrears:{loan.id}:{as_of.isoformat()}"):
                 notices += 1
 
+    # 3. a promise to pay falls due tomorrow: one reminder per promise
+    promises = 0
+    tomorrow = as_of + timedelta(days=1)
+    for note in (LoanNote.objects
+                 .filter(resolved=False, promised_amount__isnull=False,
+                         promised_date__gte=as_of, promised_date__lte=tomorrow,
+                         loan__status=LoanStatus.ACTIVE)
+                 .select_related("loan__borrower")):
+        loan, borrower = note.loan, note.loan.borrower
+        body = templates.render("promise", borrower, settings_row, loan_no=loan.loan_no,
+                                amount=_money(note.promised_amount, currency),
+                                promised_date=f"{note.promised_date:%d %b %Y}")
+        if _queue(borrower=borrower, loan=loan, kind=NotificationKind.REMINDER,
+                  channel=NotificationChannel.SMS, to_address=borrower.phone, body=body,
+                  scheduled_for=as_of, dedupe_key=f"promise:{note.id}"):
+            promises += 1
+
     return {
         "as_of": as_of.isoformat(),
         "reminder_window_days": days_before,
+        "promise_reminders_queued": promises,
         "reminders_queued": reminders,
         "arrears_notices_queued": notices,
-        "total_queued": reminders + notices,
+        "total_queued": reminders + notices + promises,
     }
 
 

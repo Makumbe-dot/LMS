@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 
 import DataTable from '../components/DataTable.jsx'
 import Modal, { FormModal } from '../components/Modal.jsx'
@@ -230,7 +230,8 @@ export default function LoanDetail() {
   // Everything on this page is in the loan's own currency.
   const lmoney = (value) => money(value, loan?.currency)
 
-  const [tab, setTab] = useState('schedule')
+  const [searchParams] = useSearchParams()
+  const [tab, setTab] = useState(searchParams.get('tab') || 'schedule')
   const [action, setAction] = useState(null) // { kind, txnId? }
   const [statement, setStatement] = useState(null)
   const [statementPeriod, setStatementPeriod] = useState({ start: '', end: today() })
@@ -286,6 +287,7 @@ export default function LoanDetail() {
   const canApprove = can('approve')
   const canDisburse = can('disburse')
   const canCash = can('cash')
+  const canCollections = can('collections')
   const canReverse = can('reverse')
   const canSupervise = can('supervise')
   const canRestructure = can('restructure')

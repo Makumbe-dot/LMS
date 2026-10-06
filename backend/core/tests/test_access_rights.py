@@ -111,7 +111,7 @@ class GrantingRightsTests(RightsBase):
         self.assertEqual([r["code"] for r in body["rights"]], [r.value for r in Right])
         self.assertTrue(all(r["description"] for r in body["rights"]))
         presets = {p["code"]: p["rights"] for p in body["presets"]}
-        self.assertEqual(presets["teller"], ["cash"])
+        self.assertEqual(presets["teller"], ["cash", "collections"])
 
 
 class ApprovalTests(RightsBase):
@@ -200,10 +200,10 @@ class MigrationTests(APITestCase):
 
         migration.roles_to_rights(apps, None)
 
-        for user, preset in [(officer, "loan_officer"), (teller, "teller"), (viewer, "viewer")]:
+        for user, old in [(officer, "loan_officer"), (teller, "teller"), (viewer, "viewer")]:
             user.refresh_from_db()
             self.assertEqual(user.role, Role.USER)
-            self.assertEqual(user.rights, [r.value for r in RIGHT_PRESETS[preset]])
+            self.assertEqual(user.rights, migration.OLD_ROLE_RIGHTS[old])
         admin.refresh_from_db()
         self.assertEqual(admin.role, Role.ADMIN)
 

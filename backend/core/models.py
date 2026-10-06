@@ -39,6 +39,7 @@ class Right(models.TextChoices):
     REVERSE = "reverse", "Reverse repayments"
     SUPERVISE = "supervise", "Supervise tills and penalties"
     MESSAGES = "messages", "Borrower messages"
+    COLLECTIONS = "collections", "Work collections"
     RESTRUCTURE = "restructure", "Waive, reschedule and write off"
     ACCOUNTING = "accounting", "Accounting"
     SETUP = "setup", "Products and setup"
@@ -51,11 +52,13 @@ RIGHT_DESCRIPTIONS = {
                    "never one they originated.",
     Right.DISBURSE: "Pay out an approved loan.",
     Right.CASH: "Take repayments, settlements and recoveries, savings deposits and "
-                "withdrawals, bulk repayments, notes, expenses, and run a till.",
+                "withdrawals, bulk repayments, incoming payments, payroll returns, expenses, "
+                "and run a till.",
     Right.REVERSE: "Reverse a repayment posted in error.",
-    Right.SUPERVISE: "Verify another user's till count, run penalties and check a period "
-                     "before it is closed.",
+    Right.SUPERVISE: "Verify another user's till count, run penalties, check a period "
+                     "before it is closed, and assign loans to collectors.",
     Right.MESSAGES: "Generate, send and cancel reminders and arrears notices.",
+    Right.COLLECTIONS: "Work the arrears queue: follow-up notes and promises to pay on loans.",
     Right.RESTRUCTURE: "Waive penalties, reschedule and write off loans.",
     Right.ACCOUNTING: "Post, reject and reverse journals, the chart of accounts, bank "
                       "reconciliation, provisioning, funding, revaluation, savings interest "
@@ -67,8 +70,10 @@ RIGHT_DESCRIPTIONS = {
 # exactly the access they had. Also offered as a starting point on the Users page.
 RIGHT_PRESETS = {
     "loan_officer": [Right.BORROWERS, Right.LOANS, Right.APPROVE, Right.DISBURSE,
-                     Right.CASH, Right.REVERSE, Right.SUPERVISE, Right.MESSAGES],
-    "teller": [Right.CASH],
+                     Right.CASH, Right.REVERSE, Right.SUPERVISE, Right.MESSAGES,
+                     Right.COLLECTIONS],
+    "teller": [Right.CASH, Right.COLLECTIONS],
+    "collector": [Right.COLLECTIONS],
     "viewer": [],
 }
 
@@ -830,6 +835,10 @@ class Loan(models.Model):
     product = models.ForeignKey(LoanProduct, on_delete=models.PROTECT, related_name="loans")
     officer = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
                                 related_name="originated_loans")
+    # Who is working this loan's arrears (services/collections.py). Blank: nobody yet.
+    collector = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                                  related_name="collected_loans")
+    collector_since = models.DateField(null=True, blank=True)
 
     principal = models.DecimalField(**MONEY)
     interest_rate_pct = models.DecimalField(help_text="Monthly, snapshot from the product", **RATE)

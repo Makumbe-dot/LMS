@@ -14,6 +14,7 @@ import Borrowers from './pages/Borrowers.jsx'
 import BulkImport from './pages/BulkImport.jsx'
 import Charges from './pages/Charges.jsx'
 import Collections from './pages/Collections.jsx'
+import CollectionsWork from './pages/CollectionsWork.jsx'
 import Currencies from './pages/Currencies.jsx'
 import Dashboard from './pages/Dashboard.jsx'
 import Funding from './pages/Funding.jsx'
@@ -71,6 +72,7 @@ export default function App() {
           <Route path="/loans/:id" element={<LoanDetail />} />
 
           <Route path="/collections" element={<Collections />} />
+          <Route path="/collections/work" element={<CollectionsWork />} />
           <Route
             path="/till"
             element={

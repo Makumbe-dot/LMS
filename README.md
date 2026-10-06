@@ -110,6 +110,17 @@ The wording of every message is the institution's own: **Settings → Borrower m
 per kind with the placeholders it may use (`{first_name}`, `{loan_no}`, `{amount}`…) and a preview.
 A placeholder a kind does not have is refused when saved, and a blank box sends the standard wording.
 
+**Collections work** — overdue loans are handed to collectors (anyone holding the Work
+collections right) by someone with the supervise right, a handful at a time from the **Work queue**
+page. A collector's queue puts the follow-ups that have come due first, then the longest overdue,
+with the last contact and any open promise. A **promise to pay** is a follow-up note with an
+amount and a date, and it is judged from the repayments themselves: kept if that much came in
+between the promise and the day promised, broken if the day passed short, pending until then — so a
+reversed payment turns a kept promise back into a broken one by itself. The borrower is texted the
+day before (the **Promise-to-pay reminder** wording in Settings). The **Results** tab gives each
+collector's loans, what is overdue on them now, what came in over a period and the share of promises
+kept.
+
 **Payroll returns** — the other half of the deduction schedule. The employer's file of what it
 actually deducted (an amount, and a loan number, employee number or national ID per line) is
 checked against the schedule for that period: each loan comes back **deducted in full, short, not
@@ -242,10 +253,11 @@ page, and with nothing ticked can only read. The rights are:
 | Loan applications | quote and apply for loans, top-ups, guarantors, security and charges |
 | Approve and reject loans | approve or reject applications, up to their approval limit |
 | Disburse loans | pay out an approved loan |
-| Cash and repayments | repayments, settlements, recoveries, savings deposits and withdrawals, bulk repayments, notes, expenses, and a till |
+| Cash and repayments | repayments, settlements, recoveries, savings deposits and withdrawals, bulk repayments, incoming payments, payroll returns, expenses, and a till |
 | Reverse repayments | reverse a repayment posted in error |
-| Supervise tills and penalties | verify another user's till count, run penalties, check a period before close |
+| Supervise tills and penalties | verify another user's till count, run penalties, check a period before close, give loans to collectors |
 | Borrower messages | generate, send and cancel reminders and arrears notices |
+| Work collections | follow-up notes and promises to pay on loans |
 | Waive, reschedule and write off | waive penalties, reschedule and write off loans |
 | Accounting | post, reject and reverse journals, the chart of accounts, bank reconciliation, provisioning, funding, revaluation, savings interest, closing periods |
 | Products and setup | loan and savings products, charges and exchange rates |
@@ -471,6 +483,8 @@ case-insensitive default collation. It covers:
 - sessions — renewal, rotation, sign-out, and revocation when an account is disabled or a role
   changes;
 - performance and payroll reports;
+- collections — assignment and who may be given loans, the queue's order, promises kept, broken
+  and pending, the day-before reminder, and the results by collector;
 - payroll returns — full, short, missed, over and unknown lines, posting all or nothing on the
   day the money arrived, never twice;
 - incoming payments — signatures, duplicates, every matching rule, the waiting queue and statements;

@@ -27,6 +27,7 @@ from ..models import (
 from ..permissions import (
     CanApprove,
     CanCash,
+    CanCollections,
     CanDisburse,
     CanLoans,
     CanRestructure,
@@ -100,7 +101,7 @@ def loans(request):
         # list serializer renders no schedule. officer and branch ARE selected —
         # LoanSerializer renders both names, so without them the list ran two extra
         # queries per row.
-        qs = Loan.objects.select_related("borrower", "product", "officer", "branch")
+        qs = Loan.objects.select_related("borrower", "product", "officer", "collector", "branch")
         status_filter = request.query_params.get("status")
         if status_filter:
             if status_filter not in STATUS_CHOICES:
@@ -456,8 +457,8 @@ def notes(request, loan_id: int):
     if request.method == "GET":
         return Response(LoanNoteSerializer(loan.notes.all(), many=True).data)
 
-    if not CanCash().has_permission(request, None):
-        return Response({"detail": CanCash.message}, status=status.HTTP_403_FORBIDDEN)
+    if not CanCollections().has_permission(request, None):
+        return Response({"detail": CanCollections.message}, status=status.HTTP_403_FORBIDDEN)
     body = LoanNoteSerializer(data=request.data)
     body.is_valid(raise_exception=True)
     with transaction.atomic():
@@ -467,7 +468,7 @@ def notes(request, loan_id: int):
 
 
 @api_view(["PATCH", "DELETE"])
-@permission_classes([CanCash])
+@permission_classes([CanCollections])
 def note_detail(request, loan_id: int, note_id: int):
     note = LoanNote.objects.filter(pk=note_id, loan_id=loan_id).first()
     if note is None:

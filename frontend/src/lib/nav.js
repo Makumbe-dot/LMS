@@ -56,7 +56,8 @@ export const NAV = [
         icon: 'calendar',
         badge: { key: 'loans_in_arrears', one: 'loan in arrears', many: 'loans in arrears', tone: 'warn' },
         pages: [
-          { to: '/collections', label: 'Collections due', icon: 'calendar' },
+          { to: '/collections', label: 'Collections due', icon: 'calendar', end: true },
+          { to: '/collections/work', label: 'Work queue', icon: 'list' },
           { to: '/arrears', label: 'Arrears / PAR', icon: 'trending' },
           { to: '/payroll', label: 'Payroll deductions', icon: 'briefcase' },
           { to: '/payments', label: 'Incoming payments', icon: 'inbox' },

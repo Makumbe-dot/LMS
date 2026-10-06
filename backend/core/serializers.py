@@ -486,6 +486,8 @@ class LoanSerializer(serializers.ModelSerializer):
     borrower_name = serializers.CharField(source="borrower.full_name", read_only=True)
     product_name = serializers.CharField(source="product.name", read_only=True)
     officer_name = serializers.CharField(source="officer.full_name", read_only=True, default=None)
+    collector_name = serializers.CharField(source="collector.full_name", read_only=True,
+                                           default=None)
     branch_name = serializers.CharField(source="branch.name", read_only=True, default=None)
     total_outstanding = money(read_only=True)
     total_cost_of_credit = money(read_only=True)
@@ -495,7 +497,8 @@ class LoanSerializer(serializers.ModelSerializer):
     class Meta:
         model = Loan
         fields = ["id", "loan_no", "external_ref", "borrower_id", "borrower_name", "product_id",
-                  "product_name", "officer_id", "officer_name", "branch_id", "branch_name",
+                  "product_name", "officer_id", "officer_name", "collector_id",
+                  "collector_name", "branch_id", "branch_name",
                   "group_id", "refinanced_from_id",
                   "principal", "currency", "fx_rate", "interest_rate_pct", "rate_method",
                   "repayment_frequency",

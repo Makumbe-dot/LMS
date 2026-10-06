@@ -88,7 +88,23 @@ export const OFFICER = {
   username: 'officer',
   full_name: 'Officer',
   role: 'user',
-  rights: ['borrowers', 'loans', 'approve', 'disburse', 'cash', 'reverse', 'supervise', 'messages'],
+  rights: [
+    'borrowers',
+    'loans',
+    'approve',
+    'disburse',
+    'cash',
+    'reverse',
+    'supervise',
+    'messages',
+    'collections',
+  ],
 }
-export const TELLER = { id: 3, username: 'teller', full_name: 'Teller', role: 'user', rights: ['cash'] }
+export const TELLER = {
+  id: 3,
+  username: 'teller',
+  full_name: 'Teller',
+  role: 'user',
+  rights: ['cash', 'collections'],
+}
 export const VIEWER = { id: 4, username: 'viewer', full_name: 'Viewer', role: 'user', rights: [] }
