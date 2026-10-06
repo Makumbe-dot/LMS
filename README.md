@@ -54,6 +54,16 @@ closure on full settlement, **early settlement with an interest rebate**, **top-
 a new schedule), write-off, and a **printable loan agreement** with the terms, the total cost of
 credit and the APR, the schedule, the guarantors, the security and signature blocks.
 
+**Electronic signature** — the borrower signs the agreement with a one-time code texted to the
+phone on their file: staff press **Text a signing code** on the loan and type in the code the
+borrower reads out, or the borrower enters it in the portal. A code is six digits, lasts ten
+minutes, allows five wrong guesses, works once, and only its keyed hash is stored; staff never see
+it on the Messages page, in a download or in a search, and its text is blanked once delivered. The
+signature records when, how and a fingerprint of the terms (amount, rate, fees, charges,
+guarantors, security), and the printed agreement carries it in place of the signature line. Change
+any of those terms and the signature stands on the record but no longer counts. With **Settings →
+A loan must be signed electronically** on, a loan is not disbursed without a current signature.
+
 **Guarantors per loan** — a guarantor is held on the borrower's file but stands behind a
 *particular* loan: the officer ticks which ones at application (all of them by default), can change
 them until disbursement, and only those are printed on that loan's agreement. A top-up carries the
@@ -483,6 +493,8 @@ case-insensitive default collation. It covers:
 - sessions — renewal, rotation, sign-out, and revocation when an account is disabled or a role
   changes;
 - performance and payroll reports;
+- e-signatures — the code's life, five guesses that cannot be rolled back, codes never shown to
+  staff, terms changing before and after signing, and disbursement when a signature is required;
 - collections — assignment and who may be given loans, the queue's order, promises kept, broken
   and pending, the day-before reminder, and the results by collector;
 - payroll returns — full, short, missed, over and unknown lines, posting all or nothing on the

@@ -108,6 +108,13 @@ class NotificationKind(models.TextChoices):
     ARREARS = "arrears", "Arrears notice"
     RECEIPT = "receipt", "Repayment receipt"
     WELCOME = "welcome", "Disbursement confirmation"
+    SIGNING_CODE = "signing_code", "Agreement signing code"
+    PORTAL_CODE = "portal_code", "Portal sign-in code"
+
+
+# Messages carrying a one-time code. Staff never see their text: whoever could read
+# a borrower's code could sign or sign in as the borrower.
+SECRET_KINDS = ("signing_code", "portal_code")
 
 
 class DocumentType(models.TextChoices):
@@ -366,6 +373,9 @@ class OrganisationSetting(models.Model):
     # taken or paid out at a counter lands in a count. Off by default, so a book that
     # has never used tills keeps posting until someone decides to start.
     require_open_till = models.BooleanField(default=False)
+    # Refuse to disburse a loan the borrower has not signed electronically, on its
+    # current terms (services/signatures.py). Off: the paper agreement is enough.
+    require_signature = models.BooleanField(default=False)
 
     # Weekdays the offices are shut every week, as three-letter names ("sat,sun").
     # An instalment never falls due on one of these, or on a public holiday; it moves
@@ -1826,6 +1836,13 @@ class Notification(models.Model):
     dedupe_key = models.CharField(max_length=120, unique=True)
     created_at = models.DateTimeField(default=timezone.now)
 
+    @property
+    def shown_body(self) -> str:
+        """The text as staff may see it: a one-time code is never shown."""
+        if self.kind in SECRET_KINDS:
+            return "One-time code (not shown)"
+        return self.body
+
     class Meta:
         db_table = "notifications"
         ordering = ["-id"]
@@ -2039,3 +2056,43 @@ class PayrollRunLine(models.Model):
     @property
     def shortfall(self) -> Decimal:
         return max(self.expected - self.deducted, ZERO)
+
+
+# ---------------------------------------------------------------- e-signatures
+class SignatureStatus(models.TextChoices):
+    PENDING = "pending", "Code sent"
+    SIGNED = "signed", "Signed"
+    EXPIRED = "expired", "Expired or used up"
+    SUPERSEDED = "superseded", "Replaced by a later code"
+
+
+class LoanSignature(models.Model):
+    """The borrower's agreement to a loan's terms, given by entering a one-time
+    code sent to their phone. What they agreed to is pinned by `fingerprint`, a
+    hash of the terms: if the terms change afterwards the signature no longer
+    matches them, and a loan that must be signed has to be signed again."""
+    loan = models.ForeignKey("Loan", on_delete=models.CASCADE, related_name="signatures")
+    phone = models.CharField(max_length=30)
+    code_hash = models.CharField(max_length=64)
+    status = models.CharField(max_length=12, choices=SignatureStatus.choices,
+                              default=SignatureStatus.PENDING, db_index=True)
+    fingerprint = models.CharField(max_length=64, help_text="SHA-256 of the terms signed")
+    attempts = models.IntegerField(default=0)
+    sent_at = models.DateTimeField(default=timezone.now)
+    expires_at = models.DateTimeField()
+    signed_at = models.DateTimeField(null=True, blank=True)
+    channel = models.CharField(max_length=10, default="counter",
+                               help_text="counter: entered with staff; portal: by the borrower")
+    ip_address = models.CharField(max_length=64, null=True, blank=True)
+    user_agent = models.CharField(max_length=255, null=True, blank=True)
+    requested_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                                     related_name="+")
+    witnessed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                                     related_name="+", help_text="Staff present at the counter")
+
+    class Meta:
+        db_table = "loan_signatures"
+        ordering = ["-sent_at", "-id"]
+
+    def __str__(self):
+        return f"{self.loan_id} {self.status}"

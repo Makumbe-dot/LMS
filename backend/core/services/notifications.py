@@ -15,6 +15,7 @@ from django.db.models import Prefetch
 from django.utils import timezone
 
 from ..models import (
+    SECRET_KINDS,
     Instalment,
     Loan,
     LoanNote,
@@ -189,8 +190,13 @@ def send(ids: list[int] | None = None, as_of=None, limit: int | None = None) -> 
             else:
                 # Stays QUEUED, so the next run picks it up.
                 retrying += 1
-        message.save(update_fields=["status", "sent_at", "error", "attempts",
-                                    "last_attempt_at", "provider", "provider_message_id"])
+        fields = ["status", "sent_at", "error", "attempts", "last_attempt_at", "provider",
+                  "provider_message_id"]
+        if message.kind in SECRET_KINDS and message.status != NotificationStatus.QUEUED:
+            # Delivered or given up on: the code is no use to anyone now, so keep none.
+            message.body = "[one-time code]"
+            fields.append("body")
+        message.save(update_fields=fields)
 
     return {
         "sent": sent,

@@ -47,6 +47,9 @@
   .sign { flex: 1; }
   .sign-line { border-bottom: 1px solid var(--ink); height: 46px; margin-bottom: 6px; }
   .sign-label { font-size: 10pt; color: var(--muted); }
+  .e-sign { height: 46px; margin-bottom: 6px; border-bottom: 1px solid var(--ink);
+            font-size: 10pt; font-weight: 600; display: flex; flex-direction: column;
+            justify-content: flex-end; }
   footer { margin-top: 34px; padding-top: 12px; border-top: 1px solid var(--line);
            color: var(--muted); font-size: 9pt; text-align: center; }
   .no-print { text-align: center; margin-bottom: 18px; }
@@ -204,9 +207,23 @@
 
   <div class="signatures">
     <div class="sign">
+      {% if signature %}
+      <div class="e-sign">
+        Signed electronically<br>
+        {{ signature.signed_at|date:"j F Y, H:i" }}
+      </div>
+      <div class="sign-label">{{ borrower.full_name }} &mdash; Borrower</div>
+      <div class="sign-label">
+        By a one-time code sent to {{ signature.phone }}{% if signature.channel == "portal" %},
+        entered by the Borrower online{% else %}, entered in the presence of
+        {{ signature.witnessed_by.full_name|default:"staff" }}{% endif %}.
+        Terms fingerprint {{ signature.fingerprint|slice:":16" }}.
+      </div>
+      {% else %}
       <div class="sign-line"></div>
       <div class="sign-label">{{ borrower.full_name }} &mdash; Borrower</div>
       <div class="sign-label">Date:</div>
+      {% endif %}
     </div>
     <div class="sign">
       <div class="sign-line"></div>

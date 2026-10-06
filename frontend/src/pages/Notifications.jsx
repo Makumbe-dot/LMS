@@ -9,7 +9,7 @@ import { dateTime, humanise } from '../lib/format.js'
 import { useApi, useDebounced } from '../lib/useApi.js'
 
 const STATUSES = ['queued', 'sent', 'cancelled', 'failed']
-const KINDS = ['reminder', 'arrears', 'receipt', 'welcome']
+const KINDS = ['reminder', 'arrears', 'receipt', 'welcome', 'signing_code', 'portal_code']
 
 /**
  * The borrower messaging outbox: generated here, delivered through the configured

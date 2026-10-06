@@ -648,6 +648,7 @@ class DashboardSerializer(serializers.Serializer):
 class NotificationSerializer(serializers.ModelSerializer):
     borrower_name = serializers.CharField(source="borrower.full_name", read_only=True)
     loan_no = serializers.CharField(source="loan.loan_no", read_only=True, default=None)
+    body = serializers.CharField(source="shown_body", read_only=True)
 
     class Meta:
         model = Notification
@@ -672,7 +673,7 @@ class OrganisationSettingSerializer(serializers.ModelSerializer):
                   # The Settings page has always shown these; the API silently dropped
                   # them, so an edited approval limit was never saved.
                   "officer_approval_limit", "min_credit_score", "group_arrears_block_days",
-                  "require_open_till", "closed_weekdays", "interest_method", "updated_at"]
+                  "require_open_till", "require_signature", "closed_weekdays", "interest_method", "updated_at"]
         read_only_fields = ["updated_at"]
 
     def validate_interest_method(self, value):

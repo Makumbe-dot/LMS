@@ -11,7 +11,7 @@ from rest_framework.response import Response
 
 from ..audit import audit
 from ..exceptions import BusinessRuleError
-from ..models import AuditLog, Notification, NotificationStatus
+from ..models import SECRET_KINDS, AuditLog, Notification, NotificationStatus
 from ..permissions import CanCash, CanMessages, CanSupervise, IsAdmin
 from ..serializers import (
     NOTIFICATION_STATUS_CHOICES,
@@ -204,7 +204,9 @@ def notifications(request):
         qs = qs.filter(kind=kind)
     term = request.query_params.get("q")
     if term:
-        qs = qs.filter(Q(to_address__icontains=term) | Q(body__icontains=term)
+        # A code's text is never searchable: searching digits would find it.
+        qs = qs.filter(Q(to_address__icontains=term)
+                       | (Q(body__icontains=term) & ~Q(kind__in=SECRET_KINDS))
                        | Q(borrower__first_name__icontains=term)
                        | Q(borrower__last_name__icontains=term))
 
@@ -212,7 +214,7 @@ def notifications(request):
         rows = [{"id": n.id, "scheduled_for": n.scheduled_for, "channel": n.channel,
                  "to": n.to_address, "borrower": n.borrower.full_name,
                  "loan_no": n.loan.loan_no if n.loan_id else "", "kind": n.kind,
-                 "status": n.status, "message": n.body} for n in qs[:5000]]
+                 "status": n.status, "message": n.shown_body} for n in qs[:5000]]
         return table_response(request, rows, "notifications")
     return Response(paginate(request, qs, NotificationSerializer, default_size=50))
 

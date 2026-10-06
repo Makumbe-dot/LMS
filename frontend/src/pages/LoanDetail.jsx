@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 
 import DataTable from '../components/DataTable.jsx'
+import SignaturePanel from '../components/SignaturePanel.jsx'
 import Modal, { FormModal } from '../components/Modal.jsx'
 import Scorecard from '../components/Scorecard.jsx'
 import { useToast } from '../components/Toast.jsx'
@@ -397,6 +398,8 @@ export default function LoanDetail() {
         </button>
       </PageHeader>
 
+      <SignaturePanel loan={loan} />
+
       <div className="grid cols-3">
         <div className="card">
           <h3>Loan</h3>
@@ -435,6 +438,7 @@ export default function LoanDetail() {
               ],
               ...(loan.external_ref ? [['Previous system number', loan.external_ref]] : []),
               ['Officer', loan.officer_name || '-'],
+              ...(loan.collector_name ? [['Collector', loan.collector_name]] : []),
               ['Branch', loan.branch_name || '-'],
               ...(loan.group_name ? [['Group', loan.group_name]] : []),
               ...(loan.refinanced_from_no

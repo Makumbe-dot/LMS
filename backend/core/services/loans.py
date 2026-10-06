@@ -369,6 +369,9 @@ def disburse(loan: Loan, user: User, disbursement_date: date | None,
     if loan.status != LoanStatus.APPROVED:
         raise BusinessRuleError(f"Loan is {loan.status}, must be approved before disbursement")
     disb = disbursement_date or date.today()
+    from .signatures import assert_signed_for_disbursement  # signatures imports this module
+
+    assert_signed_for_disbursement(loan)
     # Before the schedule is built and written. An application may sit in a closed
     # month — capturing and approving are not postings — but moving the money is.
     periods.assert_open(disb, "This disbursement")

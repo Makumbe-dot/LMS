@@ -15,7 +15,7 @@ const FIELDS = [
   'ecl_stage1_pct', 'ecl_stage2_pct', 'ecl_stage3_pct',
   'ecl_stage2_days', 'ecl_stage3_days', 'reminder_days_before',
   'officer_approval_limit', 'min_credit_score', 'group_arrears_block_days',
-  'require_open_till', 'closed_weekdays', 'interest_method',
+  'require_open_till', 'require_signature', 'closed_weekdays', 'interest_method',
 ]
 
 const WEEKDAYS = [
@@ -274,6 +274,18 @@ export default function Settings() {
             hint="While any member is this far behind, the group takes on no new debt. 0 turns it off."
           />
         </div>
+
+        <h3>Signing</h3>
+        <Check
+          label="A loan must be signed electronically before it is disbursed"
+          checked={Boolean(values.require_signature)}
+          onChange={(e) => setValues((v) => ({ ...v, require_signature: e.target.checked }))}
+        />
+        <p className="muted" style={{ fontSize: 12, marginTop: -4 }}>
+          The borrower signs with a code texted to their phone, at the counter or in the portal.
+          The signature pins the terms: if the amount, rate, fees, guarantors or security change
+          afterwards, they sign again.
+        </p>
 
         <h3>Cash</h3>
         <Check

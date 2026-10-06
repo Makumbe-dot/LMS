@@ -63,7 +63,7 @@ from ..services import arrears as arrears_svc
 from ..services import charges as chg
 from ..services import loans as svc
 from ..services import repayments as rep
-from ..services import workdays
+from ..services import signatures, workdays
 from ..services.notifications import queue_receipt
 from ..services.penalties import accrue_penalties
 from ..services.reports import loan_statement
@@ -391,8 +391,36 @@ def agreement(request, loan_id: int):
         "term_unit": svc.TERM_UNITS.get(loan.repayment_frequency, "instalments"),
         "first_due": first_due,
         "closed_days": bool(workdays.load()),
+        "signature": signatures.current(loan),
     })
     return Response(html)
+
+
+@api_view(["GET"])
+def signature(request, loan_id: int):
+    """Whether the borrower has signed this loan's current terms."""
+    return Response(signatures.state(get_loan_or_404(loan_id)))
+
+
+@api_view(["POST"])
+@permission_classes([CanLoans])
+def signature_code(request, loan_id: int):
+    """Text the borrower a code to sign with."""
+    loan = get_loan_or_404(loan_id)
+    sent = signatures.send_code(loan, request.user, "counter")
+    return Response({**signatures.state(loan), "sent_to": sent.phone},
+                    status=status.HTTP_201_CREATED)
+
+
+@api_view(["POST"])
+@permission_classes([CanLoans])
+def signature_verify(request, loan_id: int):
+    """The borrower, at the counter, enters the code they were sent."""
+    loan = get_loan_or_404(loan_id)
+    signatures.verify(loan, request.data.get("code"), channel="counter",
+                      witnessed_by=request.user, ip=request.META.get("REMOTE_ADDR"),
+                      user_agent=request.headers.get("User-Agent"))
+    return Response(signatures.state(loan))
 
 
 # ---------------------------------------------------------------- guarantors
