@@ -38,7 +38,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 from django.db import transaction as db_transaction
-from django.db.models import Max, Q, Sum
+from django.db.models import Max, Q
 from django.utils import timezone
 
 from ..audit import audit
@@ -49,7 +49,6 @@ from ..models import (
     Loan,
     LoanStatus,
     PeriodState,
-    SavingsAccount,
     Transaction,
     User,
 )
@@ -325,21 +324,24 @@ def preflight(year: int, month: int) -> dict:
                        f"accrual on the General ledger page"),
         })
 
-    # 11. Advisory: foreign-currency loans not yet restated at the closing rate.
-    #     A monetary asset in another currency is reported at the closing rate,
-    #     and the revaluation is what moves it there.
-    from .fx import unrevalued_loans
+    # 11. Advisory: foreign-currency loans, savings accounts and facilities not yet
+    #     restated at the closing rate. A monetary item in another currency is
+    #     reported at the closing rate, and the revaluation is what moves it there.
+    from .fx import unrevalued_balances
 
-    stale = unrevalued_loans(end)
+    stale = unrevalued_balances(end)
+    named = [f"{n} {what}" for what, n in [("loan(s)", stale["loans"]),
+                                          ("savings account(s)", stale["savings_accounts"]),
+                                          ("facility(ies)", stale["facilities"])] if n]
     checks.append({
         "key": "foreign_loans_revalued",
-        "label": "Foreign-currency loans are carried at the month-end rate",
-        "passed": stale == 0,
+        "label": "Foreign-currency loans, savings and facilities are carried at the month-end rate",
+        "passed": not named,
         "blocking": False,
         "overridable": False,
-        "detail": ("None open, or all restated" if stale == 0 else
-                   f"{stale} loan(s) still at an earlier rate — add the closing rates and run "
-                   f"the revaluation on the Currencies page"),
+        "detail": ("None open, or all restated" if not named else
+                   f"{', '.join(named)} still at an earlier rate — add the closing rates and "
+                   f"run the revaluation on the Currencies page"),
     })
 
     blocking_failures = [c for c in checks if c["blocking"] and not c["passed"]]
@@ -397,7 +399,8 @@ def reconciliation_now() -> dict:
         "1100": ledger_view["1100"],
         "1300": ledger_view["1300"],
         "1400": ledger_view["1400"],
-        "2000": SavingsAccount.objects.aggregate(v=Sum("balance"))["v"] or ZERO,
+        # at the booked rates, as the ledger carries a foreign account
+        "2000": ledger_view["2000"],
     }
     names = {
         "1100": "Loans receivable", "1300": "Penalties receivable",
@@ -451,8 +454,8 @@ def close_period(year: int, month: int, user: User | None, note: str | None = No
 
     period.snapshot_principal_outstanding = next(
         r["book"] for r in gl.reconciliation()["rows"] if r["code"] == "1100")
-    period.snapshot_savings_balance = (
-        SavingsAccount.objects.aggregate(v=Sum("balance"))["v"] or ZERO)
+    period.snapshot_savings_balance = next(
+        r["book"] for r in gl.reconciliation()["rows"] if r["code"] == "2000")
     period.snapshot_json = json.dumps({
         "closed_at": timezone.now().isoformat(),
         "range": [start.isoformat(), end.isoformat()],

@@ -73,7 +73,8 @@ def guard_transaction_till(sender, instance, raw=False, **kwargs):
     from .services.tills import assert_till_open
 
     assert_till_open(instance.posted_by_id, instance.method,
-                     f"This {instance.get_txn_type_display().lower()}")
+                     f"This {instance.get_txn_type_display().lower()}",
+                     instance.loan.currency)
 
 
 @receiver(pre_save, sender=SavingsTransaction, dispatch_uid="core.guard_savings_till")
@@ -83,7 +84,8 @@ def guard_savings_till(sender, instance, raw=False, **kwargs):
     from .services.tills import assert_till_open
 
     assert_till_open(instance.posted_by_id, instance.method,
-                     f"This savings {instance.get_txn_type_display().lower()}")
+                     f"This savings {instance.get_txn_type_display().lower()}",
+                     instance.account.currency)
 
 
 # ---------------------------------------------------------------- exchange rates
@@ -91,6 +93,8 @@ def guard_savings_till(sender, instance, raw=False, **kwargs):
 # the loan's booked rate at the time, so the ledger can convert it now and again
 # on a Rebuild. Here, for the reason the ledger hook is: the next service that
 # writes a Transaction should not have to remember. A base-currency loan gets 1.
+# Savings and facility movements are stamped the same way, against the account's
+# or the facility's booked rate.
 @receiver(pre_save, sender=Transaction, dispatch_uid="core.stamp_transaction_rates")
 def stamp_transaction_rates(sender, instance, raw=False, **kwargs):
     if raw or not instance._state.adding:
@@ -103,6 +107,41 @@ def stamp_transaction_rates(sender, instance, raw=False, **kwargs):
     if instance.fx_rate is None:
         instance.fx_rate = (fx.rate_on(loan.currency, instance.txn_date)
                             if fx.is_foreign(loan) else fx.ONE)
+
+
+def _stamp_rates(instance, holder, model) -> None:
+    """The same stamp for a savings or facility movement. The booked rate is read
+    from the row rather than the instance in hand, which a revaluation run since
+    it was loaded may have left behind."""
+    from .services import fx
+
+    if not fx.is_foreign(holder):
+        instance.book_rate = instance.book_rate or fx.ONE
+        instance.fx_rate = instance.fx_rate or fx.ONE
+        return
+    if instance.book_rate is None:
+        instance.book_rate = (model.objects.filter(pk=holder.pk)
+                              .values_list("fx_rate", flat=True).first() or fx.ONE)
+    if instance.fx_rate is None:
+        instance.fx_rate = fx.rate_on(holder.currency, instance.txn_date)
+
+
+@receiver(pre_save, sender=SavingsTransaction, dispatch_uid="core.stamp_savings_rates")
+def stamp_savings_rates(sender, instance, raw=False, **kwargs):
+    if raw or not instance._state.adding:
+        return
+    from .models import SavingsAccount
+
+    _stamp_rates(instance, instance.account, SavingsAccount)
+
+
+@receiver(pre_save, sender=FacilityTransaction, dispatch_uid="core.stamp_facility_rates")
+def stamp_facility_rates(sender, instance, raw=False, **kwargs):
+    if raw or not instance._state.adding:
+        return
+    from .models import FundingFacility
+
+    _stamp_rates(instance, instance.facility, FundingFacility)
 
 
 # ---------------------------------------------------------------- the ledger
