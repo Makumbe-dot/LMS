@@ -5,6 +5,7 @@ SQL Server, reached through the mssql-django backend and the Microsoft ODBC
 driver, so the schema is manageable from SQL Server Management Studio.
 """
 import os
+import sys
 from datetime import timedelta
 from pathlib import Path
 
@@ -178,6 +179,11 @@ REST_FRAMEWORK = {
     "UNAUTHENTICATED_USER": None,
     # Rate limits. The login endpoint is the one worth throttling hard.
     "DEFAULT_THROTTLE_CLASSES": ["rest_framework.throttling.ScopedRateThrottle"],
+    # How many reverse proxies stand in front (IIS, nginx): the rate limits count
+    # per client address, read from X-Forwarded-For past exactly this many. 0, the
+    # default, uses the connecting address and ignores the header, which a client
+    # could otherwise write to dodge the limits. Behind one proxy, set 1.
+    "NUM_PROXIES": int(env("NUM_PROXIES", "0")),
     "DEFAULT_THROTTLE_RATES": {
         "login": env("THROTTLE_LOGIN", "20/min"),
         "inbound_payments": env("THROTTLE_INBOUND_PAYMENTS", "600/min"),
@@ -185,6 +191,12 @@ REST_FRAMEWORK = {
         "portal_login": env("THROTTLE_PORTAL_LOGIN", "10/min"),
     },
 }
+
+# The rate limits count in the cache. A test run signs in hundreds of times a minute
+# from one address, so it counts nowhere; the throttle tests switch a real cache on
+# for themselves.
+if len(sys.argv) > 1 and sys.argv[1] == "test":
+    CACHES = {"default": {"BACKEND": "django.core.cache.backends.dummy.DummyCache"}}
 
 SIMPLE_JWT = {
     # Thirty minutes, not eight hours. An access token cannot be revoked — it is

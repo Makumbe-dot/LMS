@@ -10,7 +10,7 @@ from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
-from rest_framework.throttling import ScopedRateThrottle
+from rest_framework.throttling import SimpleRateThrottle
 
 from ..audit import audit
 from ..exceptions import BusinessRuleError, NotFound
@@ -30,8 +30,16 @@ from ..serializers import (
 from ..services import tokens, totp
 
 
-class LoginThrottle(ScopedRateThrottle):
+class LoginThrottle(SimpleRateThrottle):
+    """Sign-in attempts per calling address (THROTTLE_LOGIN, 20 a minute).
+
+    Not ScopedRateThrottle: that one takes its scope from the view's
+    `throttle_scope`, which a function view does not have, so it let every
+    request through and this limit never applied."""
     scope = "login"
+
+    def get_cache_key(self, request, view):
+        return self.cache_format % {"scope": self.scope, "ident": self.get_ident(request)}
 
 
 def _register_failure(user: User | None) -> None:

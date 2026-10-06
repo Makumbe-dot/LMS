@@ -402,6 +402,9 @@ is on <http://localhost:8000> with no CORS and no second server.
    `X-Forwarded-Proto`.
 3. **`ALLOWED_HOSTS`** — every hostname the app answers on, and nothing else.
 4. **A real certificate on SQL Server**, so `DB_ENCRYPT=1` and `DB_TRUST_SERVER_CERT=0`.
+5. **`NUM_PROXIES`** — the number of reverse proxies in front (1 behind IIS or nginx). The sign-in
+   limits count per client address; with it wrong, either every user shares the proxy's address
+   and one limit, or a client can forge `X-Forwarded-For` to dodge it.
 
 Then check your work and collect the static files:
 
