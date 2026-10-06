@@ -1,23 +1,47 @@
 /* One rate over twelve months, against a target.
 
    A single series, so the title names it and there is no legend box; instead the
-   header carries the two figures a reader wants first - the latest complete
-   month and the twelve-month average - and the target is a dashed line with its
-   own label. The month in progress is drawn hollow and joined by a dashed
-   segment, because a rate measured on the 6th is not a fall. The latest settled
-   point is labelled; nothing else is, so the labels stay readable. Hover or focus
-   a month for a crosshair and the exact figures; the table view has the same
-   numbers for screen readers and print. */
+   chips under the title carry the figures a reader wants first - the latest
+   complete month, the average, and how many months met the target. The value
+   axis is fitted to the settled months and the target, not pinned at zero: a
+   rate that moves between 88% and 97% is a flat line on a 0-100 scale. The band
+   under the target is washed, so a month that missed sits visibly in it.
+
+   The month in progress is not joined to the line, because a rate measured on
+   the 6th is not a fall: its column is banded and its figure written at the
+   foot as "so far". The latest settled point is labelled; nothing else is.
+   Hover or focus a month for a crosshair and the exact figures; the table view
+   has the same numbers for screen readers and print. */
 import { useId, useState } from 'react'
 
 import { fmt, money, monthLabel, monthName, num, pct } from '../lib/format.js'
 import DataTable from './DataTable.jsx'
 
 const W = 760
-const H = 230
-const M = { top: 22, right: 16, bottom: 30, left: 46 }
+const H = 250
+const M = { top: 18, right: 8, bottom: 30, left: 46 }
 const PLOT_W = W - M.left - M.right
 const PLOT_H = H - M.top - M.bottom
+
+/** A value axis fitted to the data: whole steps of 5 or 10, at most six ticks. */
+export function fitAxis(values, target) {
+  const seen = values.filter((v) => v !== null)
+  if (target) seen.push(target)
+  if (!seen.length) return { lo: 0, hi: 100, ticks: [0, 25, 50, 75, 100] }
+  const min = Math.min(...seen)
+  const max = Math.max(...seen)
+  let step = 5
+  let lo = Math.max(0, Math.floor((min - 4) / step) * step)
+  let hi = Math.max(lo + step * 2, Math.ceil((max + 2) / step) * step)
+  while ((hi - lo) / step > 5) {
+    step = step === 5 ? 10 : step * 2
+    lo = Math.max(0, Math.floor(lo / step) * step)
+    hi = Math.ceil(hi / step) * step
+  }
+  const ticks = []
+  for (let t = lo; t <= hi; t += step) ticks.push(t)
+  return { lo, hi, ticks }
+}
 
 export default function TrendLine({
   data,
@@ -33,18 +57,24 @@ export default function TrendLine({
 
   const values = data.map((row) => num(row[valueKey]))
   const settledCount = partialLast ? values.length - 1 : values.length
-  const settledValues = values.slice(0, settledCount).filter((v) => v !== null)
+  const settled = values.slice(0, settledCount)
+  const settledValues = settled.filter((v) => v !== null)
   const average = settledValues.length
     ? settledValues.reduce((sum, v) => sum + v, 0) / settledValues.length
     : null
-  const lastSettled = values.slice(0, settledCount).findLastIndex((v) => v !== null)
+  const onTarget = target ? settledValues.filter((v) => v >= target).length : null
+  const lastSettled = settled.findLastIndex((v) => v !== null)
+  const partialIndex = values.length - 1
+  const partial = partialLast ? values[partialIndex] : null
 
-  // A whole hundred, so the quarter ticks land on round figures (75%, 150%...).
-  const top = Math.max(100, Math.ceil(Math.max(0, ...values.filter((v) => v !== null)) / 100) * 100)
-  const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => top * f)
-  const step = PLOT_W / Math.max(data.length - 1, 1)
-  const x = (i) => M.left + i * step
-  const y = (v) => M.top + PLOT_H - (Math.max(0, v) / top) * PLOT_H
+  const { lo, hi, ticks } = fitAxis(settled, target)
+  // each month owns an equal column, its point at the centre, so the first and
+  // last months have room for their labels
+  const step = PLOT_W / Math.max(data.length, 1)
+  const x = (i) => M.left + (i + 0.5) * step
+  const clampY = (v) => Math.min(hi, Math.max(lo, v))
+  const y = (v) => M.top + PLOT_H - ((clampY(v) - lo) / (hi - lo)) * PLOT_H
+  const floor = M.top + PLOT_H
 
   let line = ''
   let pen = false
@@ -56,44 +86,49 @@ export default function TrendLine({
     line += `${pen ? 'L' : 'M'}${x(i)},${y(values[i])}`
     pen = true
   }
+  const firstSettled = settled.findIndex((v) => v !== null)
   const area =
-    lastSettled > 0 && values.slice(0, settledCount).every((v) => v !== null)
-      ? `${line}L${x(lastSettled)},${M.top + PLOT_H}L${x(0)},${M.top + PLOT_H}Z`
+    lastSettled > firstSettled && settled.slice(firstSettled, lastSettled + 1).every((v) => v !== null)
+      ? `${line}L${x(lastSettled)},${floor}L${x(firstSettled)},${floor}Z`
       : ''
-  const partialIndex = values.length - 1
-  const showPartial = partialLast && values[partialIndex] !== null && lastSettled >= 0
   const latestLabelLeft = lastSettled > data.length * 0.8
 
   return (
     <div>
       <div className="chart-head">
         <h3 style={{ margin: 0 }}>{title}</h3>
-        <div className="row" style={{ gap: 8 }}>
-          <div className="legend legend-chips">
-            {lastSettled >= 0 ? (
-              <span className="legend-chip">
-                {monthLabel(data[lastSettled].month, { first: true })}
-                <b>{pct(values[lastSettled])}</b>
-              </span>
-            ) : null}
-            {average !== null ? (
-              <span className="legend-chip">
-                12-month average
-                <b>{pct(average)}</b>
-              </span>
-            ) : null}
-          </div>
-          <button
-            type="button"
-            className="btn small"
-            onClick={() => setView(view === 'chart' ? 'table' : 'chart')}
-            aria-pressed={view === 'table'}
-          >
-            {view === 'chart' ? 'Table' : 'Chart'}
-          </button>
-        </div>
+        <button
+          type="button"
+          className="btn small"
+          onClick={() => setView(view === 'chart' ? 'table' : 'chart')}
+          aria-pressed={view === 'table'}
+        >
+          {view === 'chart' ? 'Table' : 'Chart'}
+        </button>
       </div>
       {subtitle ? <p className="chart-sub">{subtitle}</p> : null}
+      <div className="legend legend-chips chart-legend">
+        {lastSettled >= 0 ? (
+          <span className="legend-chip">
+            {monthLabel(data[lastSettled].month, { first: true })}
+            <b>{pct(values[lastSettled])}</b>
+          </span>
+        ) : null}
+        {average !== null ? (
+          <span className="legend-chip">
+            {settledValues.length}-month average
+            <b>{pct(average)}</b>
+          </span>
+        ) : null}
+        {onTarget !== null && settledValues.length ? (
+          <span className="legend-chip">
+            On target
+            <b>
+              {onTarget} of {settledValues.length} months
+            </b>
+          </span>
+        ) : null}
+      </div>
 
       {view === 'table' ? (
         <DataTable
@@ -125,6 +160,29 @@ export default function TrendLine({
               </linearGradient>
             </defs>
 
+            {/* the month in progress: a faint band, so its column reads as unfinished */}
+            {partialLast && data.length ? (
+              <rect
+                className="now-band"
+                x={x(partialIndex) - step / 2 + 3}
+                y={M.top - 6}
+                width={step - 6}
+                height={PLOT_H + 6}
+                rx={8}
+              />
+            ) : null}
+
+            {/* below target: a wash, so a month that missed sits in it */}
+            {target && target > lo ? (
+              <rect
+                className="below-target"
+                x={M.left}
+                y={y(target)}
+                width={PLOT_W}
+                height={floor - y(target)}
+              />
+            ) : null}
+
             {ticks.map((tick) => (
               <g key={tick}>
                 <line className="tick-line" x1={M.left} x2={W - M.right} y1={y(tick)} y2={y(tick)} />
@@ -138,8 +196,8 @@ export default function TrendLine({
             {target ? (
               <g className="target">
                 <line x1={M.left} x2={W - M.right} y1={y(target)} y2={y(target)} />
-                <rect x={M.left + 6} y={y(target) - 18} width={64} height={15} rx={7.5} />
-                <text x={M.left + 38} y={y(target) - 7} textAnchor="middle">
+                <rect x={M.left + 6} y={y(target) + 4} width={64} height={16} rx={8} />
+                <text x={M.left + 38} y={y(target) + 15} textAnchor="middle">
                   Target {target}%
                 </text>
               </g>
@@ -147,44 +205,48 @@ export default function TrendLine({
 
             {area ? <path className="trend-area" d={area} fill={`url(#${uid}-area)`} /> : null}
             <path className="trend-line draw-in" d={line} pathLength={1} />
-            {showPartial ? (
-              <path
-                className="trend-line partial"
-                d={`M${x(lastSettled)},${y(values[lastSettled])}L${x(partialIndex)},${y(values[partialIndex])}`}
-              />
-            ) : null}
 
             {hover !== null ? (
-              <line className="crosshair" x1={x(hover)} x2={x(hover)} y1={M.top} y2={M.top + PLOT_H} />
+              <line className="crosshair" x1={x(hover)} x2={x(hover)} y1={M.top} y2={floor} />
             ) : null}
 
-            {values.map((v, i) =>
+            {settled.map((v, i) =>
               v === null ? null : (
                 <circle
                   key={data[i].month}
-                  className={`trend-dot${partialLast && i === partialIndex ? ' hollow' : ''}${
-                    hover === i ? ' hovered' : ''
-                  }`}
+                  className={`trend-dot${target && v < target ? ' missed' : ''}${hover === i ? ' hovered' : ''}`}
                   cx={x(i)}
                   cy={y(v)}
-                  r={4}
+                  r={hover === i ? 6 : 4}
                 />
               ),
             )}
+
+            {/* the month in progress, written rather than plotted */}
+            {partialLast && partial !== null ? (
+              <g className="so-far">
+                <text x={x(partialIndex)} y={floor - 22} textAnchor="middle" className="so-far-label">
+                  so far
+                </text>
+                <text x={x(partialIndex)} y={floor - 8} textAnchor="middle" className="so-far-value">
+                  {Math.round(partial)}%
+                </text>
+              </g>
+            ) : null}
 
             {/* the latest complete month, named: the one value worth writing on the chart */}
             {lastSettled >= 0 && hover === null ? (
               <g className="latest">
                 <rect
-                  x={latestLabelLeft ? x(lastSettled) - 60 : x(lastSettled) + 10}
-                  y={y(values[lastSettled]) - 28}
-                  width={50}
-                  height={18}
-                  rx={9}
+                  x={latestLabelLeft ? x(lastSettled) - 62 : x(lastSettled) + 10}
+                  y={y(values[lastSettled]) - 30}
+                  width={52}
+                  height={20}
+                  rx={10}
                 />
                 <text
-                  x={latestLabelLeft ? x(lastSettled) - 35 : x(lastSettled) + 35}
-                  y={y(values[lastSettled]) - 16}
+                  x={latestLabelLeft ? x(lastSettled) - 36 : x(lastSettled) + 36}
+                  y={y(values[lastSettled]) - 16.5}
                   textAnchor="middle"
                 >
                   {pct(values[lastSettled])}
@@ -202,7 +264,9 @@ export default function TrendLine({
                   height={PLOT_H + 10}
                   tabIndex={0}
                   role="button"
-                  aria-label={`${monthName(row.month)}: ${pct(row[valueKey])}`}
+                  aria-label={`${monthName(row.month)}${partialLast && i === partialIndex ? ' so far' : ''}: ${pct(
+                    row[valueKey],
+                  )}`}
                   onMouseEnter={() => setHover(i)}
                   onFocus={() => setHover(i)}
                   onBlur={() => setHover(null)}
@@ -222,11 +286,11 @@ export default function TrendLine({
           {hover !== null && data[hover] ? (
             <div
               className="chart-tooltip"
-              style={{
-                left: `calc(${(x(hover) / W) * 100}% + 10px)`,
-                top: 0,
-                transform: hover > data.length / 2 ? 'translateX(-112%)' : 'none',
-              }}
+              style={
+                hover >= data.length / 2
+                  ? { left: `calc(${(x(hover) / W) * 100}% - 12px)`, top: 0, transform: 'translateX(-100%)' }
+                  : { left: `calc(${(x(hover) / W) * 100}% + 12px)`, top: 0 }
+              }
             >
               <div className="tt-title">
                 {monthName(data[hover].month)}
@@ -244,6 +308,13 @@ export default function TrendLine({
                 <span>Due</span>
                 <span className="tt-val">{money(data[hover].due)}</span>
               </div>
+              {target && num(data[hover][valueKey]) !== null && !(partialLast && hover === partialIndex) ? (
+                <div className="tt-foot">
+                  {num(data[hover][valueKey]) >= target
+                    ? `Met the ${target}% target`
+                    : `${fmt(target - num(data[hover][valueKey]))} points under target`}
+                </div>
+              ) : null}
             </div>
           ) : null}
         </div>

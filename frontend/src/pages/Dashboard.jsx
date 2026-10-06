@@ -436,7 +436,7 @@ export default function Dashboard() {
         <div className="card chart-card area-rate">
           <TrendLine
             title="Collection rate"
-            subtitle="Repayments received as a share of principal and interest due, per month. The current month is drawn hollow: it is still being collected."
+            subtitle="Repayments received as a share of principal and interest due, per month. A hollow point missed the target; the month in progress is shown as collected so far."
             data={data.monthly_series}
             target={RATE_TARGET}
             partialLast
