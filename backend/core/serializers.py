@@ -776,7 +776,26 @@ class SavingsProductSerializer(serializers.ModelSerializer):
     class Meta:
         model = SavingsProduct
         fields = ["id", "code", "name", "description", "interest_rate_pct_pa", "min_balance",
-                  "monthly_fee", "allow_withdrawals", "is_active"]
+                  "monthly_fee", "allow_withdrawals", "currency", "is_active"]
+
+    def validate_currency(self, value):
+        """Blank for the base, any other code only with a rate; and fixed once an
+        account is open under the product, whose balance is in the old one."""
+        from .exceptions import BusinessRuleError
+        from .services import fx
+
+        try:
+            code = fx.validate_code(value)
+        except BusinessRuleError as exc:
+            raise serializers.ValidationError(str(exc))
+        product = self.instance
+        if (product is not None and code != fx.stored_code(product.currency)
+                and product.accounts.exists()):
+            raise serializers.ValidationError(
+                f"{product.name} already has accounts in "
+                f"{fx.normalise(product.currency) or fx.base_currency()}; its currency cannot "
+                f"change. Open a new product for the other currency.")
+        return code
 
 
 class SavingsAccountSerializer(serializers.ModelSerializer):
@@ -792,8 +811,8 @@ class SavingsAccountSerializer(serializers.ModelSerializer):
     class Meta:
         model = SavingsAccount
         fields = ["id", "account_no", "borrower_id", "borrower_no", "borrower_name",
-                  "product_id", "product_name", "branch_name", "status", "balance",
-                  "available_balance", "min_balance", "allow_withdrawals", "opened_on",
+                  "product_id", "product_name", "branch_name", "status", "currency", "fx_rate",
+                  "balance", "available_balance", "min_balance", "allow_withdrawals", "opened_on",
                   "closed_on", "last_interest_date", "created_at"]
 
 
@@ -804,7 +823,7 @@ class SavingsTransactionSerializer(serializers.ModelSerializer):
     class Meta:
         model = SavingsTransaction
         fields = ["id", "account_id", "txn_type", "txn_date", "amount", "balance_after",
-                  "method", "reference", "narration", "reversed", "reversal_of_id",
+                  "fx_rate", "method", "reference", "narration", "reversed", "reversal_of_id",
                   "posted_by_name", "created_at"]
 
 
@@ -1368,8 +1387,10 @@ class ReconciliationSerializer(serializers.Serializer):
 
 class SavingsPortfolioProductSerializer(serializers.Serializer):
     product = serializers.CharField()
+    currency = serializers.CharField()
     accounts = serializers.IntegerField()
     balance = money()
+    balance_base = money()
 
 
 class SavingsPortfolioSerializer(serializers.Serializer):
