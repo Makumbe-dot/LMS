@@ -128,10 +128,17 @@ export const NAV = [
         key: 'system',
         label: 'System',
         icon: 'settings',
+        badge: {
+          key: 'jobs_needing_attention',
+          one: 'job needs attention',
+          many: 'jobs need attention',
+          tone: 'warn',
+        },
         pages: [
           { to: '/settings', label: 'Settings', icon: 'settings', rights: ADMIN },
           { to: '/users', label: 'Users', icon: 'userCog', rights: ADMIN },
           { to: '/imports/loan-book', label: 'Loan book migration', icon: 'database', rights: ADMIN },
+          { to: '/jobs', label: 'Scheduled jobs', icon: 'play', rights: ADMIN },
           { to: '/audit', label: 'Audit log', icon: 'history', rights: ADMIN },
         ],
       },

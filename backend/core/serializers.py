@@ -39,6 +39,7 @@ from .models import (
     Guarantor,
     Holiday,
     InboundPayment,
+    JobRun,
     Instalment,
     Loan,
     LoanNote,
@@ -1572,3 +1573,14 @@ class PortalRequestSerializer(serializers.ModelSerializer):
                   "kind", "kind_label", "amount", "message", "status", "status_label",
                   "outcome", "created_at", "handled_by_name", "handled_at"]
         read_only_fields = ["status", "outcome", "created_at", "handled_at"]
+
+
+class JobRunSerializer(serializers.ModelSerializer):
+    status_label = serializers.CharField(source="get_status_display", read_only=True)
+    triggered_by_name = serializers.CharField(source="triggered_by.full_name", read_only=True,
+                                              default=None)
+
+    class Meta:
+        model = JobRun
+        fields = ["id", "job", "as_of", "status", "status_label", "started_at", "finished_at",
+                  "output", "error", "triggered_by_name"]

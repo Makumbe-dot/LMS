@@ -1,8 +1,8 @@
 <#
 .SYNOPSIS
-    The nightly batch: accrue penalties, credit savings interest, accrue interest
-    owed to funders, book the provision, queue borrower messages, and back up the
-    database.
+    The nightly batch: the application's scheduled jobs (penalties, reminders,
+    waiting payments, and on the 1st savings interest, interest owed to funders and
+    the provision), then a backup of the database.
 
 .DESCRIPTION
     Every step is idempotent, so a repeated or retried run changes nothing
@@ -63,57 +63,13 @@ $failures = 0
 try {
     Write-Log "===== nightly batch starting =====" 'Cyan'
 
-    # --skip-closed unconditionally: a month closed at 09:00 on the 1st must not
-    # log a FAILED step at 22:00 for a date nobody can post to any more.
-    $penaltyArgs = @('manage.py', 'run_penalties', '--skip-closed')
-    if ($AsOf) { $penaltyArgs += @('--as-of', $AsOf) }
-    if (-not (Invoke-Step 'penalty accrual' $penaltyArgs)) { $failures++ }
-
-    $reminderArgs = @('manage.py', 'send_reminders', '--send')
-    if ($AsOf) { $reminderArgs += @('--as-of', $AsOf) }
-    if (-not (Invoke-Step 'borrower reminders' $reminderArgs)) { $failures++ }
-
-    # Housekeeping: a revoked-token row stops mattering once the token it names
-    # would have expired anyway. Nothing breaks if this never runs.
-    if (-not (Invoke-Step 'prune expired token revocations' @('manage.py', 'prune_tokens'))) {
-        $failures++
-    }
-
-    if (-not $SkipSavingsInterest) {
-        # Only on the first of the month: interest is credited once per month and
-        # the command would otherwise be a no-op every other night.
-        if ((Get-Date).Day -eq 1 -or $AsOf) {
-            $savingsArgs = @('manage.py', 'run_savings_interest', '--skip-closed')
-            if ($AsOf) { $savingsArgs += @('--as-of', $AsOf) }
-            if (-not (Invoke-Step 'savings interest' $savingsArgs)) { $failures++ }
-        } else {
-            Write-Log 'SKIP   savings interest (runs on the 1st)' 'Yellow'
-        }
-    }
-
-    # Interest owed to funders. Monthly is enough, and the accrual catches up any
-    # month it missed, so a night that fails costs nothing.
-    if ((Get-Date).Day -eq 1 -or $AsOf) {
-        $borrowingArgs = @('manage.py', 'accrue_borrowing_interest', '--skip-closed')
-        if ($AsOf) { $borrowingArgs += @('--as-of', $AsOf) }
-        if (-not (Invoke-Step 'borrowing interest' $borrowingArgs)) { $failures++ }
-    } else {
-        Write-Log 'SKIP   borrowing interest (runs on the 1st)' 'Yellow'
-    }
-
-    # The expected credit loss provision, booked for the month that just closed.
-    # Passing yesterday's date on the 1st is what lands it in the right period.
-    if ((Get-Date).Day -eq 1 -or $AsOf) {
-        $provisionArgs = @('manage.py', 'run_provisions')
-        if ($AsOf) {
-            $provisionArgs += @('--as-of', $AsOf)
-        } else {
-            $provisionArgs += @('--as-of', (Get-Date).AddDays(-1).ToString('yyyy-MM-dd'))
-        }
-        if (-not (Invoke-Step 'provision run' $provisionArgs)) { $failures++ }
-    } else {
-        Write-Log 'SKIP   provision run (runs on the 1st)' 'Yellow'
-    }
+    # Every job lives in the application now (core/services/jobs.py): run_jobs
+    # runs what is due today, skips what already succeeded, and records each run
+    # on the Scheduled jobs page. It exits 1 if any job failed.
+    $jobArgs = @('manage.py', 'run_jobs')
+    if ($AsOf) { $jobArgs += @('--as-of', $AsOf) }
+    if ($SkipSavingsInterest) { $jobArgs += @('--skip', 'savings_interest') }
+    if (-not (Invoke-Step 'scheduled jobs' $jobArgs)) { $failures++ }
 } finally {
     Pop-Location
 }

@@ -124,9 +124,17 @@ def holiday_detail(request, holiday_id: int):
 def nav_summary(request):
     """The counts the sidebar shows beside a section: work that is waiting.
 
-    Two COUNTs and nothing else, because the shell asks for this on every page.
+    Two COUNTs and nothing else, because the shell asks for this on every page;
+    an administrator's also reads the recent job runs, one query.
     """
+    extra = {}
+    if request.user.is_admin:
+        # One more query, for administrators only: jobs failing or not running.
+        from ..services import jobs
+
+        extra["jobs_needing_attention"] = jobs.attention()
     return Response({
+        **extra,
         "pending_applications": Loan.objects.filter(status=LoanStatus.PENDING).count(),
         "loans_in_arrears": (Loan.objects
                              .filter(status=LoanStatus.ACTIVE)

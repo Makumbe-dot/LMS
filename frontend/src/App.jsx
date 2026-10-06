@@ -19,6 +19,7 @@ import Currencies from './pages/Currencies.jsx'
 import Dashboard from './pages/Dashboard.jsx'
 import Funding from './pages/Funding.jsx'
 import Groups from './pages/Groups.jsx'
+import Jobs from './pages/Jobs.jsx'
 import Journals from './pages/Journals.jsx'
 import Ledger from './pages/Ledger.jsx'
 import LoanBookImport from './pages/LoanBookImport.jsx'
@@ -144,6 +145,14 @@ export default function App() {
             element={
               <RequireRight rights={['admin']}>
                 <Settings />
+              </RequireRight>
+            }
+          />
+          <Route
+            path="/jobs"
+            element={
+              <RequireRight rights={['admin']}>
+                <Jobs />
               </RequireRight>
             }
           />

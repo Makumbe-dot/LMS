@@ -502,6 +502,8 @@ case-insensitive default collation. It covers:
 - sessions — renewal, rotation, sign-out, and revocation when an account is disabled or a role
   changes;
 - performance and payroll reports;
+- scheduled jobs — what is due on an ordinary day and on the 1st, once a day, failures kept, retried,
+  emailed and flagged, silence flagged, run-now for administrators, and the command's exit code;
 - the borrower portal — sign-in that gives nothing away, guesses and code limits, sessions ending,
   only their own loans, the statement, signing, requests, and tokens that cross neither way;
 - e-signatures — the code's life, five guesses that cannot be rolled back, codes never shown to
@@ -544,11 +546,30 @@ breaks if the rule does.
 
 ## Scheduled jobs
 
-One script runs the lot, and everything in it is idempotent, so a repeated or retried run changes
-nothing extra:
+The jobs live in the application (`core/services/jobs.py`) and one command runs whichever are due:
 
 ```powershell
-.\scripts\run_nightly_jobs.ps1                    # penalties, reminders, savings interest, backup
+cd backend
+..\.venv\Scripts\python.exe manage.py run_jobs              # everything due today
+..\.venv\Scripts\python.exe manage.py run_jobs --list       # what is due, what needs attention
+..\.venv\Scripts\python.exe manage.py run_jobs --only penalties [--as-of 2026-09-30]
+```
+
+Nightly: penalty accrual, matching waiting incoming payments, borrower reminders (with promise
+reminders) and pruning old sessions. On the 1st also: savings interest, interest on borrowings, and
+the provision run for the month just ended. A job that already succeeded for the day is not run
+again, so the command can be called as often as you like; a failed one is tried again on the next
+call, and one failure never stops the others. Every run is kept on **System → Scheduled jobs** with
+its output or error, where an administrator can also run a job at once. The System menu shows a
+warning badge while a job's latest run failed or a nightly job has not succeeded for more than a
+day — which is how a scheduled task that quietly stopped running gets noticed. Set
+`JOB_ALERT_EMAILS` to have failures emailed too. `run_jobs` exits 1 when anything failed.
+
+The nightly script calls `run_jobs` and then backs up the database, which stays outside the
+application because it is SQL Server's own BACKUP:
+
+```powershell
+.\scripts\run_nightly_jobs.ps1                    # the jobs due today, then the backup
 .\scripts\run_nightly_jobs.ps1 -AsOf 2026-09-30 -SkipBackup
 ```
 
@@ -564,7 +585,7 @@ Start-ScheduledTask -TaskName 'LMS nightly batch'   # run it now rather than wai
 For a server, register it instead under a service account with "run whether the user is logged on
 or not", which does need elevation. Output is appended to `logs/nightly-YYYYMMDD.log`.
 
-The individual commands, if you would rather schedule them separately:
+The individual commands, which the jobs call and which still work on their own:
 
 ```powershell
 cd backend
@@ -577,13 +598,9 @@ cd backend
 ..\.venv\Scripts\python.exe manage.py accrue_interest [--as-of 2026-09-30]
 ```
 
-The three monthly steps — savings interest, borrowing interest and the provision — run on the 1st
-only; the nightly script skips them on every other night rather than calling a command that would
-be a no-op.
-
 The same work is available over the API: `POST /api/reports/run-penalties`,
-`POST /api/notifications/generate` and `POST /api/savings/run-interest`. Savings interest is
-idempotent within a calendar month, so the nightly script only attempts it on the 1st.
+`POST /api/notifications/generate` and `POST /api/savings/run-interest`, and any job through
+`POST /api/jobs/<job>/run`.
 
 ## Backups
 

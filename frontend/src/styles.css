@@ -1554,3 +1554,8 @@ dl.kv > div:last-child > dt, dl.kv > div:last-child > dd { border-bottom: none; 
 .portal-loan dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 10px 0 0; }
 .portal-loan dt { color: var(--muted); font-size: 13px; }
 .portal-loan dd { margin: 0; text-align: right; font-weight: 600; }
+
+.job-output {
+  white-space: pre-wrap; font: 12px/1.5 var(--font-mono); max-height: 60vh;
+  overflow: auto; background: var(--surface-sunken); padding: 12px; border-radius: var(--radius);
+}

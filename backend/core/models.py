@@ -2163,3 +2163,32 @@ class PortalRequest(models.Model):
     class Meta:
         db_table = "portal_requests"
         ordering = ["status", "-created_at"]
+
+
+# ---------------------------------------------------------------- scheduled jobs
+class JobStatus(models.TextChoices):
+    RUNNING = "running", "Running"
+    OK = "ok", "Succeeded"
+    FAILED = "failed", "Failed"
+
+
+class JobRun(models.Model):
+    """One run of one scheduled job (services/jobs.py): when, for what date, by whom
+    (nobody, when the scheduler ran it), and what it said or how it failed."""
+    job = models.CharField(max_length=40, db_index=True)
+    as_of = models.DateField()
+    status = models.CharField(max_length=10, choices=JobStatus.choices,
+                              default=JobStatus.RUNNING)
+    started_at = models.DateTimeField(default=timezone.now, db_index=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    output = models.TextField(blank=True, default="")
+    error = models.TextField(blank=True, default="")
+    triggered_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                                     related_name="+")
+
+    class Meta:
+        db_table = "job_runs"
+        ordering = ["-started_at", "-id"]
+
+    def __str__(self):
+        return f"{self.job} {self.as_of} {self.status}"

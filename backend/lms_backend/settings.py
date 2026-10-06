@@ -349,6 +349,9 @@ INBOUND_PAYMENT_PROVIDER_PATHS = {
 }
 
 # Email, for the email channel when MESSAGE_EMAIL_BACKEND is "smtp".
+# Who is emailed when a scheduled job fails (core/services/jobs.py), comma-separated.
+# Empty: failures show in the app only.
+JOB_ALERT_EMAILS = env_list("JOB_ALERT_EMAILS", "")
 EMAIL_BACKEND = env("EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend")
 EMAIL_HOST = env("EMAIL_HOST", "")
 EMAIL_PORT = int(env("EMAIL_PORT", "587"))
