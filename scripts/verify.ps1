@@ -8,6 +8,11 @@
     build. Prints a summary table and exits non-zero on the first category that
     fails, so it is usable as a pre-push hook or by hand.
 
+    The backend tests run in parallel, one worker per clone of the test database
+    (LMS_test_1, LMS_test_2, ...), twice as many workers as cores by default
+    because each spends much of its time waiting on SQL Server. -Parallel 1 runs
+    them in one process.
+
     The missing-migration check is the one most worth having: a model change
     without a migration breaks nothing locally — the test database is built from
     migrations and a missing index does not fail an assertion — and then fails on
@@ -16,12 +21,14 @@
 .EXAMPLE
     .\scripts\verify.ps1
     .\scripts\verify.ps1 -SkipBackendTests   # the slow one, for a quick loop
+    .\scripts\verify.ps1 -Parallel 1         # backend tests in one process
 #>
 [CmdletBinding()]
 param(
     [switch] $SkipBackendTests,
     [switch] $SkipFrontend,
-    [string] $NodeDir
+    [string] $NodeDir,
+    [int] $Parallel = 2 * [Environment]::ProcessorCount
 )
 
 $ErrorActionPreference = 'Stop'
@@ -72,7 +79,7 @@ try {
     }
 
     if (-not $SkipBackendTests) {
-        Invoke-Check 'Backend tests' { & $python manage.py test }
+        Invoke-Check 'Backend tests' { & $python manage.py test --parallel $Parallel }
     } else {
         $results['Backend tests'] = 'SKIPPED'
     }

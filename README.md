@@ -366,13 +366,15 @@ One script runs everything that has to pass:
 ```powershell
 .\scripts\verify.ps1                      # checks, migrations, both suites, a production build
 .\scripts\verify.ps1 -SkipBackendTests    # the slow one, for a quick loop
+.\scripts\verify.ps1 -Parallel 1          # backend tests in one process
 ```
 
 Or each piece on its own:
 
 ```powershell
 cd backend
-..\.venv\Scripts\python.exe manage.py test                                  # the backend suite
+..\.venv\Scripts\python.exe manage.py test --parallel 8                      # the backend suite
+..\.venv\Scripts\python.exe manage.py test core.tests.test_fx                # one module
 ..\.venv\Scripts\python.exe manage.py makemigrations --check --dry-run core  # nothing unmigrated
 
 cd ..\frontend
@@ -386,7 +388,21 @@ npm run test:coverage
 **The backend suite** runs against a real SQL Server database (`LMS_test`, created and dropped
 automatically) rather than SQLite, because three of the behaviours this code works around are the
 engine's: `bulk_create` returning no primary keys, `select_for_update` compiling to `UPDLOCK`, and a
-case-insensitive default collation. It covers:
+case-insensitive default collation.
+
+It runs in parallel. Each worker gets its own copy of the test database, `LMS_test_1`, `LMS_test_2`
+and so on, restored from a backup of `LMS_test` taken once the migrations have run; that is the
+`lms_backend.sqlserver` engine, which is mssql-django with the cloning it lacks. Twice as many
+workers as cores is about right, since each spends much of its time waiting on SQL Server: on four
+cores the suite takes about three minutes at `--parallel 8`, against seven in one process.
+`--keepdb` keeps the clones as well, and replaces any that a new migration has left behind. The
+SQL login needs rights to back up and restore, which `sa` and any member of `sysadmin` have.
+
+Under test the password hasher is MD5 rather than PBKDF2 (`lms_backend/test_runner.py`). PBKDF2
+costs about a second a hash, and before the change it was most of the suite's run time. The
+password rules, lockout, change and reset tests run as before; only the stored hash differs.
+
+It covers:
 
 - the amortisation engine, both methods — annuity maths, flat-rate levelling, month-end clamping,
   schedules closing to zero and totals landing exactly on the advance;

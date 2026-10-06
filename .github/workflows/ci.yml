@@ -90,10 +90,14 @@ jobs:
         env: *dbenv
         run: python manage.py makemigrations --check --dry-run core
 
+      # Eight worker processes, each on its own clone of the test database
+      # (LMS_test_1 to LMS_test_8, restored from a backup of LMS_test). Twice the
+      # runner's four cores, because a worker spends much of its time waiting on
+      # SQL Server; twelve was no faster than eight on a four-core machine.
       - name: Tests
         working-directory: backend
         env: *dbenv
-        run: python manage.py test --verbosity 2
+        run: python manage.py test --parallel 8 --verbosity 2
 
   frontend:
     runs-on: ubuntu-latest
