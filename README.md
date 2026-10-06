@@ -507,6 +507,7 @@ cd backend
 cd ..\frontend
 npm test              # the frontend suite
 npm run test:coverage
+npm run e2e           # the browser tests; see below for their database
 ```
 
 `.github/workflows/ci.yml` runs the same set on every push and pull request, against SQL Server
@@ -593,6 +594,37 @@ until someone clicks:
 
 Both suites are in the repository's own idiom: a test asserts the rule, and its name says what
 breaks if the rule does.
+
+**The end-to-end tests** (Playwright, in `frontend/e2e/`) drive the real application in Chromium:
+the React app on the Vite dev server, its `/api` proxied to Django, Django on SQL Server. They
+follow the journeys that matter most when they break:
+
+- signing in, and a wrong password refused;
+- an officer registering a borrower, previewing a quote and applying;
+- maker-checker — the officer who applied is refused at Approve, a second officer approves and
+  disburses, and the schedule appears;
+- a teller opening a till, posting a cash repayment, and the first instalment, the balances, the
+  transactions and the till all showing it;
+- the loan statement downloading as a real PDF;
+- access rights — a read-only viewer seeing no button that changes anything, and a right ticked on
+  the Users page reaching that user on their next page load.
+
+They need a database of their own, because every run empties it: create `LMS_e2e` as in step 1 of
+the quick start (any name works if it contains `e2e`; set `E2E_DB_NAME`). The connection settings
+come from `backend/.env` as usual; only the database name is overridden. Then:
+
+```powershell
+cd frontend
+npx playwright install chromium   # once
+npm run e2e
+```
+
+Playwright starts Django on port 8765 and Vite on 5174 (`E2E_API_PORT`, `E2E_WEB_PORT`), so a
+development server already running on 8000 and 5173 is left alone. Before the first test it
+migrates, flushes and seeds the database, so every run starts from the same book; the steps take
+about two minutes, most of it the seed. Python is taken from `E2E_PYTHON`, else the repository's
+`.venv`, else the `python` on the PATH. `E2E_CHROMIUM_PATH` points at a Chromium installed some
+other way, and `E2E_SERVER_LOG=1` shows Django's request log. CI runs them as a separate job.
 
 ## Scheduled jobs
 
