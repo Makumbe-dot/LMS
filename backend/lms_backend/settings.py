@@ -129,9 +129,11 @@ _db_options: dict = {
 if env_bool("DB_TRUSTED_CONNECTION", True):
     _db_options["trusted_connection"] = "yes"
 
+# The engine is mssql-django with test-database cloning added, so that
+# `manage.py test --parallel` works; see lms_backend/sqlserver/creation.py.
 DATABASES = {
     "default": {
-        "ENGINE": "mssql",
+        "ENGINE": "lms_backend.sqlserver",
         "NAME": env("DB_NAME", "LMS"),
         "HOST": env("DB_HOST", r"localhost\SQLEXPRESS"),
         "PORT": env("DB_PORT", ""),
@@ -144,6 +146,9 @@ DATABASES = {
 }
 
 DEFAULT_AUTO_FIELD = "django.db.models.AutoField"
+
+# Django's runner with a cheap password hasher under test; see the module.
+TEST_RUNNER = "lms_backend.test_runner.TestRunner"
 
 # ---------------------------------------------------------------- auth
 AUTH_USER_MODEL = "core.User"
