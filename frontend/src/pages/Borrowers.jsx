@@ -87,7 +87,7 @@ export default function Borrowers() {
           <option value="1">KYC verified</option>
           <option value="0">KYC pending</option>
         </select>
-        {can('admin', 'loan_officer') ? (
+        {can('borrowers') ? (
           <Link className="btn primary" to="/borrowers/new">
             New borrower
           </Link>

@@ -173,13 +173,13 @@ export default function Settings() {
         <h3 style={{ marginTop: 20 }}>Credit approval</h3>
         <div className="grid cols-3">
           <Field
-            label={`Officer approval limit (${getCurrency()})`}
+            label={`Default approval limit (${getCurrency()})`}
             type="number"
             step="0.01"
             min="0"
             value={values.officer_approval_limit}
             onChange={set('officer_approval_limit')}
-            hint="Above this, an application needs an administrator"
+            hint="For a user without a limit of their own (Users). Above it, an application needs an administrator"
           />
           <Field
             label="Minimum credit score"

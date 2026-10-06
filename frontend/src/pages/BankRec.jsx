@@ -97,7 +97,7 @@ function CandidatesModal({ line, busy, onClose, onMatch }) {
   )
 }
 
-function StatementView({ id, isAdmin, onBack }) {
+function StatementView({ id, canAccount, onBack }) {
   const { toast, toastError } = useToast()
   const statement = useApi(`/api/bank-statements/${id}`)
   const outstanding = useApi(`/api/bank-statements/${id}/outstanding`)
@@ -141,7 +141,7 @@ function StatementView({ id, isAdmin, onBack }) {
         <button type="button" className="btn" onClick={onBack}>
           All statements
         </button>
-        {isAdmin ? (
+        {canAccount ? (
           <>
             <button
               type="button"
@@ -211,7 +211,7 @@ function StatementView({ id, isAdmin, onBack }) {
               key: 'actions',
               header: '',
               render: (l) =>
-                !isAdmin ? null : l.status === 'unmatched' ? (
+                !canAccount ? null : l.status === 'unmatched' ? (
                   <div className="row" style={{ gap: 6 }}>
                     <button type="button" className="btn small" onClick={() => setAction({ kind: 'match', line: l })}>
                       Find a match
@@ -336,13 +336,13 @@ export default function BankRec() {
   const [openId, setOpenId] = useState(null)
   const [uploading, setUploading] = useState(false)
   const [busy, setBusy] = useState(false)
-  const isAdmin = can('admin')
+  const canAccount = can('accounting')
 
   if (openId) {
     return (
       <StatementView
         id={openId}
-        isAdmin={isAdmin}
+        canAccount={canAccount}
         onBack={() => {
           setOpenId(null)
           list.reload()
@@ -371,7 +371,7 @@ export default function BankRec() {
         title="Bank reconciliation"
         meta="The bank's record against the ledger's: what neither a trial balance nor a reconciliation of the books can see"
       >
-        {isAdmin ? (
+        {canAccount ? (
           <button type="button" className="btn primary" onClick={() => setUploading(true)}>
             Upload a statement
           </button>

@@ -170,10 +170,10 @@ class RevocationTests(SessionBase):
         self.assertIn("disabled", refreshed.json()["detail"])
 
     def test_changing_someones_role_ends_their_sessions(self):
-        """Otherwise a demoted user keeps the permissions they just lost."""
+        """The tokens carry the role, so a token from before the change is stale."""
         teller, _ = self.sign_in()
         user = User.objects.get(username="teller")
-        self.admin.patch(f"/api/users/{user.id}", {"role": Role.VIEWER}, format="json")
+        self.admin.patch(f"/api/users/{user.id}", {"role": Role.ADMIN}, format="json")
 
         self.assertEqual(teller.get("/api/auth/me").status_code, 401)
         entry = AuditLog.objects.filter(action="update", entity="user").first()

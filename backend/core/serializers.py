@@ -55,6 +55,7 @@ from .models import (
     RevaluationRun,
     ProvisionRunStatus,
     RateMethod,
+    Right,
     Role,
     SavingsAccount,
     SavingsProduct,
@@ -86,9 +87,26 @@ class UserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ["id", "username", "full_name", "role", "is_active", "branch_id", "branch_name",
-                  "phone", "email", "mfa_enabled"]
+        fields = ["id", "username", "full_name", "role", "rights", "approval_limit", "is_active",
+                  "branch_id", "branch_name", "phone", "email", "mfa_enabled"]
         read_only_fields = ["mfa_enabled"]
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # What the user can actually do: every right for an administrator, in the
+        # catalogue's order otherwise, and nothing stale from an old right.
+        data["rights"] = instance.effective_rights()
+        return data
+
+
+class RightsField(serializers.ListField):
+    """The access rights an administrator ticks for a user, as Right values."""
+
+    child = serializers.ChoiceField(choices=Right.choices)
+
+    def to_internal_value(self, data):
+        rights = set(super().to_internal_value(data))
+        return [r.value for r in Right if r.value in rights]
 
 
 class LoginSerializer(serializers.Serializer):
@@ -139,11 +157,13 @@ class PasswordPolicyMixin:
 
 class UserCreateSerializer(PasswordPolicyMixin, serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
-    role = serializers.ChoiceField(choices=Role.choices, default=Role.LOAN_OFFICER)
+    role = serializers.ChoiceField(choices=Role.choices, default=Role.USER)
+    rights = RightsField(required=False, default=list)
 
     class Meta:
         model = User
-        fields = ["username", "full_name", "password", "role", "branch", "phone", "email"]
+        fields = ["username", "full_name", "password", "role", "rights", "approval_limit",
+                  "branch", "phone", "email"]
 
     def validate_username(self, value):
         if User.objects.filter(username=value).exists():
@@ -165,6 +185,9 @@ class UserCreateSerializer(PasswordPolicyMixin, serializers.ModelSerializer):
 class UserUpdateSerializer(PasswordPolicyMixin, serializers.Serializer):
     full_name = serializers.CharField(required=False)
     role = serializers.ChoiceField(choices=Role.choices, required=False)
+    rights = RightsField(required=False)
+    approval_limit = serializers.DecimalField(max_digits=14, decimal_places=2, required=False,
+                                              allow_null=True, min_value=0)
     is_active = serializers.BooleanField(required=False)
     password = serializers.CharField(required=False, allow_null=True)
     branch_id = serializers.IntegerField(required=False, allow_null=True)

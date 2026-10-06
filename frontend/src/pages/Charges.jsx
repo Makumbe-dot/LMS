@@ -20,7 +20,7 @@ export default function Charges() {
   const [attaching, setAttaching] = useState(null) // { product, attached: [] }
   const [busy, setBusy] = useState(false)
 
-  const isAdmin = can('admin')
+  const canSetup = can('setup')
 
   async function save(values) {
     setBusy(true)
@@ -75,7 +75,7 @@ export default function Charges() {
         title="Charges"
         meta="Fees beside the core pricing, defined once and attached to the products that carry them"
       >
-        {isAdmin ? (
+        {canSetup ? (
           <button type="button" className="btn primary" onClick={() => setEditing('new')}>
             New charge
           </button>
@@ -89,7 +89,7 @@ export default function Charges() {
         <DataTable
           caption="Charges catalogue"
           rows={charges.data || []}
-          onRowClick={isAdmin ? (row) => setEditing(row) : undefined}
+          onRowClick={canSetup ? (row) => setEditing(row) : undefined}
           empty="No charges defined. The admin and credit-life fees on each product are separate."
           columns={[
             { key: 'code', header: 'Code', render: (r) => r.code },
@@ -120,7 +120,7 @@ export default function Charges() {
               key: 'actions',
               header: '',
               render: (r) =>
-                isAdmin ? (
+                canSetup ? (
                   <button
                     type="button"
                     className="btn small"
@@ -153,7 +153,7 @@ export default function Charges() {
         <DataTable
           caption="Products"
           rows={products.data || []}
-          onRowClick={isAdmin ? (row) => openAttach(row) : undefined}
+          onRowClick={canSetup ? (row) => openAttach(row) : undefined}
           empty="No products"
           columns={[
             { key: 'code', header: 'Code', render: (r) => r.code },
@@ -167,7 +167,7 @@ export default function Charges() {
               key: 'actions',
               header: '',
               render: (r) =>
-                isAdmin ? (
+                canSetup ? (
                   <button
                     type="button"
                     className="btn small"

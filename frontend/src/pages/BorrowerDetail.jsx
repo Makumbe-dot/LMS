@@ -136,7 +136,7 @@ export default function BorrowerDetail() {
   const [busy, setBusy] = useState(false)
 
   const b = borrower.data
-  const mayEdit = can('admin', 'loan_officer')
+  const mayEdit = can('borrowers')
 
   async function addGuarantor(values) {
     setBusy(true)

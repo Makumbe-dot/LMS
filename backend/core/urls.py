@@ -34,6 +34,7 @@ urlpatterns = [
     re_path(r"^auth/sign-out-everywhere/?$", auth.sign_out_everywhere),
     re_path(r"^auth/me/?$", auth.me),
     re_path(r"^auth/change-password/?$", auth.change_password),
+    re_path(r"^users/rights/?$", auth.rights),
     re_path(r"^users/?$", auth.users),
     re_path(r"^users/(?P<user_id>\d+)/?$", auth.user_detail),
 

@@ -14,7 +14,7 @@ from rest_framework.throttling import ScopedRateThrottle
 
 from ..audit import audit
 from ..exceptions import BusinessRuleError, NotFound
-from ..models import Branch, OrganisationSetting, User
+from ..models import RIGHT_DESCRIPTIONS, RIGHT_PRESETS, Branch, OrganisationSetting, Right, User
 from ..permissions import IsAdmin
 from ..serializers import (
     ChangePasswordSerializer,
@@ -334,6 +334,21 @@ def me(request):
     return Response(UserSerializer(request.user).data)
 
 
+@api_view(["GET"])
+def rights(request):
+    """The access rights an administrator can grant, and the old roles' sets of
+    them as starting points. Any signed-in user may read it: it is the names of
+    the rights, so My account can show a user their own."""
+    return Response({
+        "rights": [{"code": r.value, "label": r.label, "description": RIGHT_DESCRIPTIONS[r]}
+                   for r in Right],
+        "presets": [{"code": code, "label": code.replace("_", " ").capitalize(),
+                     "rights": [r.value for r in held]}
+                    for code, held in RIGHT_PRESETS.items()],
+        "default_approval_limit": OrganisationSetting.load().officer_approval_limit,
+    })
+
+
 @api_view(["GET", "POST"])
 @permission_classes([IsAdmin])
 def users(request):
@@ -344,7 +359,8 @@ def users(request):
     body.is_valid(raise_exception=True)
     with transaction.atomic():
         user = body.save()
-        audit(request.user, "create", "user", user.id, f"{user.username} ({user.role})")
+        audit(request.user, "create", "user", user.id,
+              f"{user.username} ({user.role}; rights: {', '.join(user.effective_rights()) or 'none'})")
     return Response(UserSerializer(user).data, status=status.HTTP_201_CREATED)
 
 
@@ -384,6 +400,14 @@ def user_detail(request, user_id: int):
         revoke_reasons.append("account disabled")
     if data.get("role") and data["role"] != user.role:
         revoke_reasons.append(f"role changed from {user.role} to {data['role']}")
+    # Rights are read from the user's row on every request, so a change takes effect
+    # at once without ending anyone's session. The audit row says what changed.
+    rights_note = ""
+    if "rights" in data:
+        before, after = set(user.rights or []), set(data["rights"])
+        granted, removed = sorted(after - before), sorted(before - after)
+        rights_note = "".join([f" granted: {', '.join(granted)}." if granted else "",
+                               f" removed: {', '.join(removed)}." if removed else ""])
 
     with transaction.atomic():
         if password:
@@ -406,6 +430,6 @@ def user_detail(request, user_id: int):
         changed = (list(data) + (["password"] if password else []) + (["unlock"] if unlock else [])
                    + (["two-factor reset"] if reset_mfa else []))
         audit(request.user, "update", "user", user.id,
-              str(changed) + (f" — sessions ended ({'; '.join(revoke_reasons)})"
+              str(changed) + rights_note + (f" — sessions ended ({'; '.join(revoke_reasons)})"
                               if revoke_reasons else ""))
     return Response(UserSerializer(user).data)

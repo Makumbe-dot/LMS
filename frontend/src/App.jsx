@@ -38,10 +38,10 @@ import Till from './pages/Till.jsx'
 import Transactions from './pages/Transactions.jsx'
 import Users from './pages/Users.jsx'
 
-/** Blocks a route for roles that must not see it at all. */
-function RequireRole({ roles, children }) {
+/** Blocks a route for users without any of the named access rights. */
+function RequireRight({ rights, children }) {
   const { can } = useAuth()
-  if (!can(...roles)) return <Navigate to="/dashboard" replace />
+  if (!can(...rights)) return <Navigate to="/dashboard" replace />
   return children
 }
 
@@ -73,9 +73,9 @@ export default function App() {
           <Route
             path="/till"
             element={
-              <RequireRole roles={['admin', 'loan_officer', 'teller']}>
+              <RequireRight rights={['cash']}>
                 <Till />
-              </RequireRole>
+              </RequireRight>
             }
           />
           <Route path="/arrears" element={<Arrears />} />
@@ -83,17 +83,17 @@ export default function App() {
           <Route
             path="/imports"
             element={
-              <RequireRole roles={['admin', 'loan_officer', 'teller']}>
+              <RequireRight rights={['cash']}>
                 <BulkImport />
-              </RequireRole>
+              </RequireRight>
             }
           />
           <Route
             path="/imports/loan-book"
             element={
-              <RequireRole roles={['admin']}>
+              <RequireRight rights={['admin']}>
                 <LoanBookImport />
-              </RequireRole>
+              </RequireRight>
             }
           />
           <Route path="/notifications" element={<Notifications />} />
@@ -116,25 +116,25 @@ export default function App() {
           <Route
             path="/users"
             element={
-              <RequireRole roles={['admin']}>
+              <RequireRight rights={['admin']}>
                 <Users />
-              </RequireRole>
+              </RequireRight>
             }
           />
           <Route
             path="/settings"
             element={
-              <RequireRole roles={['admin']}>
+              <RequireRight rights={['admin']}>
                 <Settings />
-              </RequireRole>
+              </RequireRight>
             }
           />
           <Route
             path="/audit"
             element={
-              <RequireRole roles={['admin']}>
+              <RequireRight rights={['admin']}>
                 <Audit />
-              </RequireRole>
+              </RequireRight>
             }
           />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />

@@ -6,6 +6,7 @@ from django.test import TestCase
 from rest_framework.test import APIClient, APITestCase
 
 from core.models import (
+    RIGHT_PRESETS,
     Branch,
     JournalEntry,
     LedgerAccount,
@@ -31,8 +32,9 @@ class LedgerBase(APITestCase):
         cls.branch = Branch.objects.create(code="HQ", name="Head Office")
         User.objects.create_user("admin", "admin123", full_name="Admin", role=Role.ADMIN)
         User.objects.create_user("officer", "officer123", full_name="Officer",
-                                 role=Role.LOAN_OFFICER)
-        User.objects.create_user("teller", "teller123", full_name="Teller", role=Role.TELLER)
+                                 rights=RIGHT_PRESETS["loan_officer"])
+        User.objects.create_user("teller", "teller123", full_name="Teller",
+                                 rights=RIGHT_PRESETS["teller"])
 
     def client_for(self, username, password):
         client = APIClient()
@@ -357,7 +359,7 @@ class ApprovalLimitTests(LedgerBase):
         loan = self.apply_for(5000)
         # A second officer, so the maker-checker rule is not what blocks it.
         User.objects.create_user("officer2", "officer123", full_name="Officer Two",
-                                 role=Role.LOAN_OFFICER)
+                                 rights=RIGHT_PRESETS["loan_officer"])
         other = self.client_for("officer2", "officer123")
 
         response = other.post(f"/api/loans/{loan['id']}/approve")
@@ -375,7 +377,7 @@ class ApprovalLimitTests(LedgerBase):
 
         loan = self.apply_for(1500)
         User.objects.create_user("officer2", "officer123", full_name="Officer Two",
-                                 role=Role.LOAN_OFFICER)
+                                 rights=RIGHT_PRESETS["loan_officer"])
         other = self.client_for("officer2", "officer123")
         self.assertEqual(
             other.post(f"/api/loans/{loan['id']}/approve").json()["status"], "approved")

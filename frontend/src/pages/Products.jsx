@@ -22,7 +22,7 @@ export default function Products() {
   const [editing, setEditing] = useState(null) // product object, or 'new'
   const [busy, setBusy] = useState(false)
 
-  const isAdmin = can('admin')
+  const canSetup = can('setup')
 
   async function save(values) {
     setBusy(true)
@@ -53,7 +53,7 @@ export default function Products() {
         title="Loan products"
         meta="Pricing, limits, fees and the affordability cap applied to every application"
       >
-        {isAdmin ? (
+        {canSetup ? (
           <button type="button" className="btn primary" onClick={() => setEditing('new')}>
             New product
           </button>
@@ -67,7 +67,7 @@ export default function Products() {
         <DataTable
           caption="Loan products"
           rows={data || []}
-          onRowClick={isAdmin ? (row) => setEditing(row) : undefined}
+          onRowClick={canSetup ? (row) => setEditing(row) : undefined}
           empty="No products defined"
           columns={[
             { key: 'code', header: 'Code', render: (r) => r.code },

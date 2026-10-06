@@ -38,7 +38,8 @@ export default function Currencies() {
   const [asOf, setAsOf] = useState(today())
   const [preview, setPreview] = useState(null)
   const [busy, setBusy] = useState(false)
-  const isAdmin = can('admin')
+  const canSetup = can('setup')
+  const canAccount = can('accounting')
 
   const base = overview.data?.base_currency
 
@@ -107,7 +108,7 @@ export default function Currencies() {
         title="Currencies"
         meta={`The ledger is kept in ${base}. A loan in another currency is carried at its booked rate until a revaluation moves it to the closing rate.`}
       >
-        {isAdmin ? (
+        {canSetup ? (
           <button type="button" className="btn primary" onClick={() => setAdding(true)}>
             Add a rate
           </button>
@@ -161,7 +162,7 @@ export default function Currencies() {
                   key: 'actions',
                   header: '',
                   render: (r) =>
-                    isAdmin ? (
+                    canSetup ? (
                       <button type="button" className="btn small" onClick={() => removeRate(r)}>
                         Delete
                       </button>
@@ -186,7 +187,7 @@ export default function Currencies() {
             <button type="button" className="btn" onClick={loadPreview} disabled={busy}>
               Preview
             </button>
-            {isAdmin && preview && preview.lines.length > 0 && !preview.missing_rates.length ? (
+            {canAccount && preview && preview.lines.length > 0 && !preview.missing_rates.length ? (
               <button type="button" className="btn primary" onClick={postRevaluation} disabled={busy}>
                 Post revaluation
               </button>

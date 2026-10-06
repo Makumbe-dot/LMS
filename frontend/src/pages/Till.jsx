@@ -90,7 +90,7 @@ export default function Till() {
   const [action, setAction] = useState(null) // 'open' | 'count' | {verify: till}
   const [busy, setBusy] = useState(false)
 
-  const canSupervise = can('admin', 'loan_officer')
+  const canSupervise = can('supervise')
   const till = mine.data?.till
 
   async function run(promise, message) {

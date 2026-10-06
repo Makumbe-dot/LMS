@@ -7,7 +7,7 @@ from rest_framework.response import Response
 from ..audit import audit
 from ..exceptions import BusinessRuleError, NotFound
 from ..models import Charge, LoanProduct, ProductCharge
-from ..permissions import IsAdmin
+from ..permissions import CanSetup
 from ..serializers import ChargeSerializer
 
 
@@ -19,8 +19,8 @@ def charges(request):
             qs = qs.filter(is_active=True)
         return Response(ChargeSerializer(qs, many=True).data)
 
-    if not IsAdmin().has_permission(request, None):
-        return Response({"detail": IsAdmin.message}, status=status.HTTP_403_FORBIDDEN)
+    if not CanSetup().has_permission(request, None):
+        return Response({"detail": CanSetup.message}, status=status.HTTP_403_FORBIDDEN)
     if Charge.objects.filter(code=request.data.get("code")).exists():
         raise BusinessRuleError("A charge with this code already exists")
     body = ChargeSerializer(data=request.data)
@@ -32,7 +32,7 @@ def charges(request):
 
 
 @api_view(["PATCH", "DELETE"])
-@permission_classes([IsAdmin])
+@permission_classes([CanSetup])
 def charge_detail(request, charge_id: int):
     charge = Charge.objects.filter(pk=charge_id).first()
     if charge is None:
@@ -68,8 +68,8 @@ def product_charges(request, product_id: int):
         attached = Charge.objects.filter(product_charges__product=product).order_by("code")
         return Response(ChargeSerializer(attached, many=True).data)
 
-    if not IsAdmin().has_permission(request, None):
-        return Response({"detail": IsAdmin.message}, status=status.HTTP_403_FORBIDDEN)
+    if not CanSetup().has_permission(request, None):
+        return Response({"detail": CanSetup.message}, status=status.HTTP_403_FORBIDDEN)
 
     ids = request.data.get("charge_ids")
     if not isinstance(ids, list):

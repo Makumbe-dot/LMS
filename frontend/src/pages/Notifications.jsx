@@ -31,7 +31,7 @@ export default function Notifications() {
   const path = `/api/notifications${qs({ status, kind, q: debounced, page, page_size: 25 })}`
   const { data, error, loading, reload } = useApi(path)
   const gateway = useApi('/api/notifications/gateway')
-  const mayAct = can('admin', 'loan_officer')
+  const mayAct = can('messages')
   const delivers = gateway.data?.sms_delivers || gateway.data?.email_delivers
 
   const rows = data?.results || []

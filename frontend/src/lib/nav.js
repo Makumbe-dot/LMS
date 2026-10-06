@@ -6,13 +6,14 @@
    a list to read; ten entries is a menu, and pages that are used together (the
    ledger, its journals, the bank reconciliation) sit one click apart.
 
-   `roles` on a page hides it from everyone else; an entry with no page left for
-   the signed-in role disappears, and so does a section with no entry left. */
+   `rights` on a page hides it from users holding none of them ('admin' meaning an
+   administrator); an entry with no page left for the signed-in user disappears,
+   and so does a section with no entry left. */
 
 export const HOME = { to: '/dashboard', label: 'Dashboard', icon: 'dashboard', end: true }
 export const ACCOUNT = { to: '/account', label: 'My account', icon: 'user' }
 
-const COUNTER = ['admin', 'loan_officer', 'teller']
+const CASH = ['cash']
 const ADMIN = ['admin']
 
 export const NAV = [
@@ -58,7 +59,7 @@ export const NAV = [
           { to: '/collections', label: 'Collections due', icon: 'calendar' },
           { to: '/arrears', label: 'Arrears / PAR', icon: 'trending' },
           { to: '/payroll', label: 'Payroll deductions', icon: 'briefcase' },
-          { to: '/imports', label: 'Bulk repayments', icon: 'upload', roles: COUNTER, end: true },
+          { to: '/imports', label: 'Bulk repayments', icon: 'upload', rights: CASH, end: true },
           { to: '/notifications', label: 'Messages', icon: 'message' },
         ],
       },
@@ -66,7 +67,7 @@ export const NAV = [
         key: 'till',
         label: 'Teller till',
         icon: 'till',
-        pages: [{ to: '/till', label: 'Teller till', icon: 'till', roles: COUNTER }],
+        pages: [{ to: '/till', label: 'Teller till', icon: 'till', rights: CASH }],
       },
     ],
   },
@@ -125,10 +126,10 @@ export const NAV = [
         label: 'System',
         icon: 'settings',
         pages: [
-          { to: '/settings', label: 'Settings', icon: 'settings', roles: ADMIN },
-          { to: '/users', label: 'Users', icon: 'userCog', roles: ADMIN },
-          { to: '/imports/loan-book', label: 'Loan book migration', icon: 'database', roles: ADMIN },
-          { to: '/audit', label: 'Audit log', icon: 'history', roles: ADMIN },
+          { to: '/settings', label: 'Settings', icon: 'settings', rights: ADMIN },
+          { to: '/users', label: 'Users', icon: 'userCog', rights: ADMIN },
+          { to: '/imports/loan-book', label: 'Loan book migration', icon: 'database', rights: ADMIN },
+          { to: '/audit', label: 'Audit log', icon: 'history', rights: ADMIN },
         ],
       },
     ],
@@ -163,22 +164,22 @@ export function findPage(pathname) {
 }
 
 /**
- * The menu as one role sees it. Each entry gains `to`: the first of its pages
- * that role can open, which is where the sidebar row leads.
+ * The menu as one user sees it. Each entry gains `to`: the first of its pages
+ * that user can open, which is where the sidebar row leads.
  */
 export function visibleNav(can) {
   return NAV.map((section) => ({
     ...section,
     entries: section.entries
       .map((entry) => {
-        const pages = entry.pages.filter((page) => !page.roles || can(...page.roles))
+        const pages = entry.pages.filter((page) => !page.rights || can(...page.rights))
         return { ...entry, pages, to: pages[0]?.to }
       })
       .filter((entry) => entry.pages.length),
   })).filter((section) => section.entries.length)
 }
 
-/** Every page a role can open, flat, for the search box's "go to" results. */
+/** Every page a user can open, flat, for the search box's "go to" results. */
 export function allPages(can) {
   const pages = [{ ...HOME, entry: null }]
   for (const section of visibleNav(can)) {

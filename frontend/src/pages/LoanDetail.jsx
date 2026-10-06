@@ -282,9 +282,13 @@ export default function LoanDetail() {
   if (error) return <ErrorBanner error={error} onRetry={reload} />
   if (!loan) return null
 
-  const isOfficer = can('admin', 'loan_officer')
-  const isTeller = can('admin', 'loan_officer', 'teller')
-  const isAdmin = can('admin')
+  const canLoans = can('loans')
+  const canApprove = can('approve')
+  const canDisburse = can('disburse')
+  const canCash = can('cash')
+  const canReverse = can('reverse')
+  const canSupervise = can('supervise')
+  const canRestructure = can('restructure')
   const arrears = num(loan.arrears_amount) ?? 0
 
   return (
@@ -297,7 +301,7 @@ export default function LoanDetail() {
         }
         meta={`${loan.borrower_name} · ${loan.product_name}`}
       >
-        {isTeller && loan.status === 'active' ? (
+        {canCash && loan.status === 'active' ? (
           <>
             <button
               type="button"
@@ -311,7 +315,7 @@ export default function LoanDetail() {
             </button>
           </>
         ) : null}
-        {isOfficer && loan.status === 'pending' ? (
+        {canApprove && loan.status === 'pending' ? (
           <>
             <button
               type="button"
@@ -326,21 +330,21 @@ export default function LoanDetail() {
             </button>
           </>
         ) : null}
-        {isOfficer && loan.status === 'approved' ? (
-          <>
-            <button
-              type="button"
-              className="btn primary"
-              onClick={() => setAction({ kind: 'disburse' })}
-            >
-              Disburse
-            </button>
-            <button type="button" className="btn danger" onClick={() => setAction({ kind: 'reject' })}>
-              Reject
-            </button>
-          </>
+        {canDisburse && loan.status === 'approved' ? (
+          <button
+            type="button"
+            className="btn primary"
+            onClick={() => setAction({ kind: 'disburse' })}
+          >
+            Disburse
+          </button>
         ) : null}
-        {isOfficer && loan.status === 'active' ? (
+        {canApprove && loan.status === 'approved' ? (
+          <button type="button" className="btn danger" onClick={() => setAction({ kind: 'reject' })}>
+            Reject
+          </button>
+        ) : null}
+        {canSupervise && loan.status === 'active' ? (
           <button
             type="button"
             className="btn"
@@ -350,7 +354,7 @@ export default function LoanDetail() {
             Accrue penalties
           </button>
         ) : null}
-        {isAdmin && loan.status === 'active' ? (
+        {canRestructure && loan.status === 'active' ? (
           <>
             <button type="button" className="btn" onClick={() => setAction({ kind: 'waive' })}>
               Waive penalties
@@ -363,7 +367,7 @@ export default function LoanDetail() {
             </button>
           </>
         ) : null}
-        {isTeller && loan.status === 'written_off' ? (
+        {canCash && loan.status === 'written_off' ? (
           <button
             type="button"
             className="btn primary"
@@ -372,7 +376,7 @@ export default function LoanDetail() {
             Record a recovery
           </button>
         ) : null}
-        {isOfficer && loan.status === 'active' ? (
+        {canLoans && loan.status === 'active' ? (
           <button type="button" className="btn" onClick={() => setAction({ kind: 'topup' })}>
             Top up
           </button>
@@ -586,7 +590,7 @@ export default function LoanDetail() {
         <div className="card">
           <div className="row between" style={{ marginBottom: 12 }}>
             <h3 style={{ margin: 0 }}>Fees and charges</h3>
-            {isOfficer ? (
+            {canLoans ? (
               <button
                 type="button"
                 className="btn small"
@@ -628,7 +632,7 @@ export default function LoanDetail() {
         <div className="card">
           <div className="row between" style={{ marginBottom: 12 }}>
             <h3 style={{ margin: 0 }}>Security pledged</h3>
-            {isOfficer ? (
+            {canLoans ? (
               <button
                 type="button"
                 className="btn small"
@@ -667,7 +671,7 @@ export default function LoanDetail() {
                 key: 'actions',
                 header: '',
                 render: (c) =>
-                  isOfficer ? (
+                  canLoans ? (
                     <div className="row" style={{ gap: 6 }}>
                       {c.status === 'pledged' ? (
                         <button
@@ -713,7 +717,7 @@ export default function LoanDetail() {
 
           <div className="row between" style={{ margin: '20px 0 12px' }}>
             <h3 style={{ margin: 0 }}>Guarantors of this loan</h3>
-            {isOfficer && ['pending', 'approved'].includes(loan.status) ? (
+            {canLoans && ['pending', 'approved'].includes(loan.status) ? (
               <button
                 type="button"
                 className="btn small"
@@ -747,7 +751,7 @@ export default function LoanDetail() {
         <div className="card">
           <div className="row between" style={{ marginBottom: 12 }}>
             <h3 style={{ margin: 0 }}>Collections follow-ups</h3>
-            {isTeller ? (
+            {canCash ? (
               <button
                 type="button"
                 className="btn small"
@@ -776,7 +780,7 @@ export default function LoanDetail() {
                   {note.resolved ? ' · resolved' : ''}
                 </div>
                 <div className="note-body">{note.body}</div>
-                {isTeller ? (
+                {canCash ? (
                   <div className="row" style={{ marginTop: 8 }}>
                     <button
                       type="button"
@@ -850,7 +854,7 @@ export default function LoanDetail() {
               render: (t) =>
                 t.reversed ? (
                   <span className="tag-danger">Reversed</span>
-                ) : t.txn_type === 'repayment' && isOfficer && loan.status !== 'written_off' ? (
+                ) : t.txn_type === 'repayment' && canReverse && loan.status !== 'written_off' ? (
                   <button
                     type="button"
                     className="btn small"

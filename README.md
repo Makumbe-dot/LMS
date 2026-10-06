@@ -47,7 +47,7 @@ maximum instalment-to-salary ratio, plus a **charges catalogue** of additional f
 and attached to whichever products carry them.
 
 **Loan lifecycle** — quote with indicative schedule and affordability check, application, approval
-(maker-checker: the originating officer cannot approve their own loan), rejection, disbursement
+(maker-checker: whoever originated a loan cannot approve it), rejection, disbursement
 (generates the amortisation schedule, first instalment lands on the borrower's next payday),
 closure on full settlement, **early settlement with an interest rebate**, **top-up / refinance**
 (a new loan that settles the old one out of its own proceeds), reschedule (capitalises arrears into
@@ -161,7 +161,7 @@ in at the day's spot rate; whatever lies between is a **realised exchange differ
 foreign loan at the closing rate, posts the unrealised difference, and moves the booked rate on;
 the period-close checks say when a loan is still at an earlier rate. Dashboards, PAR, provisions,
 exposure and the registers add foreign loans in at their booked rates; a loan's own pages and
-statement show its own currency. Affordability and the officer approval limit measure a foreign
+statement show its own currency. Affordability and the approval limit measure a foreign
 instalment or principal at today's rate.
 
 **Bank reconciliation** — a bank or mobile-money statement, exported as CSV (one signed amount
@@ -211,8 +211,35 @@ stored, never the whole response, because a bureau report carries other lenders'
 **Security register** — collateral pledged against a loan: type, description, valuation, reference,
 and release or realisation.
 
-**Security and control** — JWT login with **renewable sessions and real revocation**, four roles
-(admin, loan officer, teller, viewer) enforced per endpoint, **account lockout after repeated bad
+**Access rights** — there are no fixed roles below administrator. An administrator can do
+everything; every other user can do what an administrator has ticked for them on the **Users**
+page, and with nothing ticked can only read. The rights are:
+
+| Right | Lets the user |
+|-------|---------------|
+| Borrowers and groups | add and edit borrowers, groups, guarantors and documents |
+| Loan applications | quote and apply for loans, top-ups, guarantors, security and charges |
+| Approve and reject loans | approve or reject applications, up to their approval limit |
+| Disburse loans | pay out an approved loan |
+| Cash and repayments | repayments, settlements, recoveries, savings deposits and withdrawals, bulk repayments, notes, expenses, and a till |
+| Reverse repayments | reverse a repayment posted in error |
+| Supervise tills and penalties | verify another user's till count, run penalties, check a period before close |
+| Borrower messages | generate, send and cancel reminders and arrears notices |
+| Waive, reschedule and write off | waive penalties, reschedule and write off loans |
+| Accounting | post, reject and reverse journals, the chart of accounts, bank reconciliation, provisioning, funding, revaluation, savings interest, closing periods |
+| Products and setup | loan and savings products, charges and exchange rates |
+
+Users, branches, holidays, the organisation's settings, the audit log and the loan book migration
+are never granted: they stay the administrator's. Each user with the approve right may have an
+**approval limit** of their own; left blank, the organisation's default applies. The Users form
+offers the old loan officer, teller and viewer sets as starting points, and migration `0028` gives
+every existing user exactly the rights their old role carried. A change takes effect on the user's
+next request, and the audit log records what was granted and removed. The four-eyes rules hold for
+anyone short of an administrator whatever they hold: nobody approves a loan they originated, posts
+a journal they prepared, or verifies their own till.
+
+**Security and control** — JWT login with **renewable sessions and real revocation**, access
+rights enforced per endpoint, **account lockout after repeated bad
 passwords**, self-service password change, sign out on one device or on all of them, full audit log
 of every posting and decision, searchable and filterable.
 
@@ -272,12 +299,12 @@ python manage.py runserver
 
 The API is now on <http://localhost:8000>.
 
-| Username | Password   | Role         |
-|----------|------------|--------------|
-| admin    | admin123   | admin        |
-| officer  | officer123 | loan officer |
-| teller   | teller123  | teller       |
-| viewer   | viewer123  | viewer       |
+| Username | Password   | Access                                     |
+|----------|------------|--------------------------------------------|
+| admin    | admin123   | administrator                              |
+| officer  | officer123 | the old loan officer's rights              |
+| teller   | teller123  | cash and repayments                        |
+| viewer   | viewer123  | none: read only                            |
 
 ### 3. Reporting views (SSMS, optional)
 
@@ -390,7 +417,9 @@ case-insensitive default collation. It covers:
 
 - the amortisation engine, both methods — annuity maths, flat-rate levelling, month-end clamping,
   schedules closing to zero and totals landing exactly on the advance;
-- the full loan lifecycle through the HTTP API — roles, affordability, maker-checker approval,
+- access rights — reading with none, each right opening only its own actions, the personal
+  approval limit, four-eyes for every non-administrator, and the migration from the old roles;
+- the full loan lifecycle through the HTTP API — rights, affordability, maker-checker approval,
   disbursement, waterfall allocation, penalty accrual and its idempotency, waiver, settlement,
   reversal, reschedule, write-off, reports and audit;
 - early settlement — the rebate, the refusal of a stale confirmation amount, and closure;
@@ -583,7 +612,7 @@ backend/                        Django project
                                 notifications, manual journals, tills, bank statements,
                                 audit_log, sequences
     serializers.py              request validation and response shaping
-    permissions.py              the four-role guard
+    permissions.py              the access-right guards
     exceptions.py               BusinessRuleError + a handler that always returns {"detail": ...}
     audit.py                    audit-trail helper
     admin.py                    Django admin, with postings deliberately read-only

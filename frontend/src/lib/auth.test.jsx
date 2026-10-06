@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest'
 import * as api from './api.js'
 import { AuthProvider, useAuth } from './auth.jsx'
 
-const USER = { id: 1, username: 'teller', full_name: 'Teller', role: 'teller' }
+const USER = { id: 1, username: 'teller', full_name: 'Teller', role: 'user', rights: ['cash'] }
 
 function Probe() {
   const { user, status, signIn, signOut, signOutEverywhere, can } = useAuth()
@@ -19,7 +19,9 @@ function Probe() {
     <div>
       <span data-testid="status">{status}</span>
       <span data-testid="user">{user?.username ?? 'none'}</span>
-      <span data-testid="is-teller">{String(can('teller'))}</span>
+      <span data-testid="can-cash">{String(can('cash'))}</span>
+      <span data-testid="can-approve">{String(can('approve'))}</span>
+      <span data-testid="is-admin">{String(can('admin'))}</span>
       <span data-testid="failure">{failure}</span>
       <button type="button" onClick={() => signIn('teller', 'teller123')}>in</button>
       <button type="button" onClick={signOut}>out</button>
@@ -53,7 +55,7 @@ describe('AuthProvider', () => {
     // Without the refresh token the session would die in thirty minutes with no
     // way to renew, which is the whole point of storing it.
     expect(api.getRefreshToken()).toBe('r')
-    expect(screen.getByTestId('is-teller')).toHaveTextContent('true')
+    expect(screen.getByTestId('can-cash')).toHaveTextContent('true')
   })
 
   it('resumes a session from a stored refresh token alone', async () => {
@@ -166,12 +168,14 @@ describe('AuthProvider', () => {
     expect(api.getRefreshToken()).toBe('r')
   })
 
-  it('answers can() only for the signed-in role', async () => {
+  it('answers can() for the rights the signed-in user holds, and no others', async () => {
     vi.spyOn(api, 'login').mockResolvedValue({
       access_token: 'a', refresh_token: 'r', user: USER,
     })
     mount()
     await userEvent.click(screen.getByRole('button', { name: 'in' }))
-    await waitFor(() => expect(screen.getByTestId('is-teller')).toHaveTextContent('true'))
+    await waitFor(() => expect(screen.getByTestId('can-cash')).toHaveTextContent('true'))
+    expect(screen.getByTestId('can-approve')).toHaveTextContent('false')
+    expect(screen.getByTestId('is-admin')).toHaveTextContent('false')
   })
 })

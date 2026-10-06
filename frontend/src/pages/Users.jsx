@@ -5,22 +5,38 @@ import { FormModal } from '../components/Modal.jsx'
 import { useToast } from '../components/Toast.jsx'
 import { Check, ErrorBanner, Field, Loading, PageHeader } from '../components/ui.jsx'
 import { patch, post } from '../lib/api.js'
-import { humanise } from '../lib/format.js'
+import { rightsLabel } from '../lib/auth.jsx'
 import { useOrg } from '../lib/org.jsx'
 import { useApi } from '../lib/useApi.js'
 
-const ROLES = ['admin', 'loan_officer', 'teller', 'viewer']
 
 export default function Users() {
   const { toast, toastError } = useToast()
   const { activeBranches } = useOrg()
   const { data, error, loading, reload } = useApi('/api/users')
+  const catalogue = useApi('/api/users/rights').data
   const [editing, setEditing] = useState(null) // user object or 'new'
   const [busy, setBusy] = useState(false)
+  // The ticks and the role are held here rather than read off the form, so a
+  // preset can tick several boxes at once and the boxes hide for an administrator.
+  const [role, setRole] = useState('user')
+  const [rights, setRights] = useState([])
+
+  function open(target) {
+    setRole(target === 'new' ? 'user' : target.role)
+    setRights(target === 'new' ? [] : target.role === 'admin' ? [] : target.rights || [])
+    setEditing(target)
+  }
+
+  function toggle(code, on) {
+    setRights((held) => (on ? [...held, code] : held.filter((c) => c !== code)))
+  }
 
   async function save(values) {
     setBusy(true)
     try {
+      values = { ...values, role, rights: role === 'admin' ? [] : rights }
+      if (values.approval_limit === undefined) delete values.approval_limit
       if (editing === 'new') {
         const body = { ...values }
         if (body.branch_id) body.branch = Number(body.branch_id)
@@ -51,9 +67,9 @@ export default function Users() {
     <>
       <PageHeader
         title="Users"
-        meta="Roles decide what each person can do: officers originate and decide, tellers take money, admins do the irreversible things, viewers only read."
+        meta="An administrator can do everything. Everyone else can do what you tick for them, and with nothing ticked can only read."
       >
-        <button type="button" className="btn primary" onClick={() => setEditing('new')}>
+        <button type="button" className="btn primary" onClick={() => open('new')}>
           New user
         </button>
       </PageHeader>
@@ -65,12 +81,20 @@ export default function Users() {
         <DataTable
           caption="Users"
           rows={data || []}
-          onRowClick={(row) => setEditing(row)}
+          onRowClick={(row) => open(row)}
           empty="No users"
           columns={[
             { key: 'username', header: 'Username', render: (r) => r.username },
             { key: 'name', header: 'Full name', render: (r) => r.full_name },
-            { key: 'role', header: 'Role', render: (r) => humanise(r.role) },
+            {
+              key: 'role',
+              header: 'Access',
+              render: (r) => (
+                <span className={r.role === 'admin' ? 'tag-warn' : undefined}>
+                  {r.role === 'admin' ? 'Administrator' : rightsLabel(r, catalogue)}
+                </span>
+              ),
+            },
             { key: 'branch', header: 'Branch', render: (r) => r.branch_name || '-' },
             { key: 'phone', header: 'Phone', render: (r) => r.phone || '-' },
             { key: 'email', header: 'Email', render: (r) => r.email || '-' },
@@ -90,7 +114,7 @@ export default function Users() {
               render: (r) =>
                 r.mfa_enabled ? (
                   <span className="tag-ok">On</span>
-                ) : r.role === 'viewer' ? (
+                ) : r.role !== 'admin' && !r.rights?.length ? (
                   <span className="muted">Off</span>
                 ) : (
                   <span className="tag-warn">Off</span>
@@ -117,12 +141,15 @@ export default function Users() {
               defaultValue={user?.username || ''}
             />
             <Field label="Full name" name="full_name" required defaultValue={user?.full_name || ''} />
-            <Field as="select" label="Role" name="role" defaultValue={user?.role || 'loan_officer'}>
-              {ROLES.map((role) => (
-                <option key={role} value={role}>
-                  {humanise(role)}
-                </option>
-              ))}
+            <Field
+              as="select"
+              label="Access"
+              value={role}
+              onChange={(event) => setRole(event.target.value)}
+              hint={role === 'admin' ? 'Every right, users, settings and the audit log' : undefined}
+            >
+              <option value="user">User: the rights ticked below</option>
+              <option value="admin">Administrator: everything</option>
             </Field>
             <Field
               label={user ? 'New password' : 'Password'}
@@ -149,6 +176,58 @@ export default function Users() {
             <Field label="Phone" name="phone" defaultValue={user?.phone || ''} />
             <Field label="Email" name="email" defaultValue={user?.email || ''} />
           </div>
+          {role === 'admin' ? null : (
+            <fieldset className="rights">
+              <legend>Access rights</legend>
+              {catalogue?.presets?.length ? (
+                <div className="row rights-presets">
+                  <span className="muted">Start from:</span>
+                  {catalogue.presets.map((preset) => (
+                    <button
+                      key={preset.code}
+                      type="button"
+                      className="btn small"
+                      onClick={() => setRights(preset.rights)}
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              {catalogue ? (
+                <div className="rights-grid">
+                  {catalogue.rights.map((right) => (
+                    <label key={right.code} className="check right">
+                      <input
+                        type="checkbox"
+                        checked={rights.includes(right.code)}
+                        onChange={(event) => toggle(right.code, event.target.checked)}
+                      />
+                      <span>
+                        <strong>{right.label}</strong>
+                        <small className="muted">{right.description}</small>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              ) : (
+                <Loading what="Loading access rights" />
+              )}
+              {rights.includes('approve') ? (
+                <Field
+                  label="Approval limit"
+                  name="approval_limit"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  defaultValue={user?.approval_limit ?? ''}
+                  hint={`The largest loan they may approve. Blank: the organisation's limit${
+                    catalogue ? ` of ${catalogue.default_approval_limit}` : ''
+                  }.`}
+                />
+              ) : null}
+            </fieldset>
+          )}
           {user ? (
             <>
               <Check label="Active" name="is_active" defaultChecked={user.is_active} />

@@ -79,7 +79,7 @@ class PreparingAndPostingTests(JournalBase):
                          403)
 
     def test_a_viewer_can_read_but_not_prepare(self):
-        User.objects.create_user("viewer", "viewer123", full_name="Viewer", role=Role.VIEWER)
+        User.objects.create_user("viewer", "viewer123", full_name="Viewer", role=Role.USER)
         viewer = self.client_for("viewer", "viewer123")
         self.assertEqual(self.expense(client=viewer).status_code, 403)
         self.assertEqual(viewer.get("/api/journals").status_code, 200)

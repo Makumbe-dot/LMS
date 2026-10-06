@@ -14,7 +14,7 @@ from django.http import FileResponse
 from ..audit import audit
 from ..exceptions import BusinessRuleError, NotFound
 from ..models import Borrower, BorrowerDocument, Guarantor, Loan, LoanStatus
-from ..permissions import IsOfficer
+from ..permissions import CanBorrowers
 from ..serializers import (
     BorrowerCreateSerializer,
     BorrowerDocumentSerializer,
@@ -76,9 +76,9 @@ def borrowers(request):
             qs = qs.filter(is_blacklisted=True)
         return Response(paginate(request, qs.order_by("-id"), BorrowerSerializer))
 
-    # POST - officers and admins only
-    if not IsOfficer().has_permission(request, None):
-        return Response({"detail": IsOfficer.message}, status=status.HTTP_403_FORBIDDEN)
+    # POST - the borrowers right only
+    if not CanBorrowers().has_permission(request, None):
+        return Response({"detail": CanBorrowers.message}, status=status.HTTP_403_FORBIDDEN)
 
     body = BorrowerCreateSerializer(data=request.data)
     body.is_valid(raise_exception=True)
@@ -97,8 +97,8 @@ def borrower_detail(request, borrower_id: int):
     if request.method == "GET":
         return Response(BorrowerSerializer(get_borrower_or_404(borrower_id)).data)
 
-    if not IsOfficer().has_permission(request, None):
-        return Response({"detail": IsOfficer.message}, status=status.HTTP_403_FORBIDDEN)
+    if not CanBorrowers().has_permission(request, None):
+        return Response({"detail": CanBorrowers.message}, status=status.HTTP_403_FORBIDDEN)
 
     borrower = Borrower.objects.filter(pk=borrower_id).first()
     if borrower is None:
@@ -119,7 +119,7 @@ def borrower_loans(request, borrower_id: int):
 
 
 @api_view(["POST"])
-@permission_classes([IsOfficer])
+@permission_classes([CanBorrowers])
 def add_guarantor(request, borrower_id: int):
     borrower = Borrower.objects.filter(pk=borrower_id).first()
     if borrower is None:
@@ -133,7 +133,7 @@ def add_guarantor(request, borrower_id: int):
 
 
 @api_view(["DELETE"])
-@permission_classes([IsOfficer])
+@permission_classes([CanBorrowers])
 def remove_guarantor(request, borrower_id: int, guarantor_id: int):
     guarantor = Guarantor.objects.filter(pk=guarantor_id, borrower_id=borrower_id).first()
     if guarantor is None:
@@ -162,8 +162,8 @@ def documents(request, borrower_id: int):
     if request.method == "GET":
         return Response(BorrowerDocumentSerializer(borrower.documents.all(), many=True).data)
 
-    if not IsOfficer().has_permission(request, None):
-        return Response({"detail": IsOfficer.message}, status=status.HTTP_403_FORBIDDEN)
+    if not CanBorrowers().has_permission(request, None):
+        return Response({"detail": CanBorrowers.message}, status=status.HTTP_403_FORBIDDEN)
 
     body = DocumentUploadSerializer(data=request.data)
     body.is_valid(raise_exception=True)
@@ -208,7 +208,7 @@ def download_document(request, borrower_id: int, document_id: int):
 
 
 @api_view(["DELETE"])
-@permission_classes([IsOfficer])
+@permission_classes([CanBorrowers])
 def delete_document(request, borrower_id: int, document_id: int):
     document = BorrowerDocument.objects.filter(pk=document_id, borrower_id=borrower_id).first()
     if document is None:
@@ -246,8 +246,8 @@ def bureau(request, borrower_id: int):
         return Response({**status_now, "latest_id": fresh.id if fresh else None,
                          "rows": BureauEnquirySerializer(rows, many=True).data})
 
-    if not IsOfficer().has_permission(request, None):
-        return Response({"detail": IsOfficer.message}, status=status.HTTP_403_FORBIDDEN)
+    if not CanBorrowers().has_permission(request, None):
+        return Response({"detail": CanBorrowers.message}, status=status.HTTP_403_FORBIDDEN)
     if not bureau_svc.describe()["configured"]:
         raise BusinessRuleError(
             "No credit bureau is configured. Set BUREAU_BACKEND in backend/.env once the "

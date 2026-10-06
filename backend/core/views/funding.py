@@ -13,7 +13,7 @@ from ..models import (
     FacilityTransaction,
     FundingFacility,
 )
-from ..permissions import IsAdmin
+from ..permissions import CanAccounting
 from ..serializers import (
     BorrowingAccrualSerializer,
     CapitalMovementSerializer,
@@ -31,10 +31,10 @@ from ..services import funding as svc
 from .helpers import table_response, wants_table, paginate, parse_date, parse_int
 
 
-def _require_admin(request) -> None:
-    """For routes that serve GET to everyone and POST to admins only."""
-    if not IsAdmin().has_permission(request, None):
-        raise BusinessRuleError(IsAdmin.message)
+def _require_accounting(request) -> None:
+    """For routes that serve GET to everyone and POST to the accounting right only."""
+    if not CanAccounting().has_permission(request, None):
+        raise BusinessRuleError(CanAccounting.message)
 
 
 def _facility_or_404(facility_id: int, *, for_update: bool = False) -> FundingFacility:
@@ -58,7 +58,7 @@ def _facility_or_404(facility_id: int, *, for_update: bool = False) -> FundingFa
 @api_view(["GET", "POST"])
 def facilities(request):
     if request.method == "POST":
-        _require_admin(request)
+        _require_accounting(request)
         body = OpenFacilitySerializer(data=request.data)
         body.is_valid(raise_exception=True)
         data = dict(body.validated_data)
@@ -108,7 +108,7 @@ def facilities(request):
 @api_view(["GET", "PATCH"])
 def facility_detail(request, facility_id: int):
     if request.method == "PATCH":
-        _require_admin(request)
+        _require_accounting(request)
         facility = _facility_or_404(facility_id, for_update=True)
         body = FacilityUpdateSerializer(facility, data=request.data, partial=True)
         body.is_valid(raise_exception=True)
@@ -153,31 +153,31 @@ def _movement(request, facility_id: int, action, audit_action: str, message: str
 
 
 @api_view(["POST"])
-@permission_classes([IsAdmin])
+@permission_classes([CanAccounting])
 def drawdown(request, facility_id: int):
     return _movement(request, facility_id, svc.drawdown, "facility_drawdown", "drew")
 
 
 @api_view(["POST"])
-@permission_classes([IsAdmin])
+@permission_classes([CanAccounting])
 def repay(request, facility_id: int):
     return _movement(request, facility_id, svc.repay, "facility_repayment", "repaid")
 
 
 @api_view(["POST"])
-@permission_classes([IsAdmin])
+@permission_classes([CanAccounting])
 def pay_interest(request, facility_id: int):
     return _movement(request, facility_id, svc.pay_interest, "facility_interest", "paid interest")
 
 
 @api_view(["POST"])
-@permission_classes([IsAdmin])
+@permission_classes([CanAccounting])
 def charge_fee(request, facility_id: int):
     return _movement(request, facility_id, svc.charge_fee, "facility_fee", "paid a fee of")
 
 
 @api_view(["POST"])
-@permission_classes([IsAdmin])
+@permission_classes([CanAccounting])
 def close(request, facility_id: int):
     body = NarrationSerializer(data=request.data, partial=True)
     body.is_valid(raise_exception=True)
@@ -189,7 +189,7 @@ def close(request, facility_id: int):
 
 
 @api_view(["POST"])
-@permission_classes([IsAdmin])
+@permission_classes([CanAccounting])
 def reverse_movement(request, facility_id: int, txn_id: int):
     body = NarrationSerializer(data=request.data)
     body.is_valid(raise_exception=True)
@@ -208,7 +208,7 @@ def reverse_movement(request, facility_id: int, txn_id: int):
 
 
 @api_view(["POST"])
-@permission_classes([IsAdmin])
+@permission_classes([CanAccounting])
 def accrue(request):
     facility = None
     facility_id = parse_int(request, "facility_id")
@@ -224,7 +224,7 @@ def accrue(request):
 @api_view(["GET", "POST"])
 def capital(request):
     if request.method == "POST":
-        _require_admin(request)
+        _require_accounting(request)
         body = CapitalMovementSerializer(data=request.data)
         body.is_valid(raise_exception=True)
         data = body.validated_data
@@ -269,7 +269,7 @@ def capital(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsAdmin])
+@permission_classes([CanAccounting])
 def reverse_capital(request, txn_id: int):
     body = NarrationSerializer(data=request.data)
     body.is_valid(raise_exception=True)

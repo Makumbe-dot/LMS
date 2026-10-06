@@ -8,7 +8,7 @@ from rest_framework.response import Response
 from ..audit import audit
 from ..exceptions import BusinessRuleError, NotFound
 from ..models import ManualJournal, ManualJournalLine, ManualJournalStatus
-from ..permissions import IsAdmin, IsTeller
+from ..permissions import CanAccounting, CanCash
 from ..serializers import (
     ManualJournalCreateSerializer,
     ManualJournalSerializer,
@@ -44,8 +44,8 @@ def _response(journal_id: int, code=status.HTTP_200_OK) -> Response:
 @api_view(["GET", "POST"])
 def journals(request):
     if request.method == "POST":
-        if not IsTeller().has_permission(request, None):
-            return Response({"detail": IsTeller.message}, status=status.HTTP_403_FORBIDDEN)
+        if not CanCash().has_permission(request, None):
+            return Response({"detail": CanCash.message}, status=status.HTTP_403_FORBIDDEN)
         body = ManualJournalCreateSerializer(data=request.data)
         body.is_valid(raise_exception=True)
         data = body.validated_data
@@ -102,8 +102,8 @@ def journals(request):
 @api_view(["GET", "DELETE"])
 def journal_detail(request, journal_id: int):
     if request.method == "DELETE":
-        if not IsTeller().has_permission(request, None):
-            return Response({"detail": IsTeller.message}, status=status.HTTP_403_FORBIDDEN)
+        if not CanCash().has_permission(request, None):
+            return Response({"detail": CanCash.message}, status=status.HTTP_403_FORBIDDEN)
         with transaction.atomic():
             journal = _journal_or_404(journal_id, for_update=True)
             number = journal.journal_no
@@ -116,7 +116,7 @@ def journal_detail(request, journal_id: int):
 
 
 @api_view(["POST"])
-@permission_classes([IsAdmin])
+@permission_classes([CanAccounting])
 def post_journal(request, journal_id: int):
     with transaction.atomic():
         journal = _journal_or_404(journal_id, for_update=True)
@@ -127,7 +127,7 @@ def post_journal(request, journal_id: int):
 
 
 @api_view(["POST"])
-@permission_classes([IsAdmin])
+@permission_classes([CanAccounting])
 def reject_journal(request, journal_id: int):
     body = ReasonSerializer(data=request.data)
     body.is_valid(raise_exception=True)
@@ -140,7 +140,7 @@ def reject_journal(request, journal_id: int):
 
 
 @api_view(["POST"])
-@permission_classes([IsAdmin])
+@permission_classes([CanAccounting])
 def reverse_journal(request, journal_id: int):
     body = ReasonSerializer(data=request.data)
     body.is_valid(raise_exception=True)

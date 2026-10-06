@@ -81,7 +81,7 @@ export default function Loans() {
           />
           In arrears only
         </label>
-        {can('admin', 'loan_officer') ? (
+        {can('loans') ? (
           <Link className="btn primary" to="/loans/new">
             New application
           </Link>

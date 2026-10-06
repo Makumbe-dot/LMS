@@ -7,7 +7,7 @@ from rest_framework.response import Response
 from ..audit import audit
 from ..exceptions import BusinessRuleError, NotFound
 from ..models import TillSession, TillStatus
-from ..permissions import IsOfficer, IsTeller
+from ..permissions import CanCash, CanSupervise
 from ..serializers import (
     NoteSerializer,
     TillCountSerializer,
@@ -32,8 +32,8 @@ def _till_or_404(till_id: int, *, for_update: bool = False) -> TillSession:
 @api_view(["GET", "POST"])
 def tills(request):
     if request.method == "POST":
-        if not IsTeller().has_permission(request, None):
-            return Response({"detail": IsTeller.message}, status=status.HTTP_403_FORBIDDEN)
+        if not CanCash().has_permission(request, None):
+            return Response({"detail": CanCash.message}, status=status.HTTP_403_FORBIDDEN)
         body = TillOpenSerializer(data=request.data)
         body.is_valid(raise_exception=True)
         with transaction.atomic():
@@ -95,7 +95,7 @@ def till_detail(request, till_id: int):
 
 
 @api_view(["POST"])
-@permission_classes([IsTeller])
+@permission_classes([CanCash])
 def count(request, till_id: int):
     body = TillCountSerializer(data=request.data)
     body.is_valid(raise_exception=True)
@@ -110,7 +110,7 @@ def count(request, till_id: int):
 
 
 @api_view(["POST"])
-@permission_classes([IsOfficer])
+@permission_classes([CanSupervise])
 def verify(request, till_id: int):
     body = NoteSerializer(data=request.data)
     body.is_valid(raise_exception=True)

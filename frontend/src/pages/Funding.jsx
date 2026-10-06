@@ -53,7 +53,7 @@ export default function Funding() {
     capital: (d) => Array.isArray(d?.results) && (!d.results.length || d.results[0].contributor),
   }
   const ready = shapes[tab](data)
-  const isAdmin = can('admin')
+  const canAccount = can('accounting')
   const kpis = summary.data
 
   async function run(promise, message) {
@@ -90,7 +90,7 @@ export default function Funding() {
           Refresh
         </button>
         <ExportButtons path={paths[tab]} name={tab} />
-        {isAdmin ? (
+        {canAccount ? (
           <>
             <button type="button" className="btn" onClick={() => setAction({ kind: 'accrue' })}>
               Accrue interest
@@ -270,7 +270,7 @@ export default function Funding() {
                 render: (r) =>
                   r.reversed ? (
                     <span className="tag-danger">Reversed</span>
-                  ) : isAdmin && r.txn_type !== 'reversal' ? (
+                  ) : canAccount && r.txn_type !== 'reversal' ? (
                     <button
                       type="button"
                       className="btn small"
@@ -288,7 +288,7 @@ export default function Funding() {
         </>
       ) : null}
 
-      {!isAdmin ? (
+      {!canAccount ? (
         <p className="muted">An administrator records capital and draws on facilities.</p>
       ) : null}
 
@@ -315,7 +315,7 @@ export default function Funding() {
             ]}
           />
 
-          {isAdmin && detail.is_open ? (
+          {canAccount && detail.is_open ? (
             <div className="row" style={{ marginTop: 12, marginBottom: 12 }}>
               <button
                 type="button"
@@ -389,7 +389,7 @@ export default function Funding() {
                 render: (r) =>
                   r.reversed ? (
                     <span className="tag-danger">Reversed</span>
-                  ) : isAdmin &&
+                  ) : canAccount &&
                     r.txn_type !== 'reversal' &&
                     r.txn_type !== 'interest_accrual' ? (
                     <button

@@ -98,7 +98,7 @@ describe('the tabs of a section', () => {
     expect(screen.queryByRole('navigation', { name: /pages$/ })).toBeNull()
   })
 
-  it('leave out a page the role cannot open', () => {
+  it('leave out a page the user has no right to open', () => {
     renderShell('/collections', VIEWER)
     const tabs = screen.getByRole('navigation', { name: 'Collections pages' })
     expect(within(tabs).getByRole('link', { name: /arrears/i })).toBeInTheDocument()

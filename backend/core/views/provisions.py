@@ -8,7 +8,7 @@ from rest_framework.response import Response
 from ..audit import audit
 from ..exceptions import BusinessRuleError, NotFound
 from ..models import ProvisionRun, ProvisionRunLine, ProvisionRunStatus
-from ..permissions import IsAdmin
+from ..permissions import CanAccounting
 from ..serializers import (
     NarrationSerializer,
     ProvisionPreviewSerializer,
@@ -58,7 +58,7 @@ def preview(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsAdmin])
+@permission_classes([CanAccounting])
 def run(request):
     """Book the month's movement in the provision."""
     body = ProvisionRunRequestSerializer(data=request.data)
@@ -107,7 +107,7 @@ def provision_detail(request, run_id: int):
 
 
 @api_view(["POST"])
-@permission_classes([IsAdmin])
+@permission_classes([CanAccounting])
 def reverse(request, run_id: int):
     body = NarrationSerializer(data=request.data)
     body.is_valid(raise_exception=True)

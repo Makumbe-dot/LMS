@@ -22,10 +22,55 @@ RATE = {"max_digits": 6, "decimal_places": 3}
 
 
 class Role(models.TextChoices):
+    """An administrator holds every right. Anyone else holds the rights an
+    administrator has ticked for them, and with none ticked can only read."""
     ADMIN = "admin", "Administrator"
-    LOAN_OFFICER = "loan_officer", "Loan officer"
-    TELLER = "teller", "Teller"
-    VIEWER = "viewer", "Viewer"
+    USER = "user", "User"
+
+
+class Right(models.TextChoices):
+    """What an administrator can grant a user, one tick each. Reading is never a
+    right: every signed-in user can look at what the system holds."""
+    BORROWERS = "borrowers", "Borrowers and groups"
+    LOANS = "loans", "Loan applications"
+    APPROVE = "approve", "Approve and reject loans"
+    DISBURSE = "disburse", "Disburse loans"
+    CASH = "cash", "Cash and repayments"
+    REVERSE = "reverse", "Reverse repayments"
+    SUPERVISE = "supervise", "Supervise tills and penalties"
+    MESSAGES = "messages", "Borrower messages"
+    RESTRUCTURE = "restructure", "Waive, reschedule and write off"
+    ACCOUNTING = "accounting", "Accounting"
+    SETUP = "setup", "Products and setup"
+
+
+RIGHT_DESCRIPTIONS = {
+    Right.BORROWERS: "Add and edit borrowers, groups, guarantors and documents.",
+    Right.LOANS: "Quote and apply for loans, top-ups, guarantors, security and charges.",
+    Right.APPROVE: "Approve or reject applications, up to the user's approval limit, "
+                   "never one they originated.",
+    Right.DISBURSE: "Pay out an approved loan.",
+    Right.CASH: "Take repayments, settlements and recoveries, savings deposits and "
+                "withdrawals, bulk repayments, notes, expenses, and run a till.",
+    Right.REVERSE: "Reverse a repayment posted in error.",
+    Right.SUPERVISE: "Verify another user's till count, run penalties and check a period "
+                     "before it is closed.",
+    Right.MESSAGES: "Generate, send and cancel reminders and arrears notices.",
+    Right.RESTRUCTURE: "Waive penalties, reschedule and write off loans.",
+    Right.ACCOUNTING: "Post, reject and reverse journals, the chart of accounts, bank "
+                      "reconciliation, provisioning, funding, revaluation, savings interest "
+                      "and closing periods.",
+    Right.SETUP: "Loan and savings products, charges and exchange rates.",
+}
+
+# The rights each of the old fixed roles carried, so a user migrated from one keeps
+# exactly the access they had. Also offered as a starting point on the Users page.
+RIGHT_PRESETS = {
+    "loan_officer": [Right.BORROWERS, Right.LOANS, Right.APPROVE, Right.DISBURSE,
+                     Right.CASH, Right.REVERSE, Right.SUPERVISE, Right.MESSAGES],
+    "teller": [Right.CASH],
+    "viewer": [],
+}
 
 
 class RateMethod(models.TextChoices):
@@ -299,7 +344,8 @@ class OrganisationSetting(models.Model):
     # How far ahead instalment reminders are generated
     reminder_days_before = models.IntegerField(default=3)
 
-    # A loan officer may approve up to this amount; anything larger needs an admin.
+    # A user with the approve right may approve up to this amount unless they have a
+    # limit of their own; anything larger needs an administrator.
     officer_approval_limit = models.DecimalField(default=Decimal("2000"), **MONEY)
     # Applications scoring below this are flagged to the approver (advisory, never blocking).
     min_credit_score = models.IntegerField(default=40)
@@ -387,7 +433,13 @@ class UserManager(BaseUserManager):
 class User(AbstractBaseUser, PermissionsMixin):
     username = models.CharField(max_length=50, unique=True, db_index=True)
     full_name = models.CharField(max_length=120)
-    role = models.CharField(max_length=20, choices=Role.choices, default=Role.LOAN_OFFICER)
+    role = models.CharField(max_length=20, choices=Role.choices, default=Role.USER)
+    # The rights an administrator has granted (Right values). Ignored for an
+    # administrator, who holds them all.
+    rights = models.JSONField(default=list, blank=True)
+    # The most this user may approve, in the organisation's currency. Blank: the
+    # organisation's default limit.
+    approval_limit = models.DecimalField(null=True, blank=True, **MONEY)
     branch = models.ForeignKey("Branch", on_delete=models.SET_NULL, null=True, blank=True,
                                related_name="staff")
     phone = models.CharField(max_length=30, null=True, blank=True)
@@ -433,8 +485,18 @@ class User(AbstractBaseUser, PermissionsMixin):
     def get_short_name(self):
         return self.full_name.split(" ")[0] if self.full_name else self.username
 
-    def has_role(self, *roles) -> bool:
-        return self.role in {r.value if hasattr(r, "value") else r for r in roles}
+    @property
+    def is_admin(self) -> bool:
+        return self.role == Role.ADMIN
+
+    def has_right(self, right) -> bool:
+        """An administrator holds every right; anyone else what they were granted."""
+        if self.is_admin:
+            return True
+        return (right.value if hasattr(right, "value") else right) in (self.rights or [])
+
+    def effective_rights(self) -> list[str]:
+        return [r.value for r in Right if self.has_right(r)]
 
     @property
     def is_locked(self) -> bool:

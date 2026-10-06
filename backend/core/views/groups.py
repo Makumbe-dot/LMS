@@ -8,7 +8,7 @@ from rest_framework.response import Response
 from ..audit import audit
 from ..exceptions import NotFound
 from ..models import Borrower, BorrowerGroup, GroupMember
-from ..permissions import IsOfficer
+from ..permissions import CanBorrowers
 from ..serializers import (
     AddMemberSerializer,
     GroupDetailSerializer,
@@ -48,8 +48,8 @@ def groups(request):
             qs = qs.filter(branch_id=branch_id)
         return Response(paginate(request, qs.order_by("-id"), GroupSerializer))
 
-    if not IsOfficer().has_permission(request, None):
-        return Response({"detail": IsOfficer.message}, status=status.HTTP_403_FORBIDDEN)
+    if not CanBorrowers().has_permission(request, None):
+        return Response({"detail": CanBorrowers.message}, status=status.HTTP_403_FORBIDDEN)
     body = GroupSerializer(data=request.data)
     body.is_valid(raise_exception=True)
     data = dict(body.validated_data)
@@ -70,8 +70,8 @@ def group_detail(request, group_id: int):
     if request.method == "GET":
         return Response(GroupDetailSerializer(group).data)
 
-    if not IsOfficer().has_permission(request, None):
-        return Response({"detail": IsOfficer.message}, status=status.HTTP_403_FORBIDDEN)
+    if not CanBorrowers().has_permission(request, None):
+        return Response({"detail": CanBorrowers.message}, status=status.HTTP_403_FORBIDDEN)
     body = GroupSerializer(group, data=request.data, partial=True)
     body.is_valid(raise_exception=True)
     with transaction.atomic():
@@ -81,7 +81,7 @@ def group_detail(request, group_id: int):
 
 
 @api_view(["POST"])
-@permission_classes([IsOfficer])
+@permission_classes([CanBorrowers])
 def add_member(request, group_id: int):
     body = AddMemberSerializer(data=request.data)
     body.is_valid(raise_exception=True)
@@ -97,7 +97,7 @@ def add_member(request, group_id: int):
 
 
 @api_view(["PATCH", "DELETE"])
-@permission_classes([IsOfficer])
+@permission_classes([CanBorrowers])
 def member_detail(request, group_id: int, member_id: int):
     member = (GroupMember.objects
               .filter(pk=member_id, group_id=group_id)

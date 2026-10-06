@@ -32,7 +32,7 @@ from ..exceptions import BusinessRuleError
 from ..models import (
     OrganisationSetting,
     PaymentMethod,
-    Role,
+    Right,
     SavingsTransaction,
     SavingsTxnType,
     TillSession,
@@ -167,7 +167,7 @@ def count(session: TillSession, user: User, counted_cash: Decimal,
     """Close the drawer at a counted figure. The teller counts their own."""
     if session.status != TillStatus.OPEN:
         raise BusinessRuleError(f"{session.session_no} is already counted")
-    if session.teller_id != user.id and not user.has_role(Role.ADMIN):
+    if session.teller_id != user.id and not user.is_admin:
         raise BusinessRuleError("Only the teller who holds a till, or an administrator, can "
                                 "count it")
     counted_cash = q(Decimal(counted_cash))
@@ -228,8 +228,9 @@ def verify(session: TillSession, user: User, note: str | None) -> TillSession:
                                 f"only a counted till can be verified")
     if session.teller_id == user.id:
         raise BusinessRuleError("Someone other than the teller must verify a till")
-    if not user.has_role(Role.ADMIN, Role.LOAN_OFFICER):
-        raise BusinessRuleError("Only an administrator or a loan officer can verify a till")
+    if not user.has_right(Right.SUPERVISE):
+        raise BusinessRuleError("Verifying a till needs the access right: "
+                                f"{Right.SUPERVISE.label}")
 
     if session.variance:
         on = session.business_date

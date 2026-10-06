@@ -49,8 +49,8 @@ export default function Savings() {
   const products = useApi('/api/savings/products')
   const borrowers = useApi(action?.kind === 'open' ? '/api/borrowers?page_size=1000' : null)
 
-  const isTeller = can('admin', 'loan_officer', 'teller')
-  const isAdmin = can('admin')
+  const canCash = can('cash')
+  const canAccount = can('accounting')
 
   const onFilter = (setter) => (event) => {
     setter(event.target.value)
@@ -87,12 +87,12 @@ export default function Savings() {
         title="Savings"
         meta="Members' balances are money the institution owes them, not income"
       >
-        {isTeller ? (
+        {canCash ? (
           <button type="button" className="btn primary" onClick={() => setAction({ kind: 'open' })}>
             Open an account
           </button>
         ) : null}
-        {isAdmin ? (
+        {canAccount ? (
           <button
             type="button"
             className="btn"
@@ -314,7 +314,7 @@ export default function Savings() {
           wide
           onClose={() => setDetail(null)}
           footer={
-            isTeller && detail.status === 'active' ? (
+            canCash && detail.status === 'active' ? (
               <>
                 <button
                   type="button"
@@ -332,7 +332,7 @@ export default function Savings() {
                     Withdraw
                   </button>
                 ) : null}
-                {isAdmin ? (
+                {canAccount ? (
                   <button
                     type="button"
                     className="btn small"
@@ -414,7 +414,7 @@ export default function Savings() {
                 render: (t) =>
                   t.reversed ? (
                     <span className="tag-danger">Reversed</span>
-                  ) : isTeller && ['deposit', 'withdrawal'].includes(t.txn_type) ? (
+                  ) : canCash && ['deposit', 'withdrawal'].includes(t.txn_type) ? (
                     <button
                       type="button"
                       className="btn small"

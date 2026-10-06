@@ -4,7 +4,7 @@ import { vi } from 'vitest'
 
 import { ToastProvider } from '../components/Toast.jsx'
 import * as api from '../lib/api.js'
-import { AuthContext } from '../lib/auth.jsx'
+import { AuthContext, userCan } from '../lib/auth.jsx'
 import { OrgContext } from '../lib/org.jsx'
 
 const ADMIN = { id: 1, username: 'admin', full_name: 'Admin', role: 'admin' }
@@ -24,7 +24,7 @@ export function renderPage(ui, { user = ADMIN, org = {}, route = '/' } = {}) {
     signIn: vi.fn(),
     signOut: vi.fn(),
     signOutEverywhere: vi.fn(),
-    can: (...roles) => Boolean(user && roles.includes(user.role)),
+    can: (...rights) => userCan(user, rights),
   }
   const orgValue = {
     settings: { name: 'Test Microfinance', currency: 'USD' },
@@ -82,6 +82,13 @@ export function stubApi({ get = {}, post = {} } = {}) {
 }
 
 export { ADMIN }
-export const OFFICER = { id: 2, username: 'officer', full_name: 'Officer', role: 'loan_officer' }
-export const TELLER = { id: 3, username: 'teller', full_name: 'Teller', role: 'teller' }
-export const VIEWER = { id: 4, username: 'viewer', full_name: 'Viewer', role: 'viewer' }
+// Users holding the rights the old loan officer, teller and viewer roles carried.
+export const OFFICER = {
+  id: 2,
+  username: 'officer',
+  full_name: 'Officer',
+  role: 'user',
+  rights: ['borrowers', 'loans', 'approve', 'disburse', 'cash', 'reverse', 'supervise', 'messages'],
+}
+export const TELLER = { id: 3, username: 'teller', full_name: 'Teller', role: 'user', rights: ['cash'] }
+export const VIEWER = { id: 4, username: 'viewer', full_name: 'Viewer', role: 'user', rights: [] }
