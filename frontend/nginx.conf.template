@@ -1,0 +1,41 @@
+# Rendered by the nginx image at start; ${BACKEND_URL} comes from the environment.
+
+# Keep the scheme an outer TLS-terminating proxy reports, so Django (which trusts
+# X-Forwarded-Proto when DEBUG is off) knows the request arrived over HTTPS.
+map $http_x_forwarded_proto $forwarded_proto {
+    default $http_x_forwarded_proto;
+    ''      $scheme;
+}
+
+server {
+    listen 80;
+    server_name _;
+    root /usr/share/nginx/html;
+
+    # Above MAX_UPLOAD_BYTES (10 MB by default), so Django gives the useful error.
+    client_max_body_size 25m;
+
+    # The API, the Django admin and its static files all belong to the backend.
+    location ~ ^/(api|admin|static)(/|$) {
+        proxy_pass ${BACKEND_URL};
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $forwarded_proto;
+        # Statements and the year-end workbook can take a while to build.
+        proxy_read_timeout 120s;
+    }
+
+    # Vite fingerprints everything under /assets, so it can be cached forever.
+    location /assets/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        try_files $uri =404;
+    }
+
+    # Everything else is a client-side route: hand back the SPA, never cached,
+    # so a new build is picked up on the next load.
+    location / {
+        add_header Cache-Control "no-cache";
+        try_files $uri $uri/ /index.html;
+    }
+}

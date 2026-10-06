@@ -332,6 +332,49 @@ Run it behind a real server (IIS with HttpPlatformHandler, or nginx in front of 
 rather than `runserver`, put the media directory somewhere backed up, and schedule the nightly job
 and the backups.
 
+## Running with Docker
+
+The scripts above assume Windows. On Linux, macOS or Windows with Docker installed, the whole
+system (SQL Server, the API and the React app) runs from `docker-compose.yml` instead:
+
+```sh
+cp .env.example .env              # then set MSSQL_SA_PASSWORD, DB_PASSWORD and SECRET_KEY
+docker compose up -d --build
+docker compose exec backend python manage.py seed      # optional demo data
+```
+
+The app is then on <http://localhost:8080>. Four containers do the work:
+
+- **sqlserver** — SQL Server 2022 (Developer edition unless `MSSQL_PID` says otherwise), with the
+  `SQL_Latin1_General_CP1_CI_AS` collation. Its data lives in the `sqldata` volume, so it survives
+  `docker compose down`; only `down -v` deletes it. It listens on `127.0.0.1:1433` for SSMS; set
+  `SQLSERVER_PORT` if a local instance already has that port.
+- **db-init** — runs once and exits: creates the database with read-committed snapshot on (what
+  `sql/01_create_database.sql` does) and the app's `lms_app` login (what `sql/02_app_login.sql`
+  does). It is safe to run every time.
+- **backend** — applies migrations, then serves the API with gunicorn. Uploaded borrower documents
+  go in the `media` volume.
+- **frontend** — nginx serving the built app, forwarding `/api` and `/admin` to the backend, so the
+  browser sees one origin and CORS never comes into it.
+
+Settings come from `.env` beside `docker-compose.yml`, not from `backend/.env`; anything listed in
+`backend/.env.example` can be added to it. The defaults are `DEBUG=0` with the SSL redirect off,
+which suits a workstation. On a server, put a TLS-terminating proxy in front, then set
+`SECURE_SSL_REDIRECT=1` and add the server's name to `ALLOWED_HOSTS` and `CORS_ALLOWED_ORIGINS`.
+
+The nightly batch is the `jobs` service. It runs the same steps as `run_nightly_jobs.ps1`, then
+takes a checksummed, verified backup and archives the borrower documents into the `backups`
+volume, keeping `BACKUP_RETENTION_DAYS` (14) days of them. `up` does not start it; schedule it
+instead, for example from cron:
+
+```sh
+docker compose run --rm jobs                                 # what cron runs at 22:00
+docker compose run --rm jobs --as-of 2026-09-30 --skip-backup
+```
+
+To take the backups off the machine, copy them out of the volume:
+`docker compose cp sqlserver:/backups ./lms-backups`.
+
 ## Configuration
 
 Everything lives in `backend/.env` (see `backend/.env.example` for development and
