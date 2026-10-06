@@ -5,7 +5,6 @@ SQL Server, reached through the mssql-django backend and the Microsoft ODBC
 driver, so the schema is manageable from SQL Server Management Studio.
 """
 import os
-import sys
 from datetime import timedelta
 from pathlib import Path
 
@@ -199,12 +198,6 @@ REST_FRAMEWORK = {
         "portal_login": env("THROTTLE_PORTAL_LOGIN", "10/min"),
     },
 }
-
-# The rate limits count in the cache. A test run signs in hundreds of times a minute
-# from one address, so it counts nowhere; the throttle tests switch a real cache on
-# for themselves.
-if len(sys.argv) > 1 and sys.argv[1] == "test":
-    CACHES = {"default": {"BACKEND": "django.core.cache.backends.dummy.DummyCache"}}
 
 SIMPLE_JWT = {
     # Thirty minutes, not eight hours. An access token cannot be revoked — it is
