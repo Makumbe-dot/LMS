@@ -860,7 +860,7 @@ backend/                        Django project
       periods.py                period close, and the guard that refuses a closed date
       journals.py               manual journals: four eyes, control accounts refused
       loanbook.py               bringing a running loan book over from another system
-      tills.py                  teller tills: a drawer per currency, expected cash, the count, the difference booked
+      tills.py                  teller tills: a drawer per currency, the count, the difference booked
       bankrec.py                bank and mobile-money statements matched against the ledger
       totp.py                   RFC 6238 codes for two-factor sign-in
       reports.py                dashboard, PAR, collections due, loan book, statement,
