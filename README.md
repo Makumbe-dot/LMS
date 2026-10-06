@@ -64,6 +64,16 @@ oldest instalment first), cash / bank / mobile money / salary deduction, reversa
 waivers, and **bulk CSV import** with a line-by-line dry run before anything is posted.
 Overpayment is refused.
 
+**Incoming payments** — mobile money and bank transfers as the provider reports them, on the
+**Incoming payments** page. A provider posts each payment to `/api/payments/inbound/<provider>`,
+signed with its own secret; a statement CSV can be uploaded instead. Every payment is kept once per
+provider reference, so a notification sent twice, or a statement uploaded twice, posts once. What
+the payer typed is tried as a loan number (`LN-000123`, `ln 123`), a borrower number and a
+national ID, then the paying phone against borrowers' phones; one active loan, in the payment's
+currency, owed at least that much, in an open period, and it is posted on arrival with a receipt.
+Anything else waits with the reason, and the loan it nearly matched, until someone with the cash
+right assigns it to a loan or rejects it. "Match again" retries the waiting ones.
+
 **Loan book migration** — going live with loans already running elsewhere: one CSV row per loan
 (borrower, product, principal, term, disbursement date, amount paid so far, optional penalties and
 the old system's loan number), checked line by line and then imported all or nothing as at a
@@ -556,6 +566,23 @@ FULL and add log backups:
 ALTER DATABASE LMS SET RECOVERY FULL;
 BACKUP LOG LMS TO DISK = N'...\LMS-log.trn';   -- then schedule this every 15 minutes
 ```
+
+## Receiving payments
+
+Each provider gets a name, a secret and, if its JSON differs from the default, the paths to each
+field. In `backend/.env`:
+
+```
+INBOUND_PAYMENT_SECRETS=ecocash=long-random-secret|cbz=another-secret
+INBOUND_PAYMENT_SIGNATURE_HEADER=X-Signature
+# Defaults: id, amount, currency, date, phone, name, reference at the top level.
+INBOUND_PAYMENT_PATHS_ECOCASH=id=transaction.id|amount=transaction.amount|phone=payer.msisdn|reference=transaction.account
+```
+
+The provider then posts each payment to `https://<your server>/api/payments/inbound/ecocash`, with
+the hex HMAC-SHA256 of the raw body under that secret in the signature header (a `sha256=` prefix is
+accepted). A provider with no secret, or a body whose signature does not match, is answered 401
+and nothing is kept. A repeat answers 200 with `"duplicate": true`; a new payment 201.
 
 ## Sending messages for real
 

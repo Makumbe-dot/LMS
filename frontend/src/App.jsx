@@ -26,6 +26,7 @@ import LoanNew from './pages/LoanNew.jsx'
 import Loans from './pages/Loans.jsx'
 import Login from './pages/Login.jsx'
 import Notifications from './pages/Notifications.jsx'
+import Payments from './pages/Payments.jsx'
 import Payroll from './pages/Payroll.jsx'
 import Performance from './pages/Performance.jsx'
 import Spreadsheets from './pages/Spreadsheets.jsx'
@@ -97,6 +98,7 @@ export default function App() {
             }
           />
           <Route path="/notifications" element={<Notifications />} />
+          <Route path="/payments" element={<Payments />} />
 
           <Route path="/transactions" element={<Transactions />} />
           <Route path="/ledger" element={<Ledger />} />

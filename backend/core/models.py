@@ -1913,3 +1913,53 @@ class Sequence(models.Model):
 
     def __str__(self):
         return f"{self.prefix}={self.value}"
+
+
+# ---------------------------------------------------------------- inbound payments
+class InboundStatus(models.TextChoices):
+    UNMATCHED = "unmatched", "Waiting to be matched"
+    POSTED = "posted", "Posted to a loan"
+    REJECTED = "rejected", "Rejected"
+
+
+class InboundPayment(models.Model):
+    """A payment a provider says it received: a mobile-money notification or a line
+    of a bank or mobile-money statement. Kept as received, once per provider
+    reference, so a notification sent twice is never posted twice."""
+    provider = models.CharField(max_length=40)
+    external_id = models.CharField(max_length=100, help_text="The provider's reference")
+    method = models.CharField(max_length=20, choices=PaymentMethod.choices,
+                              default=PaymentMethod.MOBILE_MONEY)
+    amount = models.DecimalField(**MONEY)
+    currency = models.CharField(max_length=8, null=True, blank=True)
+    paid_on = models.DateField()
+    payer_phone = models.CharField(max_length=30, null=True, blank=True)
+    payer_name = models.CharField(max_length=120, null=True, blank=True)
+    account_ref = models.CharField(max_length=100, null=True, blank=True,
+                                   help_text="What the payer entered as the account")
+    raw = models.TextField(null=True, blank=True, help_text="The notification as received")
+    status = models.CharField(max_length=12, choices=InboundStatus.choices,
+                              default=InboundStatus.UNMATCHED, db_index=True)
+    reason = models.CharField(max_length=255, null=True, blank=True,
+                              help_text="Why it is waiting, or why it was rejected")
+    loan = models.ForeignKey("Loan", on_delete=models.PROTECT, null=True, blank=True,
+                             related_name="inbound_payments")
+    transaction = models.OneToOneField("Transaction", on_delete=models.PROTECT, null=True,
+                                       blank=True, related_name="inbound_payment")
+    matched_by = models.CharField(max_length=20, null=True, blank=True,
+                                  help_text="loan_no, borrower_no, national_id, phone or staff")
+    resolved_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                                    related_name="+")
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    received_at = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        db_table = "inbound_payments"
+        ordering = ["-received_at", "-id"]
+        constraints = [
+            models.UniqueConstraint(fields=["provider", "external_id"],
+                                    name="uq_inbound_provider_reference"),
+        ]
+
+    def __str__(self):
+        return f"{self.provider} {self.external_id} {self.amount}"

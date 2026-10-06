@@ -38,6 +38,7 @@ from .models import (
     ManualJournalLine,
     Guarantor,
     Holiday,
+    InboundPayment,
     Instalment,
     Loan,
     LoanNote,
@@ -1501,3 +1502,21 @@ STATUS_CHOICES = [s.value for s in LoanStatus]
 TXN_TYPE_CHOICES = [t.value for t in TxnType]
 RATE_METHOD_CHOICES = [m.value for m in RateMethod]
 NOTIFICATION_STATUS_CHOICES = [s.value for s in NotificationStatus]
+
+
+class InboundPaymentSerializer(serializers.ModelSerializer):
+    status_label = serializers.CharField(source="get_status_display", read_only=True)
+    method_label = serializers.CharField(source="get_method_display", read_only=True)
+    loan_no = serializers.CharField(source="loan.loan_no", read_only=True, default=None)
+    borrower_name = serializers.CharField(source="loan.borrower.full_name", read_only=True,
+                                          default=None)
+    resolved_by_name = serializers.CharField(source="resolved_by.full_name", read_only=True,
+                                             default=None)
+
+    class Meta:
+        model = InboundPayment
+        fields = ["id", "provider", "external_id", "method", "method_label", "amount",
+                  "currency", "paid_on", "payer_phone", "payer_name", "account_ref",
+                  "status", "status_label", "reason", "loan_id", "loan_no", "borrower_name",
+                  "transaction_id", "matched_by", "resolved_by_name", "resolved_at",
+                  "received_at"]

@@ -59,6 +59,7 @@ export const NAV = [
           { to: '/collections', label: 'Collections due', icon: 'calendar' },
           { to: '/arrears', label: 'Arrears / PAR', icon: 'trending' },
           { to: '/payroll', label: 'Payroll deductions', icon: 'briefcase' },
+          { to: '/payments', label: 'Incoming payments', icon: 'inbox' },
           { to: '/imports', label: 'Bulk repayments', icon: 'upload', rights: CASH, end: true },
           { to: '/notifications', label: 'Messages', icon: 'message' },
         ],

@@ -180,6 +180,7 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_CLASSES": ["rest_framework.throttling.ScopedRateThrottle"],
     "DEFAULT_THROTTLE_RATES": {
         "login": env("THROTTLE_LOGIN", "20/min"),
+        "inbound_payments": env("THROTTLE_INBOUND_PAYMENTS", "600/min"),
     },
 }
 
@@ -324,6 +325,25 @@ BUREAU_HTTP = {
         "total_exposure": env("BUREAU_HTTP_EXPOSURE_PATH", "total_exposure"),
         "reference": env("BUREAU_HTTP_REFERENCE_PATH", "reference"),
     },
+}
+
+# ---------------------------------------------------------------- incoming payments
+# Mobile-money and bank notifications arrive at /api/payments/inbound/<provider>,
+# signed with HMAC-SHA256 of the raw body in the header named below. Each provider
+# has its own secret ("provider=secret|provider=secret"); a provider with no secret
+# is refused, so nothing unsigned is ever posted. See core/services/inbound.py.
+INBOUND_PAYMENT_SECRETS = _pairs(env("INBOUND_PAYMENT_SECRETS", ""))
+INBOUND_PAYMENT_SIGNATURE_HEADER = env("INBOUND_PAYMENT_SIGNATURE_HEADER", "X-Signature")
+# Dotted paths to each field in the provider's JSON, the same for every provider
+# unless a provider's own are given as INBOUND_PAYMENT_PATHS_<PROVIDER>.
+INBOUND_PAYMENT_PATHS = {
+    "id": "id", "amount": "amount", "currency": "currency", "date": "date",
+    "phone": "phone", "name": "name", "reference": "reference",
+    **_pairs(env("INBOUND_PAYMENT_PATHS", "")),
+}
+INBOUND_PAYMENT_PROVIDER_PATHS = {
+    key[len("INBOUND_PAYMENT_PATHS_"):].lower(): _pairs(value)
+    for key, value in os.environ.items() if key.startswith("INBOUND_PAYMENT_PATHS_")
 }
 
 # Email, for the email channel when MESSAGE_EMAIL_BACKEND is "smtp".
