@@ -988,13 +988,22 @@ class TillSessionSerializer(serializers.ModelSerializer):
                                              default=None)
     variance_entry_no = serializers.CharField(source="variance_entry.entry_no", read_only=True,
                                               default=None)
+    # the drawer's currency by name, the organisation's when `currency` is blank
+    currency_label = serializers.SerializerMethodField()
 
     class Meta:
         model = TillSession
         fields = ["id", "session_no", "teller_id", "teller_name", "branch_name", "business_date",
+                  "currency", "currency_label", "fx_rate",
                   "opened_at", "opening_float", "status", "status_label", "closed_at", "cash_in",
                   "cash_out", "expected_cash", "counted_cash", "variance", "close_note",
                   "verified_by_name", "verified_at", "verify_note", "variance_entry_no"]
+
+
+    def get_currency_label(self, obj) -> str:
+        from .services.tills import currency_label
+
+        return currency_label(obj)
 
 
 class TillDetailSerializer(TillSessionSerializer):
@@ -1017,6 +1026,9 @@ class TillDetailSerializer(TillSessionSerializer):
 
 class TillOpenSerializer(serializers.Serializer):
     opening_float = money(min_value=Decimal("0"))
+    # blank for the organisation's currency; checked by tills.open_till
+    currency = serializers.CharField(required=False, allow_null=True, allow_blank=True,
+                                     max_length=8)
 
 
 class TillCountSerializer(serializers.Serializer):
