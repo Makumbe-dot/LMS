@@ -41,8 +41,13 @@ if (!/e2e/i.test(dbName)) {
  * forced, along with what a test run needs: DEBUG on so plain HTTP is served, and
  * a login throttle loose enough for a suite that signs in dozens of times a minute.
  */
+/** Texts go to this file, one JSON line each, so a test can read a code it was sent. */
+export const messagesFile = resolve(frontendDir, 'test-results', 'e2e-messages.log')
+
 export const backendEnv = {
   ...process.env,
+  MESSAGE_SMS_BACKEND: 'file',
+  MESSAGE_FILE_PATH: messagesFile,
   DB_NAME: dbName,
   DEBUG: '1',
   SECURE_SSL_REDIRECT: '0',
