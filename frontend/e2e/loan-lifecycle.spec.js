@@ -130,8 +130,8 @@ test('a teller opens a till and posts a cash repayment that the schedule reflect
   await expect(openTill.or(countAndClose)).toBeVisible()
   if (await openTill.isVisible()) {
     await openTill.click()
-    const dialog = page.getByRole('dialog', { name: 'Open my till' })
-    await dialog.getByLabel('Opening float').fill('500')
+    const dialog = page.getByRole('dialog', { name: 'Open a till' })
+    await dialog.getByLabel(/Opening float/).fill('500')
     await dialog.getByRole('button', { name: 'Open the till' }).click()
     await expect(toasts(page).getByText('Till open')).toBeVisible()
   }
@@ -162,7 +162,8 @@ test('a teller opens a till and posts a cash repayment that the schedule reflect
 
   // The cash is in the teller's drawer.
   await page.goto('/till')
-  await expect(page.getByRole('table', { name: 'Cash movements in this till' })).toContainText(loanNo)
+  const drawer = page.getByRole('table', { name: 'Cash movements in the USD drawer' })
+  await expect(drawer).toContainText(loanNo)
 })
 
 test('the loan statement downloads as a PDF', async ({ page }) => {
