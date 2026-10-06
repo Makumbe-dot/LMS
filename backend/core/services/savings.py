@@ -21,7 +21,7 @@ from ..models import (
     SavingsTxnType,
     User,
 )
-from . import periods
+from . import fx, periods
 from .amortisation import add_months, q
 from .loans import next_number
 
@@ -41,9 +41,14 @@ def open_account(borrower: Borrower, product: SavingsProduct, user: User,
         raise BusinessRuleError(
             f"{borrower.full_name} already has a {product.name} account ({existing.account_no})")
 
+    # The account keeps the product's currency, and its balance is carried on 2000
+    # at the spot rate of the day it opened until a revaluation moves it on.
+    opened_on = opened_on or date.today()
+    currency = fx.normalise(product.currency) or fx.base_currency()
     account = SavingsAccount.objects.create(
         account_no=next_number("SAV"), borrower=borrower, product=product,
-        branch_id=borrower.branch_id, opened_on=opened_on or date.today(),
+        branch_id=borrower.branch_id, opened_on=opened_on,
+        currency=currency, fx_rate=fx.rate_on(currency, opened_on),
     )
     if opening_deposit and Decimal(opening_deposit) > 0:
         deposit(account, user, opening_deposit, opened_on, method, reference, "Opening deposit")
@@ -53,7 +58,8 @@ def open_account(borrower: Borrower, product: SavingsProduct, user: User,
 def _post(account: SavingsAccount, user: User, kind: str, amount: Decimal,
           txn_date: date | None, method: str | None, reference: str | None,
           narration: str | None, signed: Decimal,
-          reversal_of: SavingsTransaction | None = None) -> SavingsTransaction:
+          reversal_of: SavingsTransaction | None = None,
+          fx_rate: Decimal | None = None) -> SavingsTransaction:
     """Write one movement and the resulting balance, atomically.
 
     `reversal_of` must be set AT CREATION, not afterwards: the ledger hook fires
@@ -72,7 +78,7 @@ def _post(account: SavingsAccount, user: User, kind: str, amount: Decimal,
     return SavingsTransaction.objects.create(
         account=account, txn_type=kind, txn_date=txn_date, amount=amount,
         balance_after=account.balance, method=method, reference=reference,
-        narration=narration, posted_by=user, reversal_of=reversal_of,
+        narration=narration, posted_by=user, reversal_of=reversal_of, fx_rate=fx_rate,
     )
 
 
@@ -126,8 +132,12 @@ def reverse(account: SavingsAccount, stxn: SavingsTransaction, user: User,
 
     stxn.reversed = True
     stxn.save(update_fields=["reversed"])
+    # The cash goes back at the rate it came in at, so the bank leg mirrors
+    # exactly; the balance is restated at today's booked rate, as every posting
+    # is, and whatever lies between is an exchange difference.
     return _post(account, user, SavingsTxnType.REVERSAL, stxn.amount, date.today(),
-                 stxn.method, stxn.reference, narration, signed, reversal_of=stxn)
+                 stxn.method, stxn.reference, narration, signed, reversal_of=stxn,
+                 fx_rate=stxn.fx_rate)
 
 
 @db_transaction.atomic
@@ -215,24 +225,37 @@ def mark_dormant(months: int = 6, as_of: date | None = None) -> dict:
 
 
 def portfolio(branch_id=None) -> dict:
-    """The savings book at a glance."""
+    """The savings book at a glance.
+
+    The total is in the organisation's currency, each account at its booked rate
+    as the ledger carries it; a product's own balance is in the product's
+    currency, with its base-currency value beside it.
+    """
     qs = SavingsAccount.objects.select_related("product", "borrower", "branch")
     if branch_id:
         qs = qs.filter(branch_id=branch_id)
     accounts = list(qs)
     active = [a for a in accounts if a.status == SavingsStatus.ACTIVE]
+    base = fx.base_currency()
+
+    def in_base(rows):
+        return q(sum((fx.to_base(a.balance, a.fx_rate) for a in rows), ZERO))
+
     return {
         "accounts": len(accounts),
         "active_accounts": len(active),
         "dormant_accounts": sum(1 for a in accounts if a.status == SavingsStatus.DORMANT),
         "closed_accounts": sum(1 for a in accounts if a.status == SavingsStatus.CLOSED),
-        "total_balance": q(sum((a.balance for a in accounts), ZERO)),
+        "total_balance": in_base(accounts),
         "by_product": [
             {
                 "product": product.name,
-                "accounts": sum(1 for a in accounts if a.product_id == product.id),
-                "balance": q(sum((a.balance for a in accounts if a.product_id == product.id), ZERO)),
+                "currency": fx.normalise(product.currency) or base,
+                "accounts": len(mine),
+                "balance": q(sum((a.balance for a in mine), ZERO)),
+                "balance_base": in_base(mine),
             }
             for product in SavingsProduct.objects.all()
+            for mine in [[a for a in accounts if a.product_id == product.id]]
         ],
     }

@@ -129,7 +129,7 @@ def savings_statement_xlsx(data: dict) -> HttpResponse:
         f"{org.name} · {data['borrower']} ({data['borrower_no']}, ID {data['national_id']})",
         f"{data['product']} at {data['interest_rate_pct_pa']}% a year · opened "
         f"{_date(data['opened_on'])} · {data['status']}",
-        f"Balance {org.currency} {_money(data['balance'])}, available "
+        f"Balance {data.get('currency') or org.currency} {_money(data['balance'])}, available "
         f"{_money(data['available_balance'])} · period {_period(data)}",
     ]
     rows = []
@@ -746,7 +746,7 @@ def savings_statement_pdf(data: dict) -> HttpResponse:
     from reportlab.platypus import KeepTogether
 
     org = _org()
-    cur = org.currency
+    cur = data.get("currency") or org.currency   # the account's own currency
     styles = _styles()
 
     def money(value) -> str:

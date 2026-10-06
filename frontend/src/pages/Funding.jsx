@@ -1,5 +1,6 @@
 import { useState } from 'react'
 
+import CurrencySelect from '../components/CurrencySelect.jsx'
 import DataTable from '../components/DataTable.jsx'
 import Modal, { FormModal } from '../components/Modal.jsx'
 import { useToast } from '../components/Toast.jsx'
@@ -16,6 +17,7 @@ import {
 } from '../components/ui.jsx'
 import { get, post, qs } from '../lib/api.js'
 import { useAuth } from '../lib/auth.jsx'
+import { currencyOf, isForeign } from '../lib/currency.js'
 import { dateOnly, fmt, getCurrency, money, num, pct, today } from '../lib/format.js'
 import { useOrg } from '../lib/org.jsx'
 import { PeriodNotice, useMinPostingDate } from '../lib/periods.jsx'
@@ -38,6 +40,7 @@ export default function Funding() {
   const [action, setAction] = useState(null)
   const [detail, setDetail] = useState(null)
   const [busy, setBusy] = useState(false)
+  const [openCurrency, setOpenCurrency] = useState('') // the currency of a facility being opened
 
   const paths = {
     facilities: `/api/funding/facilities${qs({ page, page_size: 25 })}`,
@@ -99,7 +102,10 @@ export default function Funding() {
               <button
                 type="button"
                 className="btn primary"
-                onClick={() => setAction({ kind: 'open' })}
+                onClick={() => {
+                  setOpenCurrency('')
+                  setAction({ kind: 'open' })
+                }}
               >
                 Open a facility
               </button>
@@ -158,7 +164,7 @@ export default function Funding() {
             .map(
               (f) =>
                 `${f.facility_no} (${f.funder_name}) on ${dateOnly(f.maturity_date)}, ` +
-                `${money(f.principal_outstanding)} outstanding`,
+                `${money(f.principal_outstanding, currencyOf(f.currency))} outstanding`,
             )
             .join('; ')}
           .
@@ -207,6 +213,7 @@ export default function Funding() {
               { key: 'no', header: 'Facility', render: (r) => r.facility_no },
               { key: 'funder', header: 'Funder', render: (r) => r.funder_name },
               { key: 'name', header: 'Line', render: (r) => r.name },
+              { key: 'currency', header: 'Currency', render: (r) => currencyOf(r.currency) },
               {
                 key: 'state',
                 header: 'State',
@@ -298,20 +305,26 @@ export default function Funding() {
           <KeyValues
             items={[
               ['Line', detail.name],
-              ['Limit', money(detail.facility_limit)],
-              ['Principal outstanding', money(detail.principal_outstanding)],
-              ['Interest accrued and unpaid', money(detail.interest_accrued)],
-              ['Available to draw', money(detail.available)],
+              [
+                'Currency',
+                isForeign(detail.currency)
+                  ? `${currencyOf(detail.currency)}, carried at ${detail.fx_rate} ${getCurrency()}`
+                  : getCurrency(),
+              ],
+              ['Limit', money(detail.facility_limit, currencyOf(detail.currency))],
+              ['Principal outstanding', money(detail.principal_outstanding, currencyOf(detail.currency))],
+              ['Interest accrued and unpaid', money(detail.interest_accrued, currencyOf(detail.currency))],
+              ['Available to draw', money(detail.available, currencyOf(detail.currency))],
               ['Rate', `${pct(detail.interest_rate_pct_pa)} a year on the drawn balance`],
               ['Type', detail.is_revolving ? 'Revolving' : 'Term'],
               ['Started', dateOnly(detail.start_date)],
               ['Matures', detail.maturity_date ? dateOnly(detail.maturity_date) : '—'],
               ['Terms', detail.repayment_terms || '—'],
               ['Interest accrued to', detail.last_accrual_date ? dateOnly(detail.last_accrual_date) : 'never'],
-              ['Total drawn', money(detail.totals.total_drawn)],
-              ['Total repaid', money(detail.totals.total_repaid)],
-              ['Total interest paid', money(detail.totals.total_interest_paid)],
-              ['Total fees', money(detail.totals.total_fees)],
+              ['Total drawn', money(detail.totals.total_drawn, currencyOf(detail.currency))],
+              ['Total repaid', money(detail.totals.total_repaid, currencyOf(detail.currency))],
+              ['Total interest paid', money(detail.totals.total_interest_paid, currencyOf(detail.currency))],
+              ['Total fees', money(detail.totals.total_fees, currencyOf(detail.currency))],
             ]}
           />
 
@@ -418,8 +431,13 @@ export default function Funding() {
           <div className="grid cols-2">
             <Field label="Funder" name="funder_name" required placeholder="e.g. CBZ Bank Wholesale" />
             <Field label="Name of the line" name="name" required placeholder="On-lending line" />
+            <CurrencySelect
+              value={openCurrency}
+              onChange={setOpenCurrency}
+              hint="The limit and every movement are in it. Fixed once the facility has a movement."
+            />
             <Field
-              label={`Limit (${getCurrency()})`}
+              label={`Limit (${currencyOf(openCurrency)})`}
               type="number"
               step="0.01"
               min="0.01"
@@ -475,9 +493,9 @@ export default function Funding() {
           <p className="muted" style={{ marginTop: 0 }}>
             {
               {
-                drawdown: `${money(action.facility.available)} available to draw. Cash goes up and account 2100 records what is owed.`,
-                repay: `${money(action.facility.principal_outstanding)} of principal outstanding. Refused if there is not the cash for it.`,
-                interest: `${money(action.facility.interest_accrued)} has accrued. More than that is refused — paying ahead of the accrual charges the same period to 5300 twice.`,
+                drawdown: `${money(action.facility.available, currencyOf(action.facility.currency))} available to draw. Cash goes up and account 2100 records what is owed.`,
+                repay: `${money(action.facility.principal_outstanding, currencyOf(action.facility.currency))} of principal outstanding. Refused if there is not the cash for it.`,
+                interest: `${money(action.facility.interest_accrued, currencyOf(action.facility.currency))} has accrued. More than that is refused — paying ahead of the accrual charges the same period to 5300 twice.`,
                 fee: 'An arrangement, commitment or non-utilisation fee. Goes straight to expense; it is not a drawdown.',
               }[action.kind]
             }
@@ -485,7 +503,7 @@ export default function Funding() {
           <PeriodNotice date={today()} />
           <div className="grid cols-2">
             <Field
-              label={`Amount (${getCurrency()})`}
+              label={`Amount (${currencyOf(action.facility.currency)})`}
               type="number"
               step="0.01"
               min="0.01"
@@ -620,7 +638,7 @@ export default function Funding() {
 
       {action?.kind === 'reverse-movement' ? (
         <FormModal
-          title={`Reverse ${action.row.txn_type_label.toLowerCase()} of ${money(action.row.amount)}`}
+          title={`Reverse ${action.row.txn_type_label.toLowerCase()} of ${money(action.row.amount, currencyOf(action.facility.currency))}`}
           submitLabel="Reverse it"
           busy={busy}
           onClose={() => setAction(null)}

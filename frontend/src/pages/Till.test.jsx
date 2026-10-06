@@ -73,6 +73,50 @@ describe('Till', () => {
     expect(screen.getByLabelText(/^Note/)).toBeRequired()
   })
 
+  it('shows each open drawer in its own currency', async () => {
+    const zwg = {
+      ...OPEN,
+      id: 4,
+      session_no: 'TILL-000004',
+      currency: 'ZWG',
+      currency_label: 'ZWG',
+      opening_float: '1000.00',
+      position: { cash_in: '300.00', cash_out: '0.00', expected_cash: '1300.00', movements: [] },
+    }
+    stubApi({
+      get: {
+        '/api/tills/current': { till: OPEN, tills: [zwg, { ...OPEN, currency: '', currency_label: 'USD' }] },
+        '/api/tills': page(),
+      },
+    })
+    renderPage(<Till />, { user: TELLER })
+    expect(await screen.findByText('ZWG 1,300.00')).toBeInTheDocument()
+    expect(screen.getByText('USD 650.00')).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'Count and close' })).toHaveLength(2)
+  })
+
+  it('opens a drawer only in a currency not already open, and sends it', async () => {
+    const { postSpy } = stubApi({
+      get: {
+        '/api/tills/current': { till: { ...OPEN, currency: '' }, tills: [{ ...OPEN, currency: '' }] },
+        '/api/currencies': {
+          base_currency: 'USD',
+          currencies: [{ code: 'ZWG', rate: '0.040000', rate_date: '2026-01-01' }],
+        },
+        '/api/tills': page(),
+      },
+      post: { '/api/tills': { id: 9 } },
+    })
+    renderPage(<Till />, { user: TELLER })
+    await userEvent.click(await screen.findByRole('button', { name: 'Open a drawer in another currency' }))
+    const select = await screen.findByLabelText(/^Drawer currency/)
+    expect(await screen.findByLabelText(/^Opening float \(ZWG\)/)).toBeInTheDocument()
+    expect([...select.options].map((o) => o.value)).toEqual(['ZWG'])
+    await userEvent.type(screen.getByLabelText(/^Opening float \(ZWG\)/), '1000')
+    await userEvent.click(screen.getByRole('button', { name: 'Open the till' }))
+    expect(postSpy).toHaveBeenCalledWith('/api/tills', { currency: 'ZWG', opening_float: '1000' })
+  })
+
   it('never offers someone the verification of their own count', async () => {
     stub(null, [counted(5, OFFICER.id, -20), counted(6, TELLER.id, 0)])
     renderPage(<Till />, { user: OFFICER })

@@ -16,16 +16,25 @@ Which movements count:
 
 Funding and capital movements are not teller business and never count.
 
+A drawer holds one currency. Cash on a loan or a savings account in another
+currency is counted, in that currency, in the teller's drawer for it - a teller
+taking dollars and rand has two drawers open, one each - so a count is always of
+notes of one kind against postings of the same kind. With the open-till setting
+on, a cash posting needs an open drawer in its own currency.
+
 A counted till is verified by someone other than the teller who counted it. On
 verification a difference is posted to the ledger - a shortage Dr 6800 Cash
 shortages / Cr 1000, an overage Dr 1000 / Cr 4900 Other income - because until it
-is, the ledger claims cash the building does not hold (or misses some it does).
+is, the ledger claims cash the building does not hold (or misses some it does). A
+foreign drawer's difference is booked at the day's rate, stamped on the till so a
+Rebuild posts the same figure.
 """
 from datetime import date
 from decimal import Decimal
 
 from django.db import IntegrityError
 from django.db import transaction as db_transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from ..exceptions import BusinessRuleError
@@ -41,7 +50,7 @@ from ..models import (
     TxnType,
     User,
 )
-from . import ledger, periods
+from . import fx, ledger, periods
 from .amortisation import q
 from .loans import next_number
 
@@ -49,17 +58,30 @@ ZERO = Decimal("0")
 CASH = PaymentMethod.CASH
 
 
+def drawer_currency(code: str | None) -> str:
+    """The drawer a currency is counted in, as TillSession.currency stores it:
+    blank for the organisation's own, the code for any other."""
+    return fx.stored_code(code)
+
+
+def currency_label(session: TillSession) -> str:
+    return session.currency or fx.base_currency()
+
+
+def _in_currency(field: str, drawer: str) -> Q:
+    """Postings whose loan or account is in the drawer's currency. A loan or an
+    account in the base currency may store it blank or by its code."""
+    if drawer:
+        return Q(**{field: drawer})
+    return Q(**{f"{field}__in": ["", fx.base_currency()]})
+
+
 # ---------------------------------------------------------------- what moved
 def _loan_cash(txn: Transaction) -> Decimal:
-    """The signed cash effect of one loan transaction on the drawer: + in, - out.
-
-    The drawer is counted in the organisation's currency, so a foreign-currency
-    loan's cash is taken at the spot rate stamped on the transaction.
-    """
-    from .fx import to_base
-
+    """The signed cash effect of one loan transaction on the drawer: + in, - out,
+    in the loan's currency, which is the drawer's."""
     kind = txn.txn_type
-    amount = to_base(txn.amount, txn.fx_rate)
+    amount = txn.amount
     if kind in (TxnType.REPAYMENT, TxnType.RECOVERY):
         return amount if txn.method == CASH else ZERO
     if kind == TxnType.CHARGE:
@@ -85,19 +107,21 @@ def _savings_cash(stxn: SavingsTransaction) -> Decimal:
 
 
 def movements(session: TillSession) -> list[dict]:
-    """Every cash movement in the till's window, oldest first."""
+    """Every cash movement in the till's window and currency, oldest first."""
     end = session.closed_at or timezone.now()
     window = {"posted_by_id": session.teller_id, "created_at__gte": session.opened_at,
               "created_at__lte": end}
     rows = []
-    for txn in (Transaction.objects.filter(**window)
+    for txn in (Transaction.objects.filter(_in_currency("loan__currency", session.currency),
+                                           **window)
                 .select_related("loan", "reversal_of").order_by("created_at", "id")):
         amount = _loan_cash(txn)
         if amount:
             rows.append({"at": txn.created_at, "kind": txn.get_txn_type_display(),
                          "reference": txn.loan.loan_no, "detail": txn.reference or "",
                          "amount": q(amount)})
-    for stxn in (SavingsTransaction.objects.filter(**window)
+    for stxn in (SavingsTransaction.objects
+                 .filter(_in_currency("account__currency", session.currency), **window)
                  .select_related("account", "reversal_of").order_by("created_at", "id")):
         amount = _savings_cash(stxn)
         if amount:
@@ -109,7 +133,7 @@ def movements(session: TillSession) -> list[dict]:
 
 
 def position(session: TillSession) -> dict:
-    """What the drawer should hold now (or held at the count)."""
+    """What the drawer should hold now (or held at the count), in its currency."""
     if session.status != TillStatus.OPEN:
         return {"cash_in": session.cash_in, "cash_out": session.cash_out,
                 "expected_cash": session.expected_cash, "movements": movements(session)}
@@ -121,8 +145,10 @@ def position(session: TillSession) -> dict:
 
 
 # ---------------------------------------------------------------- the guard
-def assert_till_open(user_id: int | None, method: str | None, what: str) -> None:
-    """Refuse a cash posting by someone with no open till, when the setting asks.
+def assert_till_open(user_id: int | None, method: str | None, what: str,
+                     currency: str | None = None) -> None:
+    """Refuse a cash posting by someone with no open drawer in its currency, when
+    the setting asks.
 
     System postings (no user) are never refused: nobody stands at a counter for them.
     """
@@ -130,35 +156,52 @@ def assert_till_open(user_id: int | None, method: str | None, what: str) -> None
         return
     if not OrganisationSetting.load().require_open_till:
         return
-    if not TillSession.objects.filter(teller_id=user_id, status=TillStatus.OPEN).exists():
+    drawer = drawer_currency(currency)
+    if not TillSession.objects.filter(teller_id=user_id, status=TillStatus.OPEN,
+                                      currency=drawer).exists():
+        if drawer:
+            raise BusinessRuleError(
+                f"{what} is in {drawer} cash, and cash postings need an open till in their "
+                f"currency. Open a {drawer} till on the Teller till page first.")
         raise BusinessRuleError(
             f"{what} is in cash, and cash postings need an open till. Open your till on the "
             f"Teller till page first.")
 
 
 # ---------------------------------------------------------------- lifecycle
-def current(user: User) -> TillSession | None:
-    return TillSession.objects.filter(teller=user, status=TillStatus.OPEN).first()
+def current(user: User, currency: str | None = None) -> TillSession | None:
+    """The user's open drawer in a currency, the organisation's by default."""
+    return TillSession.objects.filter(teller=user, status=TillStatus.OPEN,
+                                      currency=drawer_currency(currency)).first()
+
+
+def open_drawers(user: User) -> list[TillSession]:
+    """Every drawer the user has open, the organisation's currency first."""
+    return list(TillSession.objects.filter(teller=user, status=TillStatus.OPEN)
+                .order_by("currency", "id"))
 
 
 @db_transaction.atomic
-def open_till(user: User, opening_float: Decimal) -> TillSession:
+def open_till(user: User, opening_float: Decimal, currency: str | None = None) -> TillSession:
     opening_float = q(Decimal(opening_float))
     if opening_float < 0:
         raise BusinessRuleError("The opening float cannot be negative")
-    existing = current(user)
+    # Another currency needs a rate, for the day its difference is booked.
+    drawer = fx.validate_code(currency)
+    existing = current(user, drawer)
     if existing:
-        raise BusinessRuleError(f"You already have {existing.session_no} open since "
+        raise BusinessRuleError(f"You already have {existing.session_no} open"
+                                f"{f' for {drawer}' if drawer else ''} since "
                                 f"{timezone.localtime(existing.opened_at):%Y-%m-%d %H:%M}. "
                                 f"Count and close it first.")
     try:
         with db_transaction.atomic():
             return TillSession.objects.create(
                 session_no=next_number("TILL"), teller=user, branch_id=user.branch_id,
-                opening_float=opening_float, business_date=date.today())
+                opening_float=opening_float, business_date=date.today(), currency=drawer)
     except IntegrityError:
         # Two tabs opening at once: the filtered unique index holds the line.
-        raise BusinessRuleError("You already have a till open")
+        raise BusinessRuleError("You already have a till open in that currency")
 
 
 @db_transaction.atomic
@@ -178,8 +221,9 @@ def count(session: TillSession, user: User, counted_cash: Decimal,
     variance = q(counted_cash - now["expected_cash"])
     if variance != 0 and not (note or "").strip():
         raise BusinessRuleError(
-            f"The count is {'over' if variance > 0 else 'short'} by {abs(variance)}. Say what "
-            f"was checked before closing.")
+            f"The count is {'over' if variance > 0 else 'short'} by {abs(variance)}"
+            f"{f' {session.currency}' if session.currency else ''}. Say what was checked "
+            f"before closing.")
     session.closed_at = timezone.now()
     session.cash_in = now["cash_in"]
     session.cash_out = now["cash_out"]
@@ -193,7 +237,9 @@ def count(session: TillSession, user: User, counted_cash: Decimal,
 
 
 def _variance_lines(session: TillSession):
-    amount = abs(session.variance)
+    """The difference in the organisation's currency: a foreign drawer's at the
+    rate stamped on it when it was verified."""
+    amount = fx.to_base(abs(session.variance), session.fx_rate or fx.ONE)
     if session.variance < 0:
         return [(ledger.CASH_SHORTAGES, amount, ZERO, "Cash short at the till"),
                 (ledger.CODES["bank"], ZERO, amount, "Cash short at the till")]
@@ -238,11 +284,15 @@ def verify(session: TillSession, user: User, note: str | None) -> TillSession:
         if periods.is_closed(on):
             on = periods.earliest_postable_date()
             moved = f" (counted {session.business_date.isoformat()}, a month since closed)"
+        # A foreign drawer's difference goes to the ledger at the rate of the day
+        # it is booked, as any cash in that currency would.
+        if session.currency:
+            session.fx_rate = fx.rate_on(session.currency, on)
         amount = abs(session.variance)
         session.variance_entry = ledger.post_manual_entry(
             _variance_lines(session), on,
             f"{session.session_no}: till {'short' if session.variance < 0 else 'over'} "
-            f"by {amount}{moved}",
+            f"by {amount}{f' {session.currency}' if session.currency else ''}{moved}",
             "till_variance", branch_id=session.branch_id, posted_by=user, strict=True)
 
     session.status = TillStatus.VERIFIED
@@ -250,5 +300,5 @@ def verify(session: TillSession, user: User, note: str | None) -> TillSession:
     session.verified_at = timezone.now()
     session.verify_note = (note or "").strip() or None
     session.save(update_fields=["status", "verified_by", "verified_at", "verify_note",
-                                "variance_entry"])
+                                "variance_entry", "fx_rate"])
     return session

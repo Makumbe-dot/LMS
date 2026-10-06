@@ -773,6 +773,10 @@ class SavingsProduct(models.Model):
     min_balance = models.DecimalField(default=ZERO, **MONEY)
     monthly_fee = models.DecimalField(default=ZERO, **MONEY)
     allow_withdrawals = models.BooleanField(default=True)
+    # The currency the product takes deposits in, as on LoanProduct. Blank means
+    # the organisation's own. Fixed once an account is open under it.
+    currency = models.CharField(max_length=8, blank=True, default="",
+                                help_text="Blank for the organisation's currency")
     is_active = models.BooleanField(default=True)
 
     class Meta:
@@ -793,6 +797,12 @@ class SavingsAccount(models.Model):
     status = models.CharField(max_length=10, choices=SavingsStatus.choices,
                               default=SavingsStatus.ACTIVE, db_index=True)
     balance = models.DecimalField(default=ZERO, **MONEY)
+    # Snapshot of the product's currency at opening, and the rate the ledger
+    # carries this account's balance at on 2000: base units per one unit of
+    # `currency`, 1 in the base currency. Set at opening, moved by each
+    # revaluation run, as Loan.fx_rate is. See services/fx.py.
+    currency = models.CharField(max_length=8, blank=True, default="")
+    fx_rate = models.DecimalField(max_digits=18, decimal_places=6, default=Decimal("1"))
     opened_on = models.DateField(default=date.today)
     closed_on = models.DateField(null=True, blank=True)
     last_interest_date = models.DateField(null=True, blank=True)
@@ -818,6 +828,11 @@ class SavingsTransaction(models.Model):
     txn_date = models.DateField(db_index=True)
     amount = models.DecimalField(**MONEY)
     balance_after = models.DecimalField(**MONEY)
+    # As on Transaction: the spot rate on the date (the cash, interest and fee
+    # legs) and the account's booked rate at the time (the 2000 leg). Filled by a
+    # pre_save hook when left blank; blank on rows from before, read as 1.
+    fx_rate = models.DecimalField(max_digits=18, decimal_places=6, null=True, blank=True)
+    book_rate = models.DecimalField(max_digits=18, decimal_places=6, null=True, blank=True)
     method = models.CharField(max_length=20, choices=PaymentMethod.choices, null=True, blank=True)
     reference = models.CharField(max_length=80, null=True, blank=True)
     narration = models.TextField(null=True, blank=True)
@@ -1280,6 +1295,10 @@ class TillSession(models.Model):
     business_date = models.DateField(default=date.today, db_index=True)
     opened_at = models.DateTimeField(default=timezone.now)
     opening_float = models.DecimalField(default=ZERO, **MONEY)
+    # The currency the drawer holds, blank for the organisation's. A teller with
+    # cash in two currencies has two drawers, one per currency, each counted in
+    # its own; every amount on the session is in this currency.
+    currency = models.CharField(max_length=8, blank=True, default="")
     status = models.CharField(max_length=10, choices=TillStatus.choices, default=TillStatus.OPEN,
                               db_index=True)
 
@@ -1300,15 +1319,20 @@ class TillSession(models.Model):
     verify_note = models.TextField(null=True, blank=True)
     variance_entry = models.OneToOneField("JournalEntry", on_delete=models.SET_NULL, null=True,
                                           blank=True, related_name="till_session")
+    # The spot rate the difference was booked at, stamped on verification so a
+    # Rebuild re-posts the same figure. Blank for a base-currency drawer.
+    fx_rate = models.DecimalField(max_digits=18, decimal_places=6, null=True, blank=True)
     created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
         db_table = "till_sessions"
         ordering = ["-opened_at", "-id"]
         constraints = [
-            # A teller has one drawer open at a time, or no count means anything.
-            models.UniqueConstraint(fields=["teller"], condition=models.Q(status="open"),
-                                    name="uq_till_one_open_per_teller"),
+            # A teller has one drawer open at a time in each currency, or no count
+            # means anything.
+            models.UniqueConstraint(fields=["teller", "currency"],
+                                    condition=models.Q(status="open"),
+                                    name="uq_till_one_open_per_teller_currency"),
         ]
 
     def __str__(self):
@@ -1401,7 +1425,8 @@ class ExchangeRate(models.Model):
 
 
 class RevaluationRun(models.Model):
-    """One restatement of every open foreign-currency loan at a closing rate.
+    """One restatement of every open foreign-currency loan, savings account and
+    funding facility at a closing rate.
 
     Hangs its own journal entry, like a provision run, so a Rebuild can re-post it.
     """
@@ -1409,8 +1434,10 @@ class RevaluationRun(models.Model):
     as_of = models.DateField(db_index=True)
     base_currency = models.CharField(max_length=8)
     loans_revalued = models.IntegerField(default=0)
+    savings_revalued = models.IntegerField(default=0)
+    facilities_revalued = models.IntegerField(default=0)
     movement = models.DecimalField(default=ZERO, **MONEY,
-                                   help_text="Net change in the receivables, base currency")
+                                   help_text="Net unrealised gain, a loss negative; base currency")
     narration = models.TextField(null=True, blank=True)
     journal_entry = models.OneToOneField("JournalEntry", on_delete=models.SET_NULL, null=True,
                                          blank=True, related_name="revaluation_run")
@@ -1427,8 +1454,17 @@ class RevaluationRun(models.Model):
 
 
 class RevaluationLine(models.Model):
+    """One loan, savings account or facility restated by a run; exactly one of
+    the three is set. Each *_movement is the change in a balance's base-currency
+    carrying value; `movement` is the line's net gain, so on a liability it is
+    the change with its sign turned over."""
     run = models.ForeignKey(RevaluationRun, on_delete=models.CASCADE, related_name="lines")
-    loan = models.ForeignKey("Loan", on_delete=models.CASCADE, related_name="revaluation_lines")
+    loan = models.ForeignKey("Loan", on_delete=models.CASCADE, null=True, blank=True,
+                             related_name="revaluation_lines")
+    savings_account = models.ForeignKey("SavingsAccount", on_delete=models.CASCADE, null=True,
+                                        blank=True, related_name="revaluation_lines")
+    facility = models.ForeignKey("FundingFacility", on_delete=models.CASCADE, null=True,
+                                 blank=True, related_name="revaluation_lines")
     currency = models.CharField(max_length=8)
     old_rate = models.DecimalField(max_digits=18, decimal_places=6)
     new_rate = models.DecimalField(max_digits=18, decimal_places=6)
@@ -1444,6 +1480,14 @@ class RevaluationLine(models.Model):
     fees_deferred = models.DecimalField(default=ZERO, **MONEY)
     interest_movement = models.DecimalField(default=ZERO, **MONEY)
     fees_movement = models.DecimalField(default=ZERO, **MONEY)
+    # A savings balance (2000), and a facility's principal (2100) and accrued
+    # interest (2110): liabilities, so a rise in their base value is a loss.
+    savings_balance = models.DecimalField(default=ZERO, **MONEY)
+    savings_movement = models.DecimalField(default=ZERO, **MONEY)
+    borrowings = models.DecimalField(default=ZERO, **MONEY)
+    borrowings_movement = models.DecimalField(default=ZERO, **MONEY)
+    borrowing_interest = models.DecimalField(default=ZERO, **MONEY)
+    borrowing_interest_movement = models.DecimalField(default=ZERO, **MONEY)
     movement = models.DecimalField(default=ZERO, **MONEY)
 
     class Meta:
@@ -1572,6 +1616,14 @@ class FundingFacility(models.Model):
     interest_accrued = models.DecimalField(default=ZERO, **MONEY)
     last_accrual_date = models.DateField(null=True, blank=True)
 
+    # The currency the facility is drawn and repaid in, blank for the
+    # organisation's; every amount on it is in this currency, the limit too.
+    # `fx_rate` is the rate 2100 and 2110 carry it at: set when it is opened,
+    # moved by each revaluation run, as Loan.fx_rate is. The currency is fixed
+    # once the facility has a movement.
+    currency = models.CharField(max_length=8, blank=True, default="")
+    fx_rate = models.DecimalField(max_digits=18, decimal_places=6, default=Decimal("1"))
+
     # A date rather than a status enum. Four states plus a cancel action is a state
     # machine for something with two interesting conditions, and it is where a
     # "fully repaid revolving facility can never be drawn again" bug lives.
@@ -1629,6 +1681,11 @@ class FacilityTransaction(models.Model):
     # nothing about what changed.
     principal_after = models.DecimalField(default=ZERO, **MONEY)
     accrued_after = models.DecimalField(default=ZERO, **MONEY)
+    # The spot rate on the date (the cash and expense legs) and the facility's
+    # booked rate at the time (2100 and 2110), as on Transaction. Blank on rows
+    # from before, read as 1.
+    fx_rate = models.DecimalField(max_digits=18, decimal_places=6, null=True, blank=True)
+    book_rate = models.DecimalField(max_digits=18, decimal_places=6, null=True, blank=True)
     method = models.CharField(max_length=20, choices=PaymentMethod.choices, null=True, blank=True)
     reference = models.CharField(max_length=80, null=True, blank=True)
     narration = models.TextField(null=True, blank=True)

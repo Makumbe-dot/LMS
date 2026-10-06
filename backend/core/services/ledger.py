@@ -18,8 +18,10 @@ half-configured chart of accounts can never stop a teller taking money.
 The ledger is kept in the organisation's currency. A loan in another currency is
 converted as it is posted: receivables at the loan's booked rate, as the change
 in their base-currency carrying value so the postings telescope exactly; cash
-and income at the spot rate of the day; the difference to 4800. See
-services/fx.py for the rules and the revaluation run.
+and income at the spot rate of the day; the difference to 4800. A savings
+account or a funding facility in another currency is converted the same way,
+its liability (2000, 2100, 2110) at its own booked rate. See services/fx.py for
+the rules and the revaluation run.
 """
 import logging
 from decimal import Decimal
@@ -613,11 +615,41 @@ def _raise_entry(lines, *, entry_date, narration: str, source: str, what: str,
     return entry
 
 
-def _savings_lines(stxn) -> list[tuple[str, Decimal, Decimal, str]]:
-    """Members' savings are the institution's liability, not its income."""
-    from ..models import SavingsTxnType
+def _signed(code: str, value: Decimal, text: str, *, debit: bool):
+    """One line on its natural side, or on the other when `value` is negative."""
+    if (value >= 0) == debit:
+        return (code, abs(value), ZERO, text)
+    return (code, ZERO, abs(value), text)
 
-    amount = q(stxn.amount)
+
+def _with_fx_difference(lines) -> list[tuple[str, Decimal, Decimal, str]]:
+    """Drop zero lines and book what a foreign-currency entry leaves between its
+    legs to 4800: the liability moved at the booked rate, the cash or the income
+    and expense at the day's. Always nothing in the base currency."""
+    lines = [(c, q(d), q(cr), t) for c, d, cr, t in lines if q(d) > 0 or q(cr) > 0]
+    if not lines:
+        return []
+    gap = q(sum((d - c for _, d, c, _ in lines), ZERO))
+    if gap > 0:
+        lines.append((CODES["fx_differences"], ZERO, gap, "Realised exchange gain"))
+    elif gap < 0:
+        lines.append((CODES["fx_differences"], -gap, ZERO, "Realised exchange loss"))
+    return lines
+
+
+def _savings_lines(stxn) -> list[tuple[str, Decimal, Decimal, str]]:
+    """Members' savings are the institution's liability, not its income.
+
+    The 2000 leg is the change in the balance's base-currency value at the
+    account's booked rate, from the balance the movement left; the other leg -
+    the cash, the interest expense, the fee income - is the amount at the day's
+    spot rate; a reversal puts that leg back at the rate it went in at, which the
+    reversal carries. In the base currency both rates are 1 and the two legs are
+    the amount; in another, whatever lies between goes to 4800.
+    """
+    from ..models import SavingsTxnType
+    from .fx import ONE, carried_change, to_base
+
     kind = stxn.txn_type
     if kind == SavingsTxnType.REVERSAL and stxn.reversal_of_id:
         kind = stxn.reversal_of.txn_type
@@ -625,24 +657,32 @@ def _savings_lines(stxn) -> list[tuple[str, Decimal, Decimal, str]]:
     else:
         mirror = False
 
-    if kind == SavingsTxnType.DEPOSIT:
-        lines = [(CODES["bank"], amount, ZERO, "Savings deposit"),
-                 (CODES["client_funds"], ZERO, amount, "Owed to the member")]
-    elif kind == SavingsTxnType.WITHDRAWAL:
-        lines = [(CODES["client_funds"], amount, ZERO, "Paid out to the member"),
-                 (CODES["bank"], ZERO, amount, "Savings withdrawal")]
-    elif kind == SavingsTxnType.INTEREST:
-        lines = [(CODES["savings_interest"], amount, ZERO, "Interest credited to savings"),
-                 (CODES["client_funds"], ZERO, amount, "Owed to the member")]
-    elif kind == SavingsTxnType.FEE:
-        lines = [(CODES["client_funds"], amount, ZERO, "Account fee taken from the balance"),
-                 (CODES["fee_income"], ZERO, amount, "Savings account fee")]
-    else:
+    # (the other leg's account, whether it is a debit, how the balance moves, and
+    # the text of each leg)
+    rules = {
+        SavingsTxnType.DEPOSIT: (CODES["bank"], True, 1,
+                                 "Savings deposit", "Owed to the member"),
+        SavingsTxnType.WITHDRAWAL: (CODES["bank"], False, -1,
+                                    "Savings withdrawal", "Paid out to the member"),
+        SavingsTxnType.INTEREST: (CODES["savings_interest"], True, 1,
+                                  "Interest credited to savings", "Owed to the member"),
+        SavingsTxnType.FEE: (CODES["fee_income"], False, -1,
+                             "Savings account fee", "Account fee taken from the balance"),
+    }
+    if kind not in rules:
         return []
-
+    code, other_is_debit, sign, text, owed_text = rules[kind]
     if mirror:
-        return [(code, credit, debit, f"Reversal: {text}") for code, debit, credit, text in lines]
-    return lines
+        other_is_debit, sign = not other_is_debit, -sign
+        text, owed_text = f"Reversal: {text}", f"Reversal: {owed_text}"
+
+    # Credit 2000 with the rise in what is owed; a fall comes out as a debit.
+    after = stxn.balance_after
+    owed = carried_change(after, q(after - sign * stxn.amount), stxn.book_rate or ONE)
+    return _with_fx_difference([
+        _signed(code, to_base(stxn.amount, stxn.fx_rate or ONE), text, debit=other_is_debit),
+        _signed(CODES["client_funds"], owed, owed_text, debit=False),
+    ])
 
 
 @db_transaction.atomic
@@ -678,38 +718,63 @@ def _facility_lines(ftxn) -> list[tuple[str, Decimal, Decimal, str]]:
     deliberate: an unrecognised asset is prudent, an unrecognised liability is not.
     """
     from ..models import FacilityTxnType
+    from .fx import ONE, carried_change, to_base
 
-    amount = q(ftxn.amount)
     kind = ftxn.txn_type
     mirror = False
     if kind == FacilityTxnType.REVERSAL and ftxn.reversal_of_id:
         kind = ftxn.reversal_of.txn_type
         mirror = True
 
-    if kind == FacilityTxnType.DRAWDOWN:
-        lines = [(CODES["bank"], amount, ZERO, "Received from the funder"),
-                 (CODES["borrowings"], ZERO, amount, "Drawn on the facility")]
-    elif kind == FacilityTxnType.REPAYMENT:
-        lines = [(CODES["borrowings"], amount, ZERO, "Principal repaid to the funder"),
+    # In the facility's currency: the cash, the interest expense and the fee at the
+    # day's spot rate (a reversal carries the rate the original went in at), and
+    # the change in 2100 or 2110 at the facility's booked rate, from the balance
+    # the movement left, so the two accounts telescope to q(balance x rate)
+    # exactly. In the base currency both are the amount and 4800 never appears.
+    amount = to_base(ftxn.amount, ftxn.fx_rate or ONE)
+    if kind == FacilityTxnType.FEE:
+        lines = [(CODES["facility_fees"], amount, ZERO, "Facility fee"),
                  (CODES["bank"], ZERO, amount, "Paid to the funder")]
-    elif kind == FacilityTxnType.INTEREST_ACCRUAL:
-        lines = [(CODES["borrowing_interest"], amount, ZERO, "Interest accrued on borrowings"),
-                 (CODES["accrued_interest"], ZERO, amount, "Owed to the funder")]
-    elif kind == FacilityTxnType.INTEREST_PAYMENT:
+        return _with_fx_difference(_mirror(lines) if mirror else lines)
+
+    # (the other leg's account, whether it is a debit, its text; the liability,
+    # the balance it is read from, how that balance moves, its text)
+    rules = {
+        FacilityTxnType.DRAWDOWN: (CODES["bank"], True, "Received from the funder",
+                                   CODES["borrowings"], "principal_after", 1,
+                                   "Drawn on the facility"),
+        FacilityTxnType.REPAYMENT: (CODES["bank"], False, "Paid to the funder",
+                                    CODES["borrowings"], "principal_after", -1,
+                                    "Principal repaid to the funder"),
+        FacilityTxnType.INTEREST_ACCRUAL: (CODES["borrowing_interest"], True,
+                                           "Interest accrued on borrowings",
+                                           CODES["accrued_interest"], "accrued_after", 1,
+                                           "Owed to the funder"),
         # Never split between 2110 and 5300. funding.pay_interest refuses more than
         # has accrued and tells the caller to run the accrual first, so an interest
         # payment only ever settles a liability already on the books. Expensing the
         # unaccrued remainder here is what double-counts it when the month-end
-        # accrual then posts the same period again.
-        lines = [(CODES["accrued_interest"], amount, ZERO, "Accrued interest settled"),
-                 (CODES["bank"], ZERO, amount, "Interest paid to the funder")]
-    elif kind == FacilityTxnType.FEE:
-        lines = [(CODES["facility_fees"], amount, ZERO, "Facility fee"),
-                 (CODES["bank"], ZERO, amount, "Paid to the funder")]
-    else:
+        # accrual then posts the same period again. On a foreign facility what lies
+        # between the booked rate and the day's is an exchange difference, not
+        # interest.
+        FacilityTxnType.INTEREST_PAYMENT: (CODES["bank"], False, "Interest paid to the funder",
+                                           CODES["accrued_interest"], "accrued_after", -1,
+                                           "Accrued interest settled"),
+    }
+    if kind not in rules:
         return []
+    code, other_is_debit, text, liability, field, sign, owed_text = rules[kind]
+    if mirror:
+        other_is_debit, sign = not other_is_debit, -sign
+        text, owed_text = f"Reversal: {text}", f"Reversal: {owed_text}"
 
-    return _mirror(lines) if mirror else lines
+    # Credit the liability with the rise in what is owed; a fall is a debit.
+    after = getattr(ftxn, field)
+    owed = carried_change(after, q(after - sign * ftxn.amount), ftxn.book_rate or ONE)
+    return _with_fx_difference([
+        _signed(code, amount, text, debit=other_is_debit),
+        _signed(liability, owed, owed_text, debit=False),
+    ])
 
 
 def _capital_lines(ctxn) -> list[tuple[str, Decimal, Decimal, str]]:
@@ -1024,8 +1089,9 @@ def reconciliation(as_of=None) -> dict:
         return queryset.aggregate(v=Sum(field))["v"] or ZERO
 
     def converted(queryset, field):
-        # Each loan at its booked rate, rounded per loan: exactly what the ledger
-        # carries (see services/fx.py), so a foreign book reconciles to the cent.
+        # Each loan, savings account or facility at its booked rate, rounded per
+        # row: exactly what the ledger carries (see services/fx.py), so a foreign
+        # book reconciles to the cent.
         from .fx import to_base
 
         return q(sum((to_base(value, rate) for value, rate
@@ -1048,12 +1114,12 @@ def reconciliation(as_of=None) -> dict:
          "charges outstanding on active loans, at the booked rates"),
         ("1900", "Provision for credit losses", -total(Loan.objects.all(), "provision_held"),
          "provision held across every loan"),
-        ("2000", "Client funds payable", total(SavingsAccount.objects.all(), "balance"),
-         "savings balances"),
-        ("2100", "Funder borrowings", total(facilities, "principal_outstanding"),
-         "principal outstanding on funding facilities"),
-        ("2110", "Accrued interest on borrowings", total(facilities, "interest_accrued"),
-         "interest accrued and unpaid on funding facilities"),
+        ("2000", "Client funds payable", converted(SavingsAccount.objects.all(), "balance"),
+         "savings balances, at the booked rates"),
+        ("2100", "Funder borrowings", converted(facilities, "principal_outstanding"),
+         "principal outstanding on funding facilities, at the booked rates"),
+        ("2110", "Accrued interest on borrowings", converted(facilities, "interest_accrued"),
+         "interest accrued and unpaid on funding facilities, at the booked rates"),
         ("3100", "Share capital",
          q(total(capital.filter(txn_type=CapitalTxnType.INJECTION), "amount")
            - total(capital.filter(txn_type=CapitalTxnType.RETURN_OF_CAPITAL), "amount")),

@@ -27,6 +27,7 @@ from ..models import (
     SavingsTxnType,
     TxnType,
 )
+from . import fx
 from .amortisation import q
 from .loans import TERM_UNITS, sched
 
@@ -218,6 +219,8 @@ def savings_statement(account: SavingsAccount, start: date | None = None,
         "national_id": borrower.national_id, "phone": borrower.phone,
         "address": borrower.address,
         "product": account.product.name,
+        # every amount on the statement is in the account's own currency
+        "currency": fx.normalise(account.currency) or fx.base_currency(),
         "interest_rate_pct_pa": account.product.interest_rate_pct_pa,
         "status": account.status, "opened_on": account.opened_on,
         "branch": account.branch.name if account.branch_id else None,
