@@ -42,6 +42,7 @@ urlpatterns = [
     re_path(r"^branches/?$", org.branches),
     re_path(r"^branches/(?P<branch_id>\d+)/?$", org.branch_detail),
     re_path(r"^settings/?$", org.settings_view),
+    re_path(r"^message-templates/?$", org.message_templates),
     re_path(r"^holidays/?$", org.holidays),
     re_path(r"^holidays/(?P<holiday_id>\d+)/?$", org.holiday_detail),
     re_path(r"^search/?$", org.search),

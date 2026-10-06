@@ -332,6 +332,9 @@ class OrganisationSetting(models.Model):
     # The declarations at the foot of every statement, one per line. Blank prints
     # the standard set in documents.py; anything written here replaces them.
     statement_declarations = models.TextField(blank=True, default="")
+    # The institution's own wording for borrower messages, by kind (services/templates.py).
+    # A kind left out uses the built-in wording.
+    message_templates = models.JSONField(default=dict, blank=True)
 
     # IFRS 9 expected-credit-loss provision rates, percent of exposure per stage
     ecl_stage1_pct = models.DecimalField(default=Decimal("1"), max_digits=6, decimal_places=2)

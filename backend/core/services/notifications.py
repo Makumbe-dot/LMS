@@ -24,6 +24,7 @@ from ..models import (
     NotificationStatus,
     OrganisationSetting,
 )
+from . import templates
 from .amortisation import q
 from .loans import arrears, sched
 
@@ -74,9 +75,10 @@ def generate_reminders(as_of: date | None = None, days_before: int | None = None
             if ins.balance <= 0:
                 continue
             if as_of <= ins.due_date <= horizon:
-                body = (f"Dear {borrower.first_name}, instalment {ins.number} of "
-                        f"{_money(ins.balance, currency)} on loan {loan.loan_no} is due on "
-                        f"{ins.due_date:%d %b %Y}. Thank you.")
+                body = templates.render(
+                    "reminder", borrower, settings_row, number=ins.number,
+                    amount=_money(ins.balance, currency), loan_no=loan.loan_no,
+                    due_date=f"{ins.due_date:%d %b %Y}")
                 if _queue(borrower=borrower, loan=loan, kind=NotificationKind.REMINDER,
                           channel=NotificationChannel.SMS, to_address=phone, body=body,
                           scheduled_for=max(as_of, ins.due_date - timedelta(days=days_before)),
@@ -86,9 +88,8 @@ def generate_reminders(as_of: date | None = None, days_before: int | None = None
         # 2. one arrears notice per loan per day, while it is overdue
         amount, days = arrears(loan, as_of)
         if amount > 0:
-            body = (f"Dear {borrower.first_name}, loan {loan.loan_no} is "
-                    f"{_money(amount, currency)} in arrears ({days} days). Please pay to avoid "
-                    f"further penalties.")
+            body = templates.render("arrears", borrower, settings_row, loan_no=loan.loan_no,
+                                    amount=_money(amount, currency), days=days)
             if _queue(borrower=borrower, loan=loan, kind=NotificationKind.ARREARS,
                       channel=NotificationChannel.SMS, to_address=phone, body=body,
                       scheduled_for=as_of, dedupe_key=f"arrears:{loan.id}:{as_of.isoformat()}"):
@@ -107,9 +108,9 @@ def queue_receipt(loan: Loan, amount: Decimal, txn_id: int, txn_date: date) -> N
     """Acknowledge a repayment. Called after a posting is committed."""
     settings_row = OrganisationSetting.load()
     borrower = loan.borrower
-    body = (f"Dear {borrower.first_name}, we have received "
-            f"{_money(amount, settings_row.currency)} on loan {loan.loan_no}. Balance "
-            f"{_money(loan.total_outstanding, settings_row.currency)}. Thank you.")
+    body = templates.render("receipt", borrower, settings_row, loan_no=loan.loan_no,
+                            amount=_money(amount, settings_row.currency),
+                            balance=_money(loan.total_outstanding, settings_row.currency))
     return _queue(borrower=borrower, loan=loan, kind=NotificationKind.RECEIPT,
                   channel=NotificationChannel.SMS, to_address=borrower.phone, body=body,
                   scheduled_for=txn_date, dedupe_key=f"receipt:{txn_id}")

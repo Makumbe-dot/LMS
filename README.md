@@ -96,6 +96,9 @@ open till; it is off by default so a book that has never used tills keeps postin
 **Collections** — collections-due listing, arrears / PAR, **payroll deduction schedules per
 employer**, **follow-up notes** on a loan (what was tried, what was promised, what is next), and a
 **message outbox** of instalment reminders, arrears notices and repayment receipts.
+The wording of every message is the institution's own: **Settings → Borrower messages** holds a box
+per kind with the placeholders it may use (`{first_name}`, `{loan_no}`, `{amount}`…) and a preview.
+A placeholder a kind does not have is refused when saved, and a blank box sends the standard wording.
 
 **Reporting** — dashboard (portfolio outstanding, PAR>30, collection rate, 12-month disbursement vs
 collection chart, arrears ageing buckets) filterable by date and branch, **IFRS 9 staging and
@@ -425,6 +428,8 @@ case-insensitive default collation. It covers:
 - early settlement — the rebate, the refusal of a stale confirmation amount, and closure;
 - bulk import — dry run, commit, bad rows, two rows that would jointly overpay one loan;
 - the message outbox — generation, idempotency, receipts, sending and cancelling;
+- message wording — the institution's own in every kind, unknown placeholders refused, blank
+  restoring the default;
 - IFRS 9 staging, the provision run, its reversal and the repost path;
 - capital, funder facilities, borrowing interest and the cash guard;
 - period close — the guard, the pre-close checks, reopening, and the commands;

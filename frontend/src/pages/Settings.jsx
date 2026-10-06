@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import DataTable from '../components/DataTable.jsx'
+import MessageTemplates from '../components/MessageTemplates.jsx'
 import { FormModal } from '../components/Modal.jsx'
 import { useToast } from '../components/Toast.jsx'
 import { Check, ErrorBanner, Field, Loading, PageHeader } from '../components/ui.jsx'
@@ -309,6 +310,8 @@ export default function Settings() {
           </button>
         </div>
       </form>
+
+      <MessageTemplates />
 
       <div className="card">
         <div className="row between" style={{ marginBottom: 12 }}>

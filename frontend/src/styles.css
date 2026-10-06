@@ -985,6 +985,17 @@ legend { font: 600 13px/1.3 var(--font-sans); padding: 0; margin-bottom: 8px; }
 
 /* The access rights on the Users form: a tick, a name, and a line on what it opens. */
 fieldset.rights { margin-top: 8px; }
+
+/* Borrower message wording in Settings: the box, what it may use, and how it reads. */
+.template { margin-bottom: 18px; }
+.template .label-text { display: block; font-weight: 600; font-size: 13px; margin-bottom: 6px; }
+.template textarea { width: 100%; }
+.template-meta { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-size: 12px; margin-top: 4px; }
+.template-meta code { margin-right: 6px; }
+.template-preview {
+  margin: 6px 0 0; padding: 8px 10px; border-radius: var(--radius);
+  background: var(--surface-sunken); font-size: 13px; line-height: 1.45;
+}
 .rights-presets { gap: 6px; flex-wrap: wrap; margin-bottom: 12px; font-size: 13px; }
 .rights-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 4px 16px; }
 label.check.right { align-items: flex-start; margin-bottom: 8px; }

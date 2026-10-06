@@ -13,7 +13,7 @@ from ..models import Borrower, Branch, Holiday, Loan, LoanStatus, OrganisationSe
 from ..permissions import IsAdmin
 from ..serializers import BranchSerializer, HolidaySerializer, OrganisationSettingSerializer
 from ..services import arrears as arrears_svc
-from ..services import workdays
+from ..services import templates, workdays
 
 
 @api_view(["GET", "POST"])
@@ -161,3 +161,20 @@ def search(request):
         "loans": [{"id": l.id, "label": f"{l.loan_no} - {l.borrower.full_name}",
                    "sub": l.status} for l in loans],
     })
+
+
+@api_view(["GET", "PUT"])
+def message_templates(request):
+    """The wording of borrower messages. Everyone reads it; an admin changes it.
+    PUT {"templates": {kind: text}}; a blank text restores the built-in wording."""
+    if request.method == "GET":
+        return Response(templates.catalogue())
+    if not IsAdmin().has_permission(request, None):
+        return Response({"detail": IsAdmin.message}, status=status.HTTP_403_FORBIDDEN)
+    body = request.data.get("templates")
+    if not isinstance(body, dict):
+        raise BusinessRuleError("Send {\"templates\": {kind: text}}")
+    with transaction.atomic():
+        result = templates.save(body)
+        audit(request.user, "update", "message_templates", 1, ", ".join(sorted(body)))
+    return Response(result)
