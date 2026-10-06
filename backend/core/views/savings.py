@@ -25,6 +25,7 @@ from ..serializers import (
     SavingsProductSerializer,
     SavingsTransactionSerializer,
 )
+from ..services import fx
 from ..services import savings as svc
 from .helpers import table_response, wants_table, paginate, parse_date, parse_int
 
@@ -108,10 +109,12 @@ def accounts(request):
             qs = qs.filter(borrower_id=borrower_id)
 
         if wants_table(request):
+            base = fx.base_currency()   # each balance is in its account's currency
             rows = [{
                 "account_no": a.account_no, "borrower": a.borrower.full_name,
                 "borrower_no": a.borrower.borrower_no, "product": a.product.name,
                 "branch": a.branch.name if a.branch_id else "", "status": a.status,
+                "currency": a.currency or base,
                 "balance": a.balance, "opened_on": a.opened_on,
             } for a in qs[:5000]]
             return table_response(request, rows, "savings_accounts")

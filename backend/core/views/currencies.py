@@ -1,4 +1,4 @@
-"""Currencies: the exchange-rate table and the revaluation of foreign-currency loans."""
+"""Currencies: the exchange-rate table and the revaluation of foreign-currency balances."""
 from datetime import date
 
 from django.db import transaction
@@ -84,7 +84,7 @@ def revaluation_preview(request):
 def revaluations(request):
     if request.method == "GET":
         qs = RevaluationRun.objects.select_related("journal_entry", "run_by").prefetch_related(
-            "lines__loan__borrower")
+            "lines__loan__borrower", "lines__savings_account__borrower", "lines__facility")
         return Response(paginate(request, qs, RevaluationRunSerializer, default_size=25))
 
     if not CanAccounting().has_permission(request, None):
@@ -94,5 +94,6 @@ def revaluations(request):
     run = fx.revalue(body.validated_data.get("as_of"), request.user,
                      body.validated_data.get("narration"))
     run = (RevaluationRun.objects.select_related("journal_entry", "run_by")
-           .prefetch_related("lines__loan__borrower").get(pk=run.pk))
+           .prefetch_related("lines__loan__borrower", "lines__savings_account__borrower",
+                             "lines__facility").get(pk=run.pk))
     return Response(RevaluationRunSerializer(run).data, status=status.HTTP_201_CREATED)

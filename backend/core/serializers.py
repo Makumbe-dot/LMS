@@ -1117,23 +1117,64 @@ class ExchangeRateSerializer(serializers.ModelSerializer):
         read_only_fields = ["created_at"]
 
 
+_REVALUATION_LIABILITY_FIELDS = [
+    "savings_account_id", "facility_id", "savings_balance", "savings_movement", "borrowings",
+    "borrowings_movement", "borrowing_interest", "borrowing_interest_movement"]
+
+
 class RevaluationLineSerializer(serializers.ModelSerializer):
-    loan_no = serializers.CharField(source="loan.loan_no", read_only=True)
-    borrower = serializers.CharField(source="loan.borrower.full_name", read_only=True)
+    """A loan, a savings account or a facility, read alike: `kind`, `reference`
+    (its number) and `holder` (the borrower, the member or the funder)."""
+    loan_no = serializers.CharField(source="loan.loan_no", read_only=True, default=None)
+    borrower = serializers.CharField(source="loan.borrower.full_name", read_only=True,
+                                     default=None)
+    kind = serializers.SerializerMethodField()
+    reference = serializers.SerializerMethodField()
+    holder = serializers.SerializerMethodField()
 
     class Meta:
         model = RevaluationLine
-        fields = ["id", "loan_id", "loan_no", "borrower", "currency", "old_rate", "new_rate",
+        fields = ["id", "kind", "reference", "holder", "loan_id", "loan_no", "borrower",
+                  "currency", "old_rate", "new_rate",
                   "principal_outstanding", "penalties_outstanding", "charges_outstanding",
                   "interest_receivable", "fees_deferred",
                   "principal_movement", "penalties_movement", "charges_movement",
-                  "interest_movement", "fees_movement", "movement"]
+                  "interest_movement", "fees_movement", *_REVALUATION_LIABILITY_FIELDS,
+                  "movement"]
+
+    def get_kind(self, obj) -> str:
+        return "loan" if obj.loan_id else "savings" if obj.savings_account_id else "facility"
+
+    def get_reference(self, obj) -> str:
+        if obj.loan_id:
+            return obj.loan.loan_no
+        if obj.savings_account_id:
+            return obj.savings_account.account_no
+        return obj.facility.facility_no
+
+    def get_holder(self, obj) -> str:
+        if obj.loan_id:
+            return obj.loan.borrower.full_name
+        if obj.savings_account_id:
+            return obj.savings_account.borrower.full_name
+        return obj.facility.funder_name
 
 
 class RevaluationPreviewLineSerializer(serializers.Serializer):
-    loan_id = serializers.IntegerField()
-    loan_no = serializers.CharField()
-    borrower = serializers.CharField()
+    kind = serializers.CharField()
+    reference = serializers.CharField()
+    holder = serializers.CharField()
+    loan_id = serializers.IntegerField(allow_null=True)
+    loan_no = serializers.CharField(allow_null=True)
+    borrower = serializers.CharField(allow_null=True)
+    savings_account_id = serializers.IntegerField(allow_null=True)
+    facility_id = serializers.IntegerField(allow_null=True)
+    savings_balance = money()
+    savings_movement = money()
+    borrowings = money()
+    borrowings_movement = money()
+    borrowing_interest = money()
+    borrowing_interest_movement = money()
     currency = serializers.CharField()
     principal_outstanding = money()
     penalties_outstanding = money()
@@ -1156,6 +1197,8 @@ class RevaluationPreviewSerializer(serializers.Serializer):
     as_of = serializers.DateField()
     base_currency = serializers.CharField()
     loans = serializers.IntegerField()
+    savings_accounts = serializers.IntegerField()
+    facilities = serializers.IntegerField()
     movement = money()
     missing_rates = serializers.ListField(child=serializers.CharField())
     lines = RevaluationPreviewLineSerializer(many=True)
@@ -1169,7 +1212,8 @@ class RevaluationRunSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = RevaluationRun
-        fields = ["id", "run_no", "as_of", "base_currency", "loans_revalued", "movement",
+        fields = ["id", "run_no", "as_of", "base_currency", "loans_revalued", "savings_revalued",
+                  "facilities_revalued", "movement",
                   "narration", "entry_no", "run_by_name", "created_at", "lines"]
 
 
@@ -1230,8 +1274,8 @@ class FundingFacilitySerializer(serializers.ModelSerializer):
         model = FundingFacility
         fields = ["id", "facility_no", "funder_name", "name", "facility_limit",
                   "interest_rate_pct_pa", "is_revolving", "start_date", "maturity_date",
-                  "repayment_terms", "principal_outstanding", "interest_accrued",
-                  "last_accrual_date", "closed_on", "is_open", "available",
+                  "repayment_terms", "currency", "fx_rate", "principal_outstanding",
+                  "interest_accrued", "last_accrual_date", "closed_on", "is_open", "available",
                   "total_outstanding", "branch", "branch_name", "notes", "created_by_name",
                   "created_at"]
 
@@ -1245,7 +1289,7 @@ class FacilityTransactionSerializer(serializers.ModelSerializer):
     class Meta:
         model = FacilityTransaction
         fields = ["id", "txn_type", "txn_type_label", "txn_date", "amount", "principal_after",
-                  "accrued_after", "method", "reference", "narration", "reversed",
+                  "accrued_after", "fx_rate", "method", "reference", "narration", "reversed",
                   "reversal_of", "posted_by_name", "entry_no", "created_at"]
 
 
@@ -1274,6 +1318,9 @@ class OpenFacilitySerializer(serializers.Serializer):
     repayment_terms = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     branch = serializers.IntegerField(required=False, allow_null=True)
     notes = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    # blank for the organisation's currency; checked by funding.open_facility
+    currency = serializers.CharField(required=False, allow_null=True, allow_blank=True,
+                                     max_length=8)
 
 
 class FacilityUpdateSerializer(serializers.ModelSerializer):
@@ -1282,7 +1329,34 @@ class FacilityUpdateSerializer(serializers.ModelSerializer):
         # status is absent on purpose: a facility closes through the close action,
         # and its balances move only through a posting.
         fields = ["funder_name", "name", "facility_limit", "interest_rate_pct_pa",
-                  "is_revolving", "maturity_date", "repayment_terms", "branch", "notes"]
+                  "is_revolving", "maturity_date", "repayment_terms", "branch", "notes",
+                  "currency"]
+
+    def validate_currency(self, value):
+        """Only while nothing has moved: every balance and movement on a facility is
+        in its currency, and the booked rate is taken again from the start date."""
+        from .exceptions import BusinessRuleError
+        from .services import fx
+
+        try:
+            code = fx.validate_code(value)
+        except BusinessRuleError as exc:
+            raise serializers.ValidationError(str(exc))
+        facility = self.instance
+        if facility is not None and code != fx.stored_code(facility.currency):
+            if facility.transactions.exists():
+                raise serializers.ValidationError(
+                    f"{facility.facility_no} already has movements in "
+                    f"{fx.normalise(facility.currency) or fx.base_currency()}; its currency "
+                    f"cannot change.")
+        return code
+
+    def update(self, instance, validated_data):
+        if "currency" in validated_data:
+            from .services import fx
+
+            instance.fx_rate = fx.rate_on(validated_data["currency"], instance.start_date)
+        return super().update(instance, validated_data)
 
 
 class FacilityMovementSerializer(serializers.Serializer):
@@ -1319,6 +1393,7 @@ class MaturingFacilitySerializer(serializers.Serializer):
     facility_no = serializers.CharField()
     funder_name = serializers.CharField()
     maturity_date = serializers.DateField()
+    currency = serializers.CharField()
     principal_outstanding = money()
     days = serializers.IntegerField()
 

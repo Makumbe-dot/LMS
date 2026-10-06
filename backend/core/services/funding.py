@@ -21,6 +21,12 @@ Cash is guarded. Every outflow here — a principal repayment, an interest payme
 a fee, a return of capital, a dividend — refuses to drive account 1000 below zero,
 because a slice that exists to stop cash going negative must not be the thing that
 puts it there.
+
+A facility may be in another currency. Its limit and every movement are then in
+that currency; 2100 and 2110 carry it at the facility's booked rate, cash and
+borrowing costs go in at the day's rate, and the difference is realised on 4800,
+as for a foreign loan (services/fx.py). The cash guard measures a foreign payment
+at the day's rate, which is what it takes out of the bank.
 """
 from datetime import date
 from decimal import Decimal
@@ -37,7 +43,7 @@ from ..models import (
     FundingFacility,
     User,
 )
-from . import periods
+from . import fx, periods
 from .amortisation import add_months, q
 from .loans import next_number
 
@@ -81,7 +87,11 @@ def open_facility(user: User | None, *, funder_name: str, name: str, facility_li
                   interest_rate_pct_pa: Decimal = ZERO, start_date: date | None = None,
                   maturity_date: date | None = None, is_revolving: bool = False,
                   repayment_terms: str | None = None, branch_id: int | None = None,
-                  notes: str | None = None) -> FundingFacility:
+                  notes: str | None = None, currency: str | None = None) -> FundingFacility:
+    # Blank for the organisation's currency. Another needs a rate, and the limit
+    # and every movement are then in it; the liability is carried on 2100 and
+    # 2110 at the spot rate of the start date until a revaluation moves it on.
+    currency = fx.validate_code(currency)
     facility_limit = q(Decimal(facility_limit))
     if facility_limit <= 0:
         raise BusinessRuleError("A facility limit must be greater than zero")
@@ -98,14 +108,22 @@ def open_facility(user: User | None, *, funder_name: str, name: str, facility_li
         facility_limit=facility_limit, interest_rate_pct_pa=Decimal(interest_rate_pct_pa),
         is_revolving=is_revolving, start_date=start_date, maturity_date=maturity_date,
         repayment_terms=repayment_terms, branch_id=branch_id, notes=notes, created_by=user,
+        currency=currency, fx_rate=fx.rate_on(currency, start_date),
     )
+
+
+def _in_base(facility: FundingFacility, amount: Decimal, on: date) -> Decimal:
+    """A facility-currency payment in the organisation's currency at the day's
+    rate, which is what it takes out of account 1000."""
+    return fx.to_base(amount, fx.rate_on(facility.currency, on))
 
 
 def _post(facility: FundingFacility, user: User | None, kind: str, amount: Decimal,
           txn_date: date | None, method: str | None, reference: str | None,
           narration: str | None, *, principal_delta: Decimal = ZERO,
           accrued_delta: Decimal = ZERO,
-          reversal_of: FacilityTransaction | None = None) -> FacilityTransaction:
+          reversal_of: FacilityTransaction | None = None,
+          fx_rate: Decimal | None = None) -> FacilityTransaction:
     """Move the facility's balances and write the movement, atomically.
 
     `reversal_of` is passed here rather than set afterwards, because the ledger hook
@@ -125,7 +143,7 @@ def _post(facility: FundingFacility, user: User | None, kind: str, amount: Decim
         principal_after=facility.principal_outstanding,
         accrued_after=facility.interest_accrued,
         method=method, reference=reference, narration=narration, posted_by=user,
-        reversal_of=reversal_of,
+        reversal_of=reversal_of, fx_rate=fx_rate,
     )
 
 
@@ -175,7 +193,7 @@ def repay(facility: FundingFacility, user: User | None, amount: Decimal,
             f"{amount} exceeds the {facility.principal_outstanding} principal outstanding on "
             f"{facility.facility_no}")
     txn_date = txn_date or date.today()
-    assert_cash(amount, "This repayment to the funder", txn_date)
+    assert_cash(_in_base(facility, amount, txn_date), "This repayment to the funder", txn_date)
 
     return _post(facility, user, FacilityTxnType.REPAYMENT, amount, txn_date, method, reference,
                  narration or "Principal repaid to the funder", principal_delta=-amount)
@@ -203,7 +221,7 @@ def pay_interest(facility: FundingFacility, user: User | None, amount: Decimal,
             f"Only {accrued} of interest has accrued on {facility.facility_no}. Run the interest "
             f"accrual to {txn_date.isoformat()} first, then pay it — paying ahead of the accrual "
             f"charges the same period to 5300 twice.")
-    assert_cash(amount, "This interest payment", txn_date)
+    assert_cash(_in_base(facility, amount, txn_date), "This interest payment", txn_date)
 
     return _post(facility, user, FacilityTxnType.INTEREST_PAYMENT, amount, txn_date, method,
                  reference, narration or "Interest paid to the funder", accrued_delta=-amount)
@@ -226,7 +244,7 @@ def charge_fee(facility: FundingFacility, user: User | None, amount: Decimal,
     if amount <= 0:
         raise BusinessRuleError("A fee must be greater than zero")
     txn_date = txn_date or date.today()
-    assert_cash(amount, "This facility fee", txn_date)
+    assert_cash(_in_base(facility, amount, txn_date), "This facility fee", txn_date)
 
     return _post(facility, user, FacilityTxnType.FEE, amount, txn_date, method, reference,
                  narration or "Facility fee")
@@ -323,14 +341,20 @@ def reverse_facility_transaction(facility: FundingFacility, ftxn: FacilityTransa
                 f"Reversing this drawdown would take the principal below zero: only "
                 f"{facility.principal_outstanding} is outstanding and the drawdown was "
                 f"{ftxn.amount}. Reverse the repayments first.")
-        assert_cash(ftxn.amount, "Reversing this drawdown returns cash, and that")
+        # the cash goes back at the rate it came in at
+        assert_cash(fx.to_base(ftxn.amount, ftxn.fx_rate),
+                    "Reversing this drawdown returns cash, and that")
     # A reversed repayment legitimately pushes principal back above a lowered
     # limit, so the availability check is deliberately not applied here.
 
     ftxn.reversed = True
     ftxn.save(update_fields=["reversed"])
+    # The reversal carries the original's spot rate, so the cash and expense legs
+    # mirror exactly; the liability is restated at today's booked rate, as every
+    # posting is, and whatever lies between is an exchange difference.
     return _post(facility, user, FacilityTxnType.REVERSAL, ftxn.amount, date.today(),
-                 ftxn.method, ftxn.reference, narration, reversal_of=ftxn, **deltas)
+                 ftxn.method, ftxn.reference, narration, reversal_of=ftxn,
+                 fx_rate=ftxn.fx_rate, **deltas)
 
 
 @db_transaction.atomic
@@ -483,10 +507,15 @@ def funding_summary(as_of: date | None = None) -> dict:
     facilities = list(FundingFacility.objects.all())
     live = [f for f in facilities if f.closed_on is None]
 
-    limit = q(sum((f.facility_limit for f in live), ZERO))
-    drawn = q(sum((f.principal_outstanding for f in live), ZERO))
-    accrued = q(sum((f.interest_accrued for f in live), ZERO))
-    available = q(sum((f.available for f in live), ZERO))
+    # In the organisation's currency, each facility at its booked rate, so
+    # "drawn" and "accrued" are what 2100 and 2110 carry.
+    def total(value):
+        return q(sum((fx.to_base(value(f), f.fx_rate) for f in live), ZERO))
+
+    limit = total(lambda f: f.facility_limit)
+    drawn = total(lambda f: f.principal_outstanding)
+    accrued = total(lambda f: f.interest_accrued)
+    available = total(lambda f: f.available)
     capital = capital_summary()
 
     return {
@@ -505,6 +534,7 @@ def funding_summary(as_of: date | None = None) -> dict:
         "maturing_soon": [
             {"facility_no": f.facility_no, "funder_name": f.funder_name,
              "maturity_date": f.maturity_date,
+             "currency": f.currency or fx.base_currency(),
              "principal_outstanding": f.principal_outstanding,
              "days": (f.maturity_date - as_of).days}
             for f in live

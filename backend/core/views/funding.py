@@ -28,6 +28,7 @@ from ..serializers import (
     OpenFacilitySerializer,
 )
 from ..services import funding as svc
+from ..services import fx
 from .helpers import table_response, wants_table, paginate, parse_date, parse_int
 
 
@@ -70,7 +71,7 @@ def facilities(request):
                 start_date=data.get("start_date"), maturity_date=data.get("maturity_date"),
                 is_revolving=data["is_revolving"],
                 repayment_terms=data.get("repayment_terms"), branch_id=data.get("branch"),
-                notes=data.get("notes"))
+                notes=data.get("notes"), currency=data.get("currency"))
             audit(request.user, "open_facility", "facility", facility.id,
                   f"{facility.facility_no} with {facility.funder_name}, limit "
                   f"{facility.facility_limit} at {facility.interest_rate_pct_pa}% a year")
@@ -94,6 +95,7 @@ def facilities(request):
     if wants_table(request):
         rows = [{
             "facility_no": f.facility_no, "funder_name": f.funder_name, "name": f.name,
+            "currency": f.currency or fx.base_currency(),
             "facility_limit": f.facility_limit, "principal_outstanding": f.principal_outstanding,
             "interest_accrued": f.interest_accrued, "available": f.available,
             "interest_rate_pct_pa": f.interest_rate_pct_pa, "is_revolving": f.is_revolving,
