@@ -62,7 +62,7 @@ def payments(request):
                        | Q(payer_phone__icontains=term) | Q(payer_name__icontains=term)
                        | Q(loan__loan_no__icontains=term))
     page = paginate(request, qs, InboundPaymentSerializer)
-    totals = {row["status"]: {"count": row["n"], "amount": row["total"]}
+    totals = {row["status"]: {"count": row["n"], "amount": str(row["total"])}
               for row in InboundPayment.objects.values("status")
               .annotate(n=Count("id"), total=Sum("amount"))}
     return Response({**page, "totals": totals})

@@ -1963,3 +1963,70 @@ class InboundPayment(models.Model):
 
     def __str__(self):
         return f"{self.provider} {self.external_id} {self.amount}"
+
+
+# ---------------------------------------------------------------- payroll returns
+class PayrollRunStatus(models.TextChoices):
+    DRAFT = "draft", "Checked, not posted"
+    POSTED = "posted", "Posted"
+
+
+class PayrollLineStatus(models.TextChoices):
+    FULL = "full", "Deducted in full"
+    SHORT = "short", "Deducted short"
+    MISSED = "missed", "Not deducted"
+    OVER = "over", "Deducted more than owed"
+    UNKNOWN = "unknown", "Not on the schedule"
+
+
+class PayrollRun(models.Model):
+    """One employer's return for one pay period: what the deduction schedule asked
+    for against what the payroll office says it deducted. Checked first, then
+    posted as salary-deduction repayments in one go."""
+    employer = models.CharField(max_length=120)
+    period_start = models.DateField()
+    period_end = models.DateField()
+    received_on = models.DateField(help_text="The day the employer's money arrived")
+    reference = models.CharField(max_length=100, null=True, blank=True)
+    status = models.CharField(max_length=10, choices=PayrollRunStatus.choices,
+                              default=PayrollRunStatus.DRAFT)
+    expected_total = models.DecimalField(default=ZERO, **MONEY)
+    deducted_total = models.DecimalField(default=ZERO, **MONEY)
+    posted_total = models.DecimalField(default=ZERO, **MONEY)
+    file_name = models.CharField(max_length=200, null=True, blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="+")
+    created_at = models.DateTimeField(default=timezone.now)
+    posted_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                                  related_name="+")
+    posted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "payroll_runs"
+        ordering = ["-period_start", "-id"]
+
+    def __str__(self):
+        return f"{self.employer} {self.period_start:%Y-%m}"
+
+
+class PayrollRunLine(models.Model):
+    run = models.ForeignKey(PayrollRun, on_delete=models.CASCADE, related_name="lines")
+    loan = models.ForeignKey("Loan", on_delete=models.PROTECT, null=True, blank=True,
+                             related_name="payroll_lines")
+    employee_no = models.CharField(max_length=40, null=True, blank=True)
+    name = models.CharField(max_length=160, null=True, blank=True)
+    file_line = models.IntegerField(null=True, blank=True)
+    expected = models.DecimalField(default=ZERO, **MONEY)
+    deducted = models.DecimalField(default=ZERO, **MONEY)
+    status = models.CharField(max_length=10, choices=PayrollLineStatus.choices)
+    note = models.CharField(max_length=255, null=True, blank=True)
+    transaction = models.OneToOneField("Transaction", on_delete=models.PROTECT, null=True,
+                                       blank=True, related_name="payroll_line")
+
+    class Meta:
+        db_table = "payroll_run_lines"
+        ordering = ["run", "status", "id"]
+
+    @property
+    def shortfall(self) -> Decimal:
+        return max(self.expected - self.deducted, ZERO)

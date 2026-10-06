@@ -110,6 +110,14 @@ The wording of every message is the institution's own: **Settings → Borrower m
 per kind with the placeholders it may use (`{first_name}`, `{loan_no}`, `{amount}`…) and a preview.
 A placeholder a kind does not have is refused when saved, and a blank box sends the standard wording.
 
+**Payroll returns** — the other half of the deduction schedule. The employer's file of what it
+actually deducted (an amount, and a loan number, employee number or national ID per line) is
+checked against the schedule for that period: each loan comes back **deducted in full, short, not
+deducted, or more than it owes**, and a line that matches no loan is listed rather than dropped.
+Nothing is posted until the return is posted; then each deduction becomes a salary-deduction
+repayment dated the day the money arrived, all or nothing, and a deduction above what a loan owes
+posts what it owes and shows the rest for refund. The shortfall list downloads as Excel or CSV.
+
 **Reporting** — dashboard (portfolio outstanding, PAR>30, collection rate, 12-month disbursement vs
 collection chart, arrears ageing buckets) filterable by date and branch, **IFRS 9 staging and
 expected-credit-loss provisioning**, **performance by officer, product and branch**, collections
@@ -463,6 +471,9 @@ case-insensitive default collation. It covers:
 - sessions — renewal, rotation, sign-out, and revocation when an account is disabled or a role
   changes;
 - performance and payroll reports;
+- payroll returns — full, short, missed, over and unknown lines, posting all or nothing on the
+  day the money arrived, never twice;
+- incoming payments — signatures, duplicates, every matching rule, the waiting queue and statements;
 - the holiday calendar — weekends and holidays moving a due date, a run of closed days, annual
   holidays, the amounts unchanged and the rest of the schedule unmoved, a late-declared holiday
   reaching unpaid future instalments but not past ones, and the maturity date following;

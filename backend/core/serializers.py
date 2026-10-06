@@ -48,6 +48,8 @@ from .models import (
     NotificationStatus,
     OrganisationSetting,
     PaymentMethod,
+    PayrollRun,
+    PayrollRunLine,
     ProductCharge,
     ExchangeRate,
     ProvisionRun,
@@ -1520,3 +1522,28 @@ class InboundPaymentSerializer(serializers.ModelSerializer):
                   "status", "status_label", "reason", "loan_id", "loan_no", "borrower_name",
                   "transaction_id", "matched_by", "resolved_by_name", "resolved_at",
                   "received_at"]
+
+
+class PayrollRunLineSerializer(serializers.ModelSerializer):
+    status_label = serializers.CharField(source="get_status_display", read_only=True)
+    loan_no = serializers.CharField(source="loan.loan_no", read_only=True, default=None)
+    shortfall = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
+
+    class Meta:
+        model = PayrollRunLine
+        fields = ["id", "loan_id", "loan_no", "employee_no", "name", "file_line", "expected",
+                  "deducted", "shortfall", "status", "status_label", "note", "transaction_id"]
+
+
+class PayrollRunSerializer(serializers.ModelSerializer):
+    status_label = serializers.CharField(source="get_status_display", read_only=True)
+    created_by_name = serializers.CharField(source="created_by.full_name", read_only=True,
+                                            default=None)
+    posted_by_name = serializers.CharField(source="posted_by.full_name", read_only=True,
+                                           default=None)
+
+    class Meta:
+        model = PayrollRun
+        fields = ["id", "employer", "period_start", "period_end", "received_on", "reference",
+                  "status", "status_label", "expected_total", "deducted_total", "posted_total",
+                  "file_name", "created_by_name", "created_at", "posted_by_name", "posted_at"]
