@@ -1559,3 +1559,5 @@ dl.kv > div:last-child > dt, dl.kv > div:last-child > dd { border-bottom: none; 
   white-space: pre-wrap; font: 12px/1.5 var(--font-mono); max-height: 60vh;
   overflow: auto; background: var(--surface-sunken); padding: 12px; border-radius: var(--radius);
 }
+
+.saved-views { display: inline-flex; gap: 6px; align-items: center; }

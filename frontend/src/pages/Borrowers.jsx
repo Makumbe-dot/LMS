@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 
 import DataTable from '../components/DataTable.jsx'
+import SavedViews from '../components/SavedViews.jsx'
 import { ErrorBanner, Loading, PageHeader, Pager } from '../components/ui.jsx'
 import { qs } from '../lib/api.js'
 import { useAuth } from '../lib/auth.jsx'
@@ -22,6 +23,13 @@ export default function Borrowers() {
   const { data, error, loading, reload } = useApi(
     `/api/borrowers${qs({ q: debounced, branch_id: branchId, kyc, page, page_size: 50 })}`,
   )
+
+  function applyView(view) {
+    setSearch(view.q || '')
+    setBranchId(view.branch_id || '')
+    setKyc(view.kyc || '')
+    setPage(1)
+  }
 
   const onFilter = (setter) => (event) => {
     setter(event.target.value)
@@ -87,6 +95,11 @@ export default function Borrowers() {
           <option value="1">KYC verified</option>
           <option value="0">KYC pending</option>
         </select>
+        <SavedViews
+          page="borrowers"
+          current={{ q: search, branch_id: branchId, kyc }}
+          onApply={applyView}
+        />
         {can('borrowers') ? (
           <Link className="btn primary" to="/borrowers/new">
             New borrower

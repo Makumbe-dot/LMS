@@ -23,6 +23,7 @@ from .views import (
     products,
     provisions,
     reports,
+    saved_views,
     savings,
     tills,
 )
@@ -48,6 +49,8 @@ urlpatterns = [
     re_path(r"^branches/(?P<branch_id>\d+)/?$", org.branch_detail),
     re_path(r"^settings/?$", org.settings_view),
     re_path(r"^message-templates/?$", org.message_templates),
+    re_path(r"^saved-views/?$", saved_views.saved_views),
+    re_path(r"^saved-views/(?P<view_id>\d+)/?$", saved_views.saved_view_detail),
     re_path(r"^jobs/?$", jobs.overview),
     re_path(r"^jobs/runs/?$", jobs.runs),
     re_path(r"^jobs/(?P<key>[a-z_]+)/run/?$", jobs.run_now),

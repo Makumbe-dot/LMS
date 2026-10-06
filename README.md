@@ -148,6 +148,10 @@ Nothing is posted until the return is posted; then each deduction becomes a sala
 repayment dated the day the money arrived, all or nothing, and a deduction above what a loan owes
 posts what it owes and shows the rest for refund. The shortfall list downloads as Excel or CSV.
 
+**Saved filters** — the Loans and Borrowers lists keep named sets of filters (status, branch, in
+arrears, KYC, a search) per user, on the server, so they follow the user from one computer to the
+next. Saving under a name already used replaces it.
+
 **Reporting** — dashboard (portfolio outstanding, PAR>30, collection rate, 12-month disbursement vs
 collection chart, arrears ageing buckets) filterable by date and branch, **IFRS 9 staging and
 expected-credit-loss provisioning**, **performance by officer, product and branch**, collections

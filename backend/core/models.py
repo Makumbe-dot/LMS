@@ -2192,3 +2192,21 @@ class JobRun(models.Model):
 
     def __str__(self):
         return f"{self.job} {self.as_of} {self.status}"
+
+
+# ---------------------------------------------------------------- saved list filters
+class SavedView(models.Model):
+    """A user's named set of filters on a list page, kept so it follows them from
+    one computer to the next."""
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="saved_views")
+    page = models.CharField(max_length=30)
+    name = models.CharField(max_length=60)
+    params = models.JSONField(default=dict)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "saved_views"
+        ordering = ["page", "name"]
+        constraints = [
+            models.UniqueConstraint(fields=["user", "page", "name"], name="uq_saved_view_name"),
+        ]

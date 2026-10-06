@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 
 import LoanTable from '../components/LoanTable.jsx'
+import SavedViews from '../components/SavedViews.jsx'
 import { ErrorBanner, Loading, PageHeader, Pager } from '../components/ui.jsx'
 import { qs } from '../lib/api.js'
 import { useAuth } from '../lib/auth.jsx'
@@ -35,6 +36,14 @@ export default function Loans() {
       page_size: 50,
     })}`,
   )
+
+  function applyView(view) {
+    setSearch(view.q || '')
+    setStatus(STATUSES.includes(view.status) ? view.status : '')
+    setBranchId(view.branch_id || '')
+    setInArrears(Boolean(view.in_arrears))
+    setPage(1)
+  }
 
   const onFilter = (setter) => (event) => {
     setter(event.target.value)
@@ -81,6 +90,11 @@ export default function Loans() {
           />
           In arrears only
         </label>
+        <SavedViews
+          page="loans"
+          current={{ q: search, status, branch_id: branchId, in_arrears: inArrears }}
+          onApply={applyView}
+        />
         {can('loans') ? (
           <Link className="btn primary" to="/loans/new">
             New application
