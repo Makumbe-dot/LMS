@@ -15,7 +15,8 @@ const FIELDS = [
   'ecl_stage1_pct', 'ecl_stage2_pct', 'ecl_stage3_pct',
   'ecl_stage2_days', 'ecl_stage3_days', 'reminder_days_before',
   'officer_approval_limit', 'min_credit_score', 'group_arrears_block_days',
-  'require_open_till', 'require_signature', 'closed_weekdays', 'interest_method',
+  'require_open_till', 'require_signature', 'portal_enabled', 'closed_weekdays',
+  'interest_method',
 ]
 
 const WEEKDAYS = [
@@ -285,6 +286,18 @@ export default function Settings() {
           The borrower signs with a code texted to their phone, at the counter or in the portal.
           The signature pins the terms: if the amount, rate, fees, guarantors or security change
           afterwards, they sign again.
+        </p>
+
+        <h3>Borrower portal</h3>
+        <Check
+          label="Borrowers can sign in to the portal"
+          checked={Boolean(values.portal_enabled)}
+          onChange={(e) => setValues((v) => ({ ...v, portal_enabled: e.target.checked }))}
+        />
+        <p className="muted" style={{ fontSize: 12, marginTop: -4 }}>
+          At <code>/portal</code>, with their national ID, the phone number on their file and a
+          texted code: their own loans, statements and agreement, signing, and asking for a top-up
+          (Portal requests). Turning it off ends every portal session at once.
         </p>
 
         <h3>Cash</h3>

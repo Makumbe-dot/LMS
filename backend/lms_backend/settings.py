@@ -181,6 +181,8 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "login": env("THROTTLE_LOGIN", "20/min"),
         "inbound_payments": env("THROTTLE_INBOUND_PAYMENTS", "600/min"),
+        "portal": env("THROTTLE_PORTAL", "120/min"),
+        "portal_login": env("THROTTLE_PORTAL_LOGIN", "10/min"),
     },
 }
 

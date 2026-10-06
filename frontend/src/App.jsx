@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 
 import Layout from './components/Layout.jsx'
 import { Loading } from './components/ui.jsx'
@@ -28,6 +28,7 @@ import Loans from './pages/Loans.jsx'
 import Login from './pages/Login.jsx'
 import Notifications from './pages/Notifications.jsx'
 import Payments from './pages/Payments.jsx'
+import PortalRequests from './pages/PortalRequests.jsx'
 import Payroll from './pages/Payroll.jsx'
 import Performance from './pages/Performance.jsx'
 import Spreadsheets from './pages/Spreadsheets.jsx'
@@ -39,6 +40,7 @@ import Settings from './pages/Settings.jsx'
 import Till from './pages/Till.jsx'
 import Transactions from './pages/Transactions.jsx'
 import Users from './pages/Users.jsx'
+import Portal from './portal/Portal.jsx'
 
 /** Blocks a route for users without any of the named access rights. */
 function RequireRight({ rights, children }) {
@@ -49,6 +51,17 @@ function RequireRight({ rights, children }) {
 
 export default function App() {
   const { status } = useAuth()
+  const { pathname } = useLocation()
+
+  // The borrower portal stands apart from the staff application: its own sign-in,
+  // its own token, and no staff page reachable from it.
+  if (pathname === '/portal' || pathname.startsWith('/portal/')) {
+    return (
+      <Routes>
+        <Route path="/portal/*" element={<Portal />} />
+      </Routes>
+    )
+  }
 
   if (status === 'loading') return <Loading what="Restoring your session" />
   if (status !== 'signed-in') return <Login />
@@ -65,6 +78,7 @@ export default function App() {
           <Route path="/borrowers/:id" element={<BorrowerDetail />} />
           <Route path="/borrowers/:id/edit" element={<BorrowerForm />} />
           <Route path="/groups" element={<Groups />} />
+          <Route path="/portal-requests" element={<PortalRequests />} />
           <Route path="/savings" element={<Savings />} />
 
           <Route path="/loans" element={<Loans />} />

@@ -376,6 +376,8 @@ class OrganisationSetting(models.Model):
     # Refuse to disburse a loan the borrower has not signed electronically, on its
     # current terms (services/signatures.py). Off: the paper agreement is enough.
     require_signature = models.BooleanField(default=False)
+    # The borrower portal (services/portal.py). Off until an administrator opens it.
+    portal_enabled = models.BooleanField(default=False)
 
     # Weekdays the offices are shut every week, as three-letter names ("sat,sun").
     # An instalment never falls due on one of these, or on a public holiday; it moves
@@ -2096,3 +2098,68 @@ class LoanSignature(models.Model):
 
     def __str__(self):
         return f"{self.loan_id} {self.status}"
+
+
+# ---------------------------------------------------------------- borrower portal
+class PortalCode(models.Model):
+    """A one-time code a borrower asked for to sign in to the portal."""
+    borrower = models.ForeignKey("Borrower", on_delete=models.CASCADE, related_name="portal_codes")
+    code_hash = models.CharField(max_length=64)
+    sent_at = models.DateTimeField(default=timezone.now, db_index=True)
+    expires_at = models.DateTimeField()
+    attempts = models.IntegerField(default=0)
+    used_at = models.DateTimeField(null=True, blank=True)
+    ip_address = models.CharField(max_length=64, null=True, blank=True)
+
+    class Meta:
+        db_table = "portal_codes"
+        ordering = ["-sent_at", "-id"]
+
+
+class PortalSession(models.Model):
+    """One signed-in borrower. The token names this row; signing out or the row's
+    expiry ends it, and nothing a borrower holds opens the staff API."""
+    borrower = models.ForeignKey("Borrower", on_delete=models.CASCADE,
+                                 related_name="portal_sessions")
+    created_at = models.DateTimeField(default=timezone.now)
+    last_seen_at = models.DateTimeField(default=timezone.now)
+    expires_at = models.DateTimeField()
+    ended_at = models.DateTimeField(null=True, blank=True)
+    ip_address = models.CharField(max_length=64, null=True, blank=True)
+    user_agent = models.CharField(max_length=255, null=True, blank=True)
+
+    class Meta:
+        db_table = "portal_sessions"
+        ordering = ["-created_at"]
+
+
+class PortalRequestKind(models.TextChoices):
+    TOP_UP = "top_up", "Top-up"
+    CALL_BACK = "call_back", "Call me back"
+
+
+class PortalRequestStatus(models.TextChoices):
+    OPEN = "open", "Open"
+    DONE = "done", "Dealt with"
+
+
+class PortalRequest(models.Model):
+    """Something a borrower asked for in the portal, for staff to act on."""
+    borrower = models.ForeignKey("Borrower", on_delete=models.CASCADE,
+                                 related_name="portal_requests")
+    loan = models.ForeignKey("Loan", on_delete=models.SET_NULL, null=True, blank=True,
+                             related_name="portal_requests")
+    kind = models.CharField(max_length=12, choices=PortalRequestKind.choices)
+    amount = models.DecimalField(null=True, blank=True, **MONEY)
+    message = models.TextField(blank=True, default="")
+    status = models.CharField(max_length=8, choices=PortalRequestStatus.choices,
+                              default=PortalRequestStatus.OPEN, db_index=True)
+    outcome = models.CharField(max_length=255, null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    handled_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="+")
+    handled_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "portal_requests"
+        ordering = ["status", "-created_at"]

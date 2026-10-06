@@ -343,7 +343,11 @@ def raise_charge(request, loan_id: int):
 @renderer_classes([StaticHTMLRenderer])
 def agreement(request, loan_id: int):
     """The printable loan agreement. The client fetches it and opens it for printing."""
-    loan = get_loan_or_404(loan_id)
+    return Response(agreement_html(get_loan_or_404(loan_id)))
+
+
+def agreement_html(loan) -> str:
+    """The agreement as HTML: for staff here, and for the borrower in the portal."""
     config = OrganisationSetting.load()
     rows = svc.sched(loan)
     apr = loan.apr_pct
@@ -369,7 +373,7 @@ def agreement(request, loan_id: int):
     suffix = ("th" if 11 <= payday % 100 <= 13
               else {1: "st", 2: "nd", 3: "rd"}.get(payday % 10, "th"))
 
-    html = render_to_string("core/loan_agreement.html", {
+    return render_to_string("core/loan_agreement.html", {
         "loan": loan,
         "borrower": loan.borrower,
         "org": config,
@@ -393,7 +397,6 @@ def agreement(request, loan_id: int):
         "closed_days": bool(workdays.load()),
         "signature": signatures.current(loan),
     })
-    return Response(html)
 
 
 @api_view(["GET"])

@@ -54,6 +54,15 @@ closure on full settlement, **early settlement with an interest rebate**, **top-
 a new schedule), write-off, and a **printable loan agreement** with the terms, the total cost of
 credit and the APR, the schedule, the guarantors, the security and signature blocks.
 
+**Borrower portal** — at `/portal`, off until an administrator opens it in Settings. A borrower
+signs in with their national ID, the phone number on their file and a code texted to that phone;
+asking for a code answers the same whether or not the two match, codes allow five guesses and three
+an hour, and a session ends after thirty idle minutes, twelve hours at most, or on signing out. They
+see their own loans only (what is left, the next payment, anything overdue, the schedule and what
+they have paid), download their statement, read and sign their agreement, and ask for a top-up or a
+call-back, which lands on **Customers → Portal requests** for staff to answer. The portal carries
+its own token: no staff page or API accepts it, and the portal accepts no staff token.
+
 **Electronic signature** — the borrower signs the agreement with a one-time code texted to the
 phone on their file: staff press **Text a signing code** on the loan and type in the code the
 borrower reads out, or the borrower enters it in the portal. A code is six digits, lasts ten
@@ -493,6 +502,8 @@ case-insensitive default collation. It covers:
 - sessions — renewal, rotation, sign-out, and revocation when an account is disabled or a role
   changes;
 - performance and payroll reports;
+- the borrower portal — sign-in that gives nothing away, guesses and code limits, sessions ending,
+  only their own loans, the statement, signing, requests, and tokens that cross neither way;
 - e-signatures — the code's life, five guesses that cannot be rolled back, codes never shown to
   staff, terms changing before and after signing, and disbursement when a signature is required;
 - collections — assignment and who may be given loans, the queue's order, promises kept, broken

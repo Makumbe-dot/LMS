@@ -28,6 +28,7 @@ export const NAV = [
         pages: [
           { to: '/borrowers', label: 'Borrowers', icon: 'user' },
           { to: '/groups', label: 'Groups', icon: 'users' },
+          { to: '/portal-requests', label: 'Portal requests', icon: 'inbox' },
         ],
       },
       {

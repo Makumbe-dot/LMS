@@ -3,6 +3,7 @@
 Builds through the HTTP API, the same way the lifecycle tests do, so a fixture
 loan has a real schedule, real ledger postings and a real audit trail.
 """
+from django.core.cache import cache
 from rest_framework.test import APIClient, APITestCase
 
 from core.models import RIGHT_PRESETS, Role, User
@@ -27,6 +28,7 @@ class LoanFixtures(APITestCase):
         return client
 
     def setUp(self):
+        cache.clear()  # throttle counts would otherwise carry over between tests
         gl.ensure_chart_of_accounts()
         self.admin = self.client_for("admin", "admin123")
         self.officer = self.client_for("officer", "officer123")

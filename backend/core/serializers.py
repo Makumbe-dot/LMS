@@ -50,6 +50,7 @@ from .models import (
     PaymentMethod,
     PayrollRun,
     PayrollRunLine,
+    PortalRequest,
     ProductCharge,
     ExchangeRate,
     ProvisionRun,
@@ -673,7 +674,8 @@ class OrganisationSettingSerializer(serializers.ModelSerializer):
                   # The Settings page has always shown these; the API silently dropped
                   # them, so an edited approval limit was never saved.
                   "officer_approval_limit", "min_credit_score", "group_arrears_block_days",
-                  "require_open_till", "require_signature", "closed_weekdays", "interest_method", "updated_at"]
+                  "require_open_till", "require_signature", "portal_enabled", "closed_weekdays",
+                  "interest_method", "updated_at"]
         read_only_fields = ["updated_at"]
 
     def validate_interest_method(self, value):
@@ -1551,3 +1553,22 @@ class PayrollRunSerializer(serializers.ModelSerializer):
         fields = ["id", "employer", "period_start", "period_end", "received_on", "reference",
                   "status", "status_label", "expected_total", "deducted_total", "posted_total",
                   "file_name", "created_by_name", "created_at", "posted_by_name", "posted_at"]
+
+
+class PortalRequestSerializer(serializers.ModelSerializer):
+    kind_label = serializers.CharField(source="get_kind_display", read_only=True)
+    status_label = serializers.CharField(source="get_status_display", read_only=True)
+    borrower_name = serializers.CharField(source="borrower.full_name", read_only=True)
+    borrower_phone = serializers.CharField(source="borrower.phone", read_only=True)
+    loan_no = serializers.CharField(source="loan.loan_no", read_only=True, default=None)
+    handled_by_name = serializers.CharField(source="handled_by.full_name", read_only=True,
+                                            default=None)
+    amount = serializers.DecimalField(max_digits=14, decimal_places=2, required=False,
+                                      allow_null=True, min_value=1)
+
+    class Meta:
+        model = PortalRequest
+        fields = ["id", "borrower_id", "borrower_name", "borrower_phone", "loan", "loan_no",
+                  "kind", "kind_label", "amount", "message", "status", "status_label",
+                  "outcome", "created_at", "handled_by_name", "handled_at"]
+        read_only_fields = ["status", "outcome", "created_at", "handled_at"]
