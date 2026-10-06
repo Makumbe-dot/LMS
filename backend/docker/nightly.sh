@@ -1,6 +1,6 @@
 #!/bin/bash
-# The nightly batch, for the Docker setup: the same steps, in the same order and
-# on the same days, as scripts/run_nightly_jobs.ps1, plus the backup that
+# The nightly batch, for the Docker setup: the application's scheduled jobs, as
+# scripts/run_nightly_jobs.ps1 runs them, plus the backup that
 # scripts/backup_database.ps1 takes. Run by the `jobs` service:
 #
 #   docker compose run --rm jobs
@@ -44,7 +44,6 @@ step() {
 
 AS_OF_ARGS=()
 [ -n "$AS_OF" ] && AS_OF_ARGS=(--as-of "$AS_OF")
-monthly() { [ "$(date +%d)" = "01" ] || [ -n "$AS_OF" ]; }
 
 # A full, checksummed backup into the shared backups volume, read back by SQL
 # Server to prove it restores, then the borrower documents, then pruning. The
@@ -80,35 +79,12 @@ backup() {
 
 log "===== nightly batch starting ====="
 
-# --skip-closed unconditionally: a month closed at 09:00 on the 1st must not
-# log a FAILED step at 22:00 for a date nobody can post to any more.
-step "penalty accrual" python manage.py run_penalties --skip-closed "${AS_OF_ARGS[@]}"
-step "borrower reminders" python manage.py send_reminders --send "${AS_OF_ARGS[@]}"
-# Housekeeping; nothing breaks if this never runs.
-step "prune expired token revocations" python manage.py prune_tokens
-
-# The three monthly steps run on the 1st (or whenever --as-of is given).
-if [ "$SKIP_SAVINGS" -eq 0 ]; then
-    if monthly; then
-        step "savings interest" python manage.py run_savings_interest --skip-closed "${AS_OF_ARGS[@]}"
-    else
-        log "SKIP   savings interest (runs on the 1st)"
-    fi
-fi
-
-if monthly; then
-    step "borrowing interest" python manage.py accrue_borrowing_interest --skip-closed "${AS_OF_ARGS[@]}"
-else
-    log "SKIP   borrowing interest (runs on the 1st)"
-fi
-
-# The provision is booked for the month that just closed, so on the 1st it is
-# dated yesterday.
-if monthly; then
-    step "provision run" python manage.py run_provisions --as-of "${AS_OF:-$(date -d yesterday +%F)}"
-else
-    log "SKIP   provision run (runs on the 1st)"
-fi
+# Every job lives in the application (core/services/jobs.py): run_jobs runs what
+# is due today, skips what already succeeded, records each run on the Scheduled
+# jobs page, and exits 1 if any job failed.
+JOB_ARGS=("${AS_OF_ARGS[@]}")
+if [ "$SKIP_SAVINGS" -eq 1 ]; then JOB_ARGS+=(--skip savings_interest); fi
+step "scheduled jobs" python manage.py run_jobs "${JOB_ARGS[@]}"
 
 if [ "$SKIP_BACKUP" -eq 0 ]; then
     step "database backup" backup

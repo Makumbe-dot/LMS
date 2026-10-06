@@ -19,6 +19,9 @@ x-backend-env: &backend-env
   CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:8080}
   # Plain HTTP on a workstation. Behind a TLS-terminating proxy, set it to 1.
   SECURE_SSL_REDIRECT: ${SECURE_SSL_REDIRECT:-0}
+  # nginx always stands in front, so the client's address is one proxy back; add
+  # one for each proxy in front of nginx. The sign-in rate limits count by it.
+  NUM_PROXIES: ${NUM_PROXIES:-1}
   DB_HOST: sqlserver
   DB_PORT: "1433"
   DB_NAME: ${DB_NAME:-LMS}
