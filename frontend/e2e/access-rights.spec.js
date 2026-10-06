@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-import { USERS, pageAs, signIn, toasts, unique } from './helpers.js'
+import { USERS, pageAs, signIn, unique } from './helpers.js'
 
 test('a read-only viewer sees no buttons that would change anything', async ({ page }) => {
   await signIn(page, USERS.viewer)
@@ -47,7 +47,9 @@ test('a right granted on the Users page takes effect for that user', async ({ pa
   await dialog.getByLabel('Password').fill(password)
   await expect(dialog.getByRole('checkbox', { name: /Loan applications/ })).not.toBeChecked()
   await dialog.getByRole('button', { name: 'Save user' }).click()
-  await expect(toasts(page).getByText('User saved')).toBeVisible()
+  // The dialog closes only once the save succeeded. Not the toast: a second save can
+  // land while the first one's toast is still showing, and then there are two.
+  await expect(dialog).toBeHidden()
   const row = page.getByRole('table', { name: 'Users' }).getByRole('row').filter({ hasText: username })
   await expect(row).toContainText('Read only')
 
@@ -63,7 +65,7 @@ test('a right granted on the Users page takes effect for that user', async ({ pa
     dialog = page.getByRole('dialog', { name: `Edit ${username}` })
     await dialog.getByRole('checkbox', { name: /Loan applications/ }).check()
     await dialog.getByRole('button', { name: 'Save user' }).click()
-    await expect(toasts(page).getByText('User saved')).toBeVisible()
+    await expect(dialog).toBeHidden()
     await expect(row).toContainText('Loan applications')
 
     // The same session picks the right up on its next load, with no new sign-in.
