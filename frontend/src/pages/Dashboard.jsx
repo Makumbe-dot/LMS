@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import { Swoosh } from '../brand/Brand.jsx'
+import AgeingColumns from '../components/AgeingColumns.jsx'
 import CountUp from '../components/CountUp.jsx'
 import Donut from '../components/Donut.jsx'
 import GroupedBars from '../components/GroupedBars.jsx'
@@ -25,12 +26,14 @@ const BUCKET_LABEL = {
   '180+': '180+ days',
 }
 
+const BUCKET_SHORT = { '1-30': '1–30d', '31-60': '31–60d', '61-90': '61–90d', '91-180': '91–180d', '180+': '180d+' }
+
 const STATUS_TONE = {
   pending: 'amber',
   approved: 'blue',
   active: 'green',
   closed: 'slate',
-  rejected: 'red',
+  rejected: 'violet',
   written_off: 'red',
 }
 
@@ -163,18 +166,18 @@ export default function Dashboard() {
   }
   const switching = loading && loadedPath !== path
 
-  // The ageing buckets, coloured by severity: "current" is neutral, then one hue
-  // deepening with the days overdue. The count of loans sits under each label.
-  const buckets = Object.entries(data.arrears_buckets).map(([key, value], index) => {
-    const loans = data.arrears_bucket_loans?.[key] ?? 0
-    return {
+  // The overdue buckets, on a ramp that deepens with the days; "current" is
+  // stated apart as a share, so it does not flatten the rest.
+  const overdueBuckets = Object.entries(data.arrears_buckets)
+    .filter(([key]) => key !== 'current')
+    .map(([key, value], index) => ({
       label: BUCKET_LABEL[key] || key,
+      short: BUCKET_SHORT[key] || key,
       value,
-      color: `var(--sev-${Math.min(index, 5)})`,
-      note: `${loans} loan${loans === 1 ? '' : 's'}`,
+      loans: data.arrears_bucket_loans?.[key] ?? 0,
+      color: `var(--sev-${Math.min(index + 1, 5)})`,
       share: share(value, data.principal_outstanding),
-    }
-  })
+    }))
   const over30 = Object.entries(data.arrears_buckets)
     .filter(([key]) => !['current', '1-30'].includes(key))
     .reduce((sum, [, value]) => sum + (num(value) ?? 0), 0)
@@ -461,7 +464,11 @@ export default function Dashboard() {
               <>Nothing is more than 30 days overdue.</>
             )}
           </p>
-          <HBars rows={buckets} overview />
+          <AgeingColumns
+            current={{ value: data.arrears_buckets.current, loans: data.arrears_bucket_loans?.current ?? 0 }}
+            buckets={overdueBuckets}
+            total={data.principal_outstanding}
+          />
         </div>
       </div>
 

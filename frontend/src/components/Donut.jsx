@@ -9,7 +9,7 @@ import { useState } from 'react'
 import { fmt } from '../lib/format.js'
 
 const R = 40
-const STROKE = 13
+const STROKE = 11
 const CIRC = 2 * Math.PI * R
 const GAP = 2.2 // surface between slices, along the ring
 

@@ -932,9 +932,34 @@ label.field.inline > span.label-text { color: var(--muted); font-size: 12.5px; }
 .card-link .icon { transition: transform .12s; }
 .card-link:hover .icon { transform: translateX(2px); }
 
+/* arrears ageing: the share current in a meter, then the overdue buckets */
+.ageing { display: flex; flex-direction: column; gap: 14px; flex: 1; }
+.ageing-meter-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+.ageing-big { font: 700 30px/1 var(--font-head); letter-spacing: -0.03em; color: var(--text); }
+.ageing-caption { color: var(--text-secondary); font-size: 13px; line-height: 1.3; }
+.ageing-caption small { display: block; color: var(--muted); font-size: 11.5px; }
+/* the unfilled track is a lighter step of the same green, so the state reads across the bar */
+.meter { height: 10px; border-radius: 999px; overflow: hidden; background: color-mix(in srgb, var(--danger) 16%, var(--surface)); }
+.meter-fill {
+  display: block; height: 100%; border-radius: 999px 0 0 999px;
+  background: linear-gradient(90deg, #2b9a5f, #38b273);
+  box-shadow: 2px 0 0 var(--surface);
+  transform-origin: left center; animation: grow-x .9s cubic-bezier(.2, .8, .2, 1) .2s backwards;
+}
+.ageing-cols-head {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+  padding-top: 12px; border-top: 1px solid var(--border);
+  color: var(--muted); font: 600 11px/1.3 var(--font-head); text-transform: uppercase; letter-spacing: 0.07em;
+}
+.ageing-cols-head b { color: var(--text); font: 600 13px var(--font-sans); text-transform: none; letter-spacing: 0; font-variant-numeric: tabular-nums; }
+.ageing-svg .col-value { fill: var(--text); font-size: 10.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.ageing-svg .col-label { fill: var(--text-secondary); font-size: 10.5px; font-weight: 500; }
+.ageing-svg .col-note { fill: var(--muted); font-size: 9.5px; }
+.ageing-svg .col.hovered path.bar { filter: brightness(1.08); }
+
 /* the status ring */
-.donut { display: grid; grid-template-columns: 132px 1fr; gap: 18px; align-items: center; }
-.donut-ring { width: 132px; height: 132px; display: block; overflow: visible; }
+.donut { display: grid; grid-template-columns: 150px 1fr; gap: 20px; align-items: center; flex: 1; margin: 6px 0 14px; }
+.donut-ring { width: 150px; height: 150px; display: block; overflow: visible; }
 .donut-track { stroke: var(--surface-3); }
 .donut-slice {
   stroke: var(--tone); cursor: pointer;
@@ -944,7 +969,7 @@ label.field.inline > span.label-text { color: var(--muted); font-size: 12.5px; }
 .donut-slice.dim { opacity: .4; }
 /* 251.4 is the ring's circumference (r = 40): each slice sweeps out from nothing */
 @keyframes donut-in { from { stroke-dasharray: 0 251.4; } }
-.donut-total { fill: var(--text); font: 700 17px var(--font-head); }
+.donut-total { fill: var(--text); font: 700 18px var(--font-head); letter-spacing: -0.02em; }
 .donut-caption { fill: var(--muted); font: 500 7px var(--font-sans); letter-spacing: 0.08em; text-transform: uppercase; }
 .donut-legend { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .donut-legend li {

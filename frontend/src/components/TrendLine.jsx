@@ -18,7 +18,7 @@ import { fmt, money, monthLabel, monthName, num, pct } from '../lib/format.js'
 import DataTable from './DataTable.jsx'
 
 const W = 760
-const H = 250
+const H = 296
 const M = { top: 18, right: 8, bottom: 30, left: 46 }
 const PLOT_W = W - M.left - M.right
 const PLOT_H = H - M.top - M.bottom
