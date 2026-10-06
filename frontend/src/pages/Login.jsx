@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 
+import { LogoFull, LogoMark, Swoosh } from '../brand/Brand.jsx'
 import Icon from '../components/Icons.jsx'
-import { HexMark } from '../components/ui.jsx'
 import { useAuth } from '../lib/auth.jsx'
 
 /**
@@ -60,7 +60,7 @@ const SLIDES = [
   },
 ]
 
-const SLIDE_MS = 7000
+const SLIDE_MS = 3000
 const photo = (n) => `${import.meta.env.BASE_URL}login/slide-${n}.jpg`
 
 function usePrefersReducedMotion() {
@@ -116,20 +116,20 @@ function Slideshow() {
           ) : null}
           <span className="login-orb orb-1" />
           <span className="login-orb orb-2" />
-          <span className="login-hex hex-1">
-            <HexMark size={120} />
+          <span className="login-swoosh swoosh-1">
+            <Swoosh width={380} />
           </span>
-          <span className="login-hex hex-2">
-            <HexMark size={64} />
+          <span className="login-swoosh swoosh-2">
+            <Swoosh width={190} />
           </span>
-          <span className="login-hex hex-3">
-            <HexMark size={40} />
+          <span className="login-swoosh swoosh-3">
+            <Swoosh width={110} />
           </span>
         </div>
       ))}
 
       <div className="login-brand">
-        <HexMark size={34} />
+        <LogoMark height={30} />
         <span>Loan Management System</span>
       </div>
 
@@ -212,7 +212,7 @@ export default function Login() {
       <main className="login-side">
         <form className="signin-card" onSubmit={onSubmit} aria-labelledby="signin-title">
           <div className="signin-mark">
-            <HexMark size={40} />
+            <LogoFull width={196} />
           </div>
           <h2 className="signin-wordmark" id="signin-title">
             {mfaToken ? 'One more step' : 'Welcome back'}

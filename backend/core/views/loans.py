@@ -11,6 +11,7 @@ from rest_framework.renderers import StaticHTMLRenderer
 from rest_framework.response import Response
 
 from ..audit import audit
+from ..documents import logo_data_uri
 from ..exceptions import NotFound
 from ..models import (
     Borrower,
@@ -363,6 +364,7 @@ def agreement(request, loan_id: int):
         "loan": loan,
         "borrower": loan.borrower,
         "org": config,
+        "logo": logo_data_uri(),
         "currency": config.currency,
         "today": date.today(),
         "rate_method": "reducing balance" if loan.rate_method == "reducing" else "flat rate",

@@ -9,9 +9,10 @@ from rest_framework.response import Response
 
 from ..audit import audit
 from ..exceptions import BusinessRuleError, NotFound
-from ..models import Borrower, Branch, Holiday, Loan, OrganisationSetting
+from ..models import Borrower, Branch, Holiday, Loan, LoanStatus, OrganisationSetting
 from ..permissions import IsAdmin
 from ..serializers import BranchSerializer, HolidaySerializer, OrganisationSettingSerializer
+from ..services import arrears as arrears_svc
 from ..services import workdays
 
 
@@ -117,6 +118,21 @@ def holiday_detail(request, holiday_id: int):
         audit(request.user, "delete", "holiday", holiday.id, f"{holiday.date} {holiday.name}")
         holiday.delete()
     return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@api_view(["GET"])
+def nav_summary(request):
+    """The counts the sidebar shows beside a section: work that is waiting.
+
+    Two COUNTs and nothing else, because the shell asks for this on every page.
+    """
+    return Response({
+        "pending_applications": Loan.objects.filter(status=LoanStatus.PENDING).count(),
+        "loans_in_arrears": (Loan.objects
+                             .filter(status=LoanStatus.ACTIVE)
+                             .filter(arrears_svc.is_overdue(date.today()))
+                             .count()),
+    })
 
 
 @api_view(["GET"])

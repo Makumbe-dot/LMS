@@ -10,7 +10,7 @@ import { useOrg } from '../lib/org.jsx'
 import { useApi } from '../lib/useApi.js'
 
 const FIELDS = [
-  'name', 'currency', 'address', 'phone', 'email',
+  'name', 'currency', 'address', 'phone', 'email', 'registration', 'statement_declarations',
   'ecl_stage1_pct', 'ecl_stage2_pct', 'ecl_stage3_pct',
   'ecl_stage2_days', 'ecl_stage3_days', 'reminder_days_before',
   'officer_approval_limit', 'min_credit_score', 'group_arrears_block_days',
@@ -149,6 +149,25 @@ export default function Settings() {
           rows={2}
           value={values.address || ''}
           onChange={set('address')}
+        />
+
+        <h3 style={{ marginTop: 20 }}>Statements and agreements</h3>
+        <Field
+          label="Registration and licence line"
+          value={values.registration || ''}
+          onChange={set('registration')}
+          maxLength={200}
+          placeholder="e.g. Registered microfinance institution · Licence no. 0000 · Company reg. 0000/2020"
+          hint="Printed under the organisation's name on statements and the loan agreement. Leave blank to print nothing."
+        />
+        <Field
+          as="textarea"
+          label="Declarations at the foot of statements"
+          rows={5}
+          value={values.statement_declarations || ''}
+          onChange={set('statement_declarations')}
+          placeholder="One declaration per line. Leave blank for the standard set: check within 30 days, charges per the agreement, payments after the statement date, official receipts, early settlement, confidentiality."
+          hint="Your legal wording, one declaration per line. Blank prints the standard set; anything written here replaces it entirely."
         />
 
         <h3 style={{ marginTop: 20 }}>Credit approval</h3>

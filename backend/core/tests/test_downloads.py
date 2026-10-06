@@ -120,7 +120,11 @@ class LoanStatementTests(DownloadBase):
 
     def test_the_pdf_has_no_logo_unless_one_is_configured(self):
         path = f"/api/loans/{self.loan['id']}/statement?fmt=pdf"
-        self.assertNotIn(b"/Subtype /Image", self.officer.get(path).content)
+        # Pinned blank: what this machine's .env names must not decide the result.
+        with override_settings(STATEMENT_LOGO=""):
+            self.assertNotIn(b"/Subtype /Image", self.officer.get(path).content)
+        with override_settings(STATEMENT_LOGO="no/such/file.png"):
+            self.assertNotIn(b"/Subtype /Image", self.officer.get(path).content)
 
         from PIL import Image
 
@@ -129,6 +133,19 @@ class LoanStatementTests(DownloadBase):
             Image.new("RGB", (40, 20), "navy").save(logo)
             with override_settings(STATEMENT_LOGO=logo):
                 self.assertIn(b"/Subtype /Image", self.officer.get(path).content)
+
+    def test_the_logo_that_ships_with_the_code_is_found_from_the_backend_directory(self):
+        from core import documents
+
+        with override_settings(STATEMENT_LOGO="branding/zinmad-mark.png"):
+            self.assertIsNotNone(documents.logo_path(), "backend/branding/zinmad-mark.png is missing")
+            pdf = self.officer.get(f"/api/loans/{self.loan['id']}/statement?fmt=pdf").content
+            self.assertIn(b"/Subtype /Image", pdf)
+            agreement = self.officer.get(f"/api/loans/{self.loan['id']}/agreement").content.decode()
+            self.assertIn('src="data:image/png;base64,', agreement)
+        with override_settings(STATEMENT_LOGO=""):
+            agreement = self.officer.get(f"/api/loans/{self.loan['id']}/agreement").content.decode()
+            self.assertNotIn("<img", agreement)
 
 
 class SavingsStatementTests(DownloadBase):

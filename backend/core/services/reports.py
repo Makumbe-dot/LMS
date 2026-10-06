@@ -5,7 +5,7 @@ Every function returns plain dicts/lists, which the report views hand to the
 JSON renderer or to the CSV writer unchanged.
 """
 from collections import defaultdict
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from django.db.models import Count, DecimalField, F, Prefetch, Sum, Value
@@ -77,18 +77,18 @@ def dashboard(as_of: date | None = None, branch_id=None) -> dict:
         loan_scope = loan_scope.filter(branch_id=branch_id)
         borrower_scope = borrower_scope.filter(branch_id=branch_id)
 
-    disb = _sum(
-        txn_scope.filter(txn_type=TxnType.DISBURSEMENT,
-                         txn_date__gte=month_start, txn_date__lt=next_month),
-        "principal_component")
-    coll = _sum(
-        txn_scope.filter(txn_type=TxnType.REPAYMENT, reversed=False,
-                         txn_date__gte=month_start, txn_date__lt=next_month),
-        "amount")
-    due = _sum(
-        inst_scope.filter(loan__status__in=[LoanStatus.ACTIVE, LoanStatus.CLOSED],
-                          due_date__gte=month_start, due_date__lt=next_month),
-        F("principal_due") + F("interest_due"))
+    disb, coll, due = _month_flows(txn_scope, inst_scope, month_start, next_month)
+    # Last month, so the tiles can say which way things moved. Flows compare
+    # like-for-like: the 5th of this month against the 1st-5th of last month, not
+    # against all of it, or every month would open with a "fall" of nearly 100%.
+    # The collection rate is a ratio of a whole month's dues, so it compares with
+    # last month as a whole.
+    prev_start = add_months(month_start, -1)
+    prev_to_date_end = min(prev_start + (as_of - month_start) + timedelta(days=1), month_start)
+    prev_disb, prev_coll, _ = _month_flows(txn_scope, inst_scope, prev_start, prev_to_date_end,
+                                           with_due=False)
+    _, prev_month_coll, prev_due = _month_flows(txn_scope, inst_scope, prev_start, month_start,
+                                                with_disbursed=False)
 
     status_counts = {s.value: 0 for s in LoanStatus}
     for row in loan_scope.values("status").annotate(n=Count("id")):
@@ -103,20 +103,144 @@ def dashboard(as_of: date | None = None, branch_id=None) -> dict:
         "principal_outstanding": principal_out,
         "par_30_amount": book["par_amount"],
         "par_30_pct": book["par_pct"],
+        "par_30_loans": book["par_loans"],
+        "arrears_total": book["arrears_total"],
+        "loans_in_arrears": book["loans_in_arrears"],
         "disbursed_this_month": q(disb),
         "collected_this_month": q(coll),
         "due_this_month": q(due),
         "collection_rate_pct": q(coll / due * 100) if due else ZERO,
+        "previous_month": {
+            "disbursed_to_date": q(prev_disb),
+            "collected_to_date": q(prev_coll),
+            "collected": q(prev_month_coll),
+            "due": q(prev_due),
+            "collection_rate_pct": q(prev_month_coll / prev_due * 100) if prev_due else ZERO,
+        },
         "arrears_buckets": book["buckets"],
+        "arrears_bucket_loans": book["bucket_loans"],
         "status_counts": status_counts,
         "monthly_series": monthly_series(as_of, branch_id=branch_id),
+        "due_next_7_days": _due_soon(inst_scope, as_of, days=7),
+        "watchlist": _watchlist(as_of, branch_id),
+        "product_mix": _product_mix(loan_scope),
+        "recent_activity": _recent_activity(txn_scope, as_of),
     }
 
 
+def _month_flows(txn_scope, inst_scope, start: date, end: date, *,
+                 with_disbursed: bool = True, with_due: bool = True) -> tuple:
+    """Principal disbursed, repayments collected and principal + interest due in [start, end).
+
+    A figure not asked for comes back as ZERO without a query.
+    """
+    disb = _sum(
+        txn_scope.filter(txn_type=TxnType.DISBURSEMENT, txn_date__gte=start, txn_date__lt=end),
+        "principal_component") if with_disbursed else ZERO
+    coll = _sum(
+        txn_scope.filter(txn_type=TxnType.REPAYMENT, reversed=False,
+                         txn_date__gte=start, txn_date__lt=end),
+        "amount")
+    due = _sum(
+        inst_scope.filter(loan__status__in=[LoanStatus.ACTIVE, LoanStatus.CLOSED],
+                          due_date__gte=start, due_date__lt=end),
+        F("principal_due") + F("interest_due")) if with_due else ZERO
+    return disb, coll, due
+
+
+def _due_soon(inst_scope, as_of: date, days: int) -> dict:
+    """What active loans still owe on instalments falling due in the next `days` days.
+
+    One aggregate, in the organisation's currency at each loan's booked rate.
+    """
+    row = (inst_scope
+           .filter(loan__status=LoanStatus.ACTIVE, due_date__gte=as_of,
+                   due_date__lt=as_of + timedelta(days=days))
+           .annotate(bal=arrears_svc.OVERDUE_BALANCE)
+           .filter(bal__gt=0)
+           .aggregate(amount=Coalesce(Sum(F("bal") * F("loan__fx_rate"), output_field=_money),
+                                      Value(ZERO, output_field=_money)),
+                      instalments=Count("id"),
+                      loans=Count("loan", distinct=True)))
+    return {"days": days, "amount": q(Decimal(row["amount"] or 0)),
+            "instalments": row["instalments"], "loans": row["loans"]}
+
+
+def _watchlist(as_of: date, branch_id=None, limit: int = 5) -> list[dict]:
+    """The longest-overdue active loans: the top of the PAR report, in one statement."""
+    qs = (Loan.objects
+          .filter(status=LoanStatus.ACTIVE)
+          .filter(arrears_svc.is_overdue(as_of)))
+    if branch_id:
+        qs = qs.filter(branch_id=branch_id)
+    rows = (arrears_svc.with_arrears(qs, as_of)
+            .order_by(*arrears_svc.PAR_ORDER)
+            .values("id", "loan_no", "currency", "principal_outstanding",
+                    "borrower__first_name", "borrower__last_name",
+                    "arrears_amount", "oldest_arrears_due")[:limit])
+    return [{
+        "loan_id": r["id"], "loan_no": r["loan_no"], "currency": r["currency"] or "",
+        "borrower": f"{r['borrower__first_name']} {r['borrower__last_name']}",
+        "principal_outstanding": r["principal_outstanding"],
+        "arrears_amount": q(Decimal(r["arrears_amount"] or 0)),
+        "days_in_arrears": arrears_svc.days_from(r["oldest_arrears_due"], as_of),
+    } for r in rows]
+
+
+def _product_mix(loan_scope) -> list[dict]:
+    """Active principal outstanding per product, largest first, in the base currency."""
+    rows = (loan_scope
+            .filter(status=LoanStatus.ACTIVE)
+            .values("product__name")
+            .annotate(loans=Count("id"),
+                      principal=Sum(F("principal_outstanding") * F("fx_rate"),
+                                    output_field=_money))
+            .order_by("-principal"))
+    return [{"product": r["product__name"], "loans": r["loans"],
+             "principal": q(Decimal(r["principal"] or 0))} for r in rows]
+
+
+# What a person did, as opposed to what the nightly jobs post on their own.
+ACTIVITY_TYPES = [TxnType.DISBURSEMENT, TxnType.REPAYMENT, TxnType.WAIVER, TxnType.WRITE_OFF,
+                  TxnType.RECOVERY, TxnType.REVERSAL, TxnType.FEE, TxnType.CHARGE]
+
+
+def _recent_activity(txn_scope, as_of: date, limit: int = 6) -> list[dict]:
+    """The latest money movements up to the as-at date, newest first."""
+    rows = (txn_scope
+            .filter(txn_type__in=ACTIVITY_TYPES, txn_date__lte=as_of)
+            .order_by("-txn_date", "-id")
+            .values("id", "txn_date", "txn_type", "amount", "reversed", "loan_id",
+                    "loan__loan_no", "loan__currency",
+                    "loan__borrower__first_name", "loan__borrower__last_name")[:limit])
+    return [{
+        "id": r["id"], "date": r["txn_date"], "type": r["txn_type"], "amount": r["amount"],
+        "reversed": r["reversed"], "loan_id": r["loan_id"], "loan_no": r["loan__loan_no"],
+        "currency": r["loan__currency"] or "",
+        "borrower": f"{r['loan__borrower__first_name']} {r['loan__borrower__last_name']}",
+    } for r in rows]
+
+
 def monthly_series(as_of: date, months: int = 12, branch_id=None) -> list[dict]:
-    """Disbursed and collected per calendar month, for the dashboard bars."""
+    """Disbursed, collected and due per calendar month, for the dashboard charts.
+
+    `due` and `collection_rate_pct` use the same definitions as the collection-rate
+    tile (principal + interest scheduled on active and closed loans), so the last
+    point on the trend is the tile.
+    """
     start = add_months(as_of.replace(day=1), -(months - 1))
+    end = add_months(start, months)
     scope = Transaction.objects.filter(loan__branch_id=branch_id) if branch_id else Transaction.objects.all()
+    inst_scope = Instalment.objects.filter(
+        loan__status__in=[LoanStatus.ACTIVE, LoanStatus.CLOSED],
+        due_date__gte=start, due_date__lt=end)
+    if branch_id:
+        inst_scope = inst_scope.filter(loan__branch_id=branch_id)
+    due_rows = (inst_scope
+                .annotate(month=TruncMonth("due_date"))
+                .values("month")
+                .annotate(total=Sum(F("principal_due") + F("interest_due"), output_field=_money))
+                .order_by("month"))
     rows = (scope
             .filter(txn_date__gte=start, reversed=False,
                     txn_type__in=[TxnType.DISBURSEMENT, TxnType.REPAYMENT])
@@ -129,12 +253,20 @@ def monthly_series(as_of: date, months: int = 12, branch_id=None) -> list[dict]:
     for i in range(months):
         m = add_months(start, i)
         key = m.strftime("%Y-%m")
-        series[key] = {"month": key, "disbursed": ZERO, "collected": ZERO}
+        series[key] = {"month": key, "disbursed": ZERO, "collected": ZERO, "due": ZERO}
     for row in rows:
         key = row["month"].strftime("%Y-%m")
         if key in series:
             field = "disbursed" if row["txn_type"] == TxnType.DISBURSEMENT else "collected"
             series[key][field] = q(Decimal(row["total"] or 0))
+    for row in due_rows:
+        key = row["month"].strftime("%Y-%m")
+        if key in series:
+            series[key]["due"] = q(Decimal(row["total"] or 0))
+    for point in series.values():
+        due = point["due"]
+        # None, not 0, for a month with nothing due: a gap in the line, not a fall.
+        point["collection_rate_pct"] = q(point["collected"] / due * 100) if due else None
     return list(series.values())
 
 

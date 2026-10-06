@@ -117,7 +117,8 @@ def loan_statement(loan: Loan, start: date | None = None, end: date | None = Non
         line["balance"] = q(running)
 
     amount, days = loan_arrears(loan, end)
-    next_due = next((i for i in sched(loan) if i.balance > 0 and i.due_date >= end), None)
+    schedule = sched(loan)
+    next_due = next((i for i in schedule if i.balance > 0 and i.due_date >= end), None)
     borrower = loan.borrower
     return {
         "loan_no": loan.loan_no, "loan_id": loan.id, "external_ref": loan.external_ref,
@@ -137,6 +138,10 @@ def loan_statement(loan: Loan, start: date | None = None, end: date | None = Non
         "penalties_outstanding": loan.penalties_outstanding,
         "charges_outstanding": loan.charges_outstanding,
         "total_outstanding": loan.total_outstanding, "total_paid": loan.total_paid,
+        # How far through the loan the borrower is, for the statement's progress line.
+        "total_repayable": q(loan.principal + loan.total_interest),
+        "instalments_total": len(schedule),
+        "instalments_paid": sum(1 for i in schedule if i.total_due > 0 and i.balance <= 0),
         "arrears_amount": amount, "days_in_arrears": days,
         "next_due_date": next_due.due_date if next_due else None,
         "next_due_amount": q(next_due.balance) if next_due else None,

@@ -1,95 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
+import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 
+import { get } from '../lib/api.js'
 import { useAuth } from '../lib/auth.jsx'
 import { humanise } from '../lib/format.js'
+import { ACCOUNT, HOME, findPage, visibleNav } from '../lib/nav.js'
 import { useOrg } from '../lib/org.jsx'
 import { useTheme } from '../lib/theme.jsx'
+import { LogoMark } from '../brand/Brand.jsx'
 import GlobalSearch from './GlobalSearch.jsx'
 import Icon from './Icons.jsx'
-import { HexMark } from './ui.jsx'
 
-/**
- * The menu, in sections that open one at a time.
- *
- * Thirty pages in one long list is what made the old sidebar feel crowded. Here
- * only the section the current page belongs to is open; the others show as a
- * single row each, and open on a click. Which sections someone has opened is
- * remembered per browser. "My account" and "Sign out" live in the avatar menu,
- * so the sidebar carries pages and nothing else.
- */
-export const NAV = [
-  {
-    key: 'portfolio',
-    heading: 'Portfolio',
-    icon: 'loans',
-    items: [
-      { to: '/borrowers', label: 'Borrowers', icon: 'user' },
-      { to: '/groups', label: 'Groups', icon: 'users' },
-      { to: '/loans', label: 'Loans', icon: 'loans' },
-      { to: '/savings', label: 'Savings', icon: 'savings' },
-    ],
-  },
-  {
-    key: 'collections',
-    heading: 'Collections',
-    icon: 'calendar',
-    items: [
-      { to: '/collections', label: 'Collections due', icon: 'calendar' },
-      { to: '/arrears', label: 'Arrears / PAR', icon: 'trending' },
-      { to: '/payroll', label: 'Payroll deductions', icon: 'briefcase' },
-      {
-        to: '/imports',
-        label: 'Bulk repayments',
-        icon: 'upload',
-        roles: ['admin', 'loan_officer', 'teller'],
-        end: true,
-      },
-      { to: '/notifications', label: 'Messages', icon: 'message' },
-    ],
-  },
-  {
-    key: 'finance',
-    heading: 'Finance',
-    icon: 'book',
-    items: [
-      { to: '/till', label: 'Teller till', icon: 'till', roles: ['admin', 'loan_officer', 'teller'] },
-      { to: '/transactions', label: 'Transactions', icon: 'list' },
-      { to: '/ledger', label: 'General ledger', icon: 'book' },
-      { to: '/journals', label: 'Journals & expenses', icon: 'pen' },
-      { to: '/bank-reconciliation', label: 'Bank reconciliation', icon: 'scale' },
-      { to: '/funding', label: 'Funding & capital', icon: 'landmark' },
-      { to: '/currencies', label: 'Currencies', icon: 'coins' },
-      { to: '/provisioning', label: 'Provisioning', icon: 'umbrella' },
-      { to: '/periods', label: 'Period close', icon: 'lock' },
-    ],
-  },
-  {
-    key: 'reports',
-    heading: 'Reports',
-    icon: 'chart',
-    items: [
-      { to: '/performance', label: 'Performance', icon: 'chart' },
-      { to: '/spreadsheets', label: 'Spreadsheets', icon: 'sheet' },
-    ],
-  },
-  {
-    key: 'setup',
-    heading: 'Setup',
-    icon: 'settings',
-    items: [
-      { to: '/products', label: 'Products', icon: 'package' },
-      { to: '/charges', label: 'Charges', icon: 'tag' },
-      { to: '/users', label: 'Users', icon: 'userCog', roles: ['admin'] },
-      { to: '/settings', label: 'Settings', icon: 'settings', roles: ['admin'] },
-      { to: '/imports/loan-book', label: 'Loan book migration', icon: 'database', roles: ['admin'] },
-      { to: '/audit', label: 'Audit log', icon: 'history', roles: ['admin'] },
-    ],
-  },
-]
+/* The shell: sidebar, top bar, and the tabs of the section you are in.
 
-const HOME = { to: '/dashboard', label: 'Dashboard', icon: 'dashboard', end: true }
-const ACCOUNT = { to: '/account', label: 'My account', icon: 'user' }
+   The sidebar lists entries, not pages (see lib/nav.js): ten rows under four
+   captions. The pages inside the current entry run as tabs under the top bar, so
+   moving between the ledger and its journals is one click and the sidebar never
+   scrolls. "My account" and "Sign out" live in the avatar menu. */
+
+// Kept exported from here: it is the shell's question, and tests ask it here.
+export { findPage }
 
 const THEMES = [
   { value: 'light', icon: 'sun', label: 'Light' },
@@ -99,7 +29,6 @@ const THEMES = [
 const NEXT_THEME = { light: 'dark', dark: 'system', system: 'light' }
 
 const RAIL_KEY = 'lms_nav_rail'
-const OPEN_KEY = 'lms_nav_open'
 
 function readStored(key, fallback) {
   try {
@@ -127,23 +56,45 @@ function initials(name) {
     .join('')
 }
 
-function matches(item, pathname) {
-  if (item.end) return pathname === item.to
-  return pathname === item.to || pathname.startsWith(`${item.to}/`)
+function shortDate(iso) {
+  return new Date(`${iso}T00:00:00`).toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  })
 }
 
-/** The section and page the current address belongs to. */
-export function findPage(pathname) {
-  let best = null
-  const consider = (group, item) => {
-    if (matches(item, pathname) && (!best || item.to.length > best.item.to.length)) {
-      best = { group, item }
+/**
+ * The counts beside sidebar rows: applications waiting, loans in arrears.
+ *
+ * Asked for when the page changes (approving a loan should move the number) but
+ * not more than once in ten seconds, and once a minute while the tab is showing.
+ * A failure leaves the last counts in place; a badge is not worth an error.
+ */
+function useNavSummary(pathname) {
+  const [counts, setCounts] = useState({})
+  const asked = useRef(0)
+  const mounted = useRef(true)
+
+  useEffect(() => {
+    mounted.current = true
+    const load = () => {
+      asked.current = Date.now()
+      get('/api/nav-summary')
+        .then((data) => mounted.current && data && setCounts(data))
+        .catch(() => {})
     }
-  }
-  consider(null, HOME)
-  consider(null, ACCOUNT)
-  for (const group of NAV) for (const item of group.items) consider(group, item)
-  return best
+    if (Date.now() - asked.current > 10_000) load()
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') load()
+    }, 60_000)
+    return () => {
+      mounted.current = false
+      clearInterval(timer)
+    }
+  }, [pathname])
+
+  return counts
 }
 
 function useOutsideClose(open, close) {
@@ -213,51 +164,68 @@ function UserMenu({ user, onSignOut }) {
   )
 }
 
-function NavItem({ item, rail, onNavigate }) {
+/** One sidebar row. `badge` is { count, text, tone } when there is work waiting. */
+function NavRow({ to, icon, label, active, rail, badge, hint, onNavigate }) {
+  const title = rail ? [label, badge?.text].filter(Boolean).join(' · ') : hint
   return (
-    <NavLink
-      to={item.to}
-      end={item.end}
-      title={rail ? item.label : undefined}
-      className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')}
+    <Link
+      to={to}
+      className={active ? 'nav-link active' : 'nav-link'}
+      aria-current={active ? 'page' : undefined}
+      title={title || undefined}
       onClick={onNavigate}
     >
-      <Icon name={item.icon} />
-      <span className="nav-label">{item.label}</span>
-    </NavLink>
+      <Icon name={icon} />
+      <span className="nav-label">{label}</span>
+      {badge ? (
+        <>
+          <span className={`nav-badge${badge.tone ? ` ${badge.tone}` : ''}`} aria-hidden="true">
+            {badge.count > 99 ? '99+' : badge.count}
+          </span>
+          <span className="sr-only">, {badge.text}</span>
+        </>
+      ) : null}
+    </Link>
   )
 }
 
 export default function Layout() {
   const { user, signOut, can } = useAuth()
-  const { orgName } = useOrg()
+  const { orgName, closedThrough } = useOrg()
   const { theme, setTheme } = useTheme()
   const { pathname } = useLocation()
 
   const [rail, setRail] = useState(() => readStored(RAIL_KEY, false))
   const [drawer, setDrawer] = useState(false)
-  const [opened, setOpened] = useState(() => readStored(OPEN_KEY, []))
+  const counts = useNavSummary(pathname)
+  const tabsRef = useRef(null)
 
   const current = useMemo(() => findPage(pathname), [pathname])
-  const currentGroup = current?.group?.key || null
+  const sections = visibleNav(can)
+  // The entry as this role sees it: its tabs are only the pages they may open.
+  const entry =
+    sections.flatMap((s) => s.entries).find((e) => e.key === current?.entry?.key) || null
+  const tabs = entry && entry.pages.length > 1 ? entry.pages : null
 
   useEffect(() => store(RAIL_KEY, rail), [rail])
-  useEffect(() => store(OPEN_KEY, opened), [opened])
   // Changing page closes the phone drawer; nothing else should.
   useEffect(() => setDrawer(false), [pathname])
+  // A tab off the edge of a narrow screen is brought into view when it is the page.
+  useEffect(() => {
+    tabsRef.current
+      ?.querySelector('[aria-current="page"]')
+      ?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
+  }, [pathname])
 
-  const isOpen = (group) => group.key === currentGroup || opened.includes(group.key)
-  const toggle = (group) => {
-    if (rail) setRail(false)
-    setOpened((list) =>
-      list.includes(group.key) ? list.filter((k) => k !== group.key) : [...list, group.key],
-    )
+  const badgeFor = (item) => {
+    const count = Number(counts[item.badge?.key]) || 0
+    if (!count) return null
+    return {
+      count,
+      tone: item.badge.tone,
+      text: `${count} ${count === 1 ? item.badge.one : item.badge.many}`,
+    }
   }
-
-  const visibleGroups = NAV.map((group) => ({
-    ...group,
-    items: group.items.filter((item) => !item.roles || can(...item.roles)),
-  })).filter((group) => group.items.length)
 
   const themeNow = THEMES.find((t) => t.value === theme) || THEMES[1]
   const closeDrawer = () => setDrawer(false)
@@ -273,7 +241,7 @@ export default function Layout() {
       />
       <aside className="sidebar" aria-label="Sidebar">
         <div className="brand">
-          <HexMark size={28} />
+          <LogoMark height={24} />
           <span className="brand-text">
             <span className="brand-name">{orgName}</span>
             <span className="brand-sub">Loan management</span>
@@ -289,38 +257,60 @@ export default function Layout() {
         </div>
 
         <nav aria-label="Main">
-          <NavItem item={HOME} rail={rail} onNavigate={closeDrawer} />
-          {visibleGroups.map((group) => {
-            const open = isOpen(group)
-            const holdsCurrent = group.key === currentGroup
-            return (
-              <div
-                className={`nav-group${open ? ' open' : ''}${holdsCurrent ? ' current' : ''}`}
-                key={group.key}
-              >
-                <button
-                  type="button"
-                  className="nav-section"
-                  aria-expanded={open}
-                  aria-controls={`nav-${group.key}`}
-                  title={rail ? group.heading : undefined}
-                  onClick={() => toggle(group)}
-                >
-                  <Icon name={group.icon} />
-                  <span className="nav-label">{group.heading}</span>
-                  <Icon name="chevron" size={14} className="nav-caret" />
-                </button>
-                <div className="nav-items" id={`nav-${group.key}`} hidden={!open}>
-                  {group.items.map((item) => (
-                    <NavItem key={item.to} item={item} rail={rail} onNavigate={closeDrawer} />
-                  ))}
-                </div>
+          <NavRow
+            to={HOME.to}
+            icon={HOME.icon}
+            label={HOME.label}
+            active={current?.item === HOME}
+            rail={rail}
+            onNavigate={closeDrawer}
+          />
+          {sections.map((section) => (
+            <div
+              className="nav-group"
+              role="group"
+              aria-labelledby={`nav-${section.key}`}
+              key={section.key}
+            >
+              <div className="nav-caption" id={`nav-${section.key}`}>
+                <span>{section.heading}</span>
               </div>
-            )
-          })}
+              {section.entries.map((item) => (
+                <NavRow
+                  key={item.key}
+                  to={item.to}
+                  icon={item.icon}
+                  label={item.label}
+                  active={item.key === entry?.key}
+                  rail={rail}
+                  badge={badgeFor(item)}
+                  hint={
+                    item.pages.length > 1 ? item.pages.map((p) => p.label).join(' · ') : undefined
+                  }
+                  onNavigate={closeDrawer}
+                />
+              ))}
+            </div>
+          ))}
         </nav>
 
         <div className="sidebar-foot">
+          <Link
+            to="/periods"
+            className="nav-status"
+            title={
+              closedThrough
+                ? `Books are closed through ${shortDate(closedThrough)}. Nothing can be posted on or before that date.`
+                : 'No month has been closed yet.'
+            }
+            onClick={closeDrawer}
+          >
+            <Icon name="lock" size={16} />
+            <span className="nav-label">
+              <small>Books closed through</small>
+              <strong>{closedThrough ? shortDate(closedThrough) : 'Nothing closed yet'}</strong>
+            </span>
+          </Link>
           <button
             type="button"
             className="nav-link rail-toggle"
@@ -345,9 +335,9 @@ export default function Layout() {
             <Icon name="menu" />
           </button>
           <nav className="crumbs" aria-label="You are here">
-            {current?.group ? (
+            {current?.section ? (
               <>
-                <span className="crumb-section">{current.group.heading}</span>
+                <span className="crumb-section">{current.section.heading}</span>
                 <span className="crumb-sep" aria-hidden="true">
                   /
                 </span>
@@ -371,6 +361,32 @@ export default function Layout() {
             <UserMenu user={user} onSignOut={signOut} />
           </div>
         </header>
+
+        {tabs ? (
+          <nav className="subnav" aria-label={`${entry.label} pages`} ref={tabsRef}>
+            <div className="subnav-inner">
+              <span className="subnav-title">
+                <Icon name={entry.icon} size={15} />
+                {entry.label}
+              </span>
+              {tabs.map((page) => {
+                const active = page.to === current.item.to
+                return (
+                  <Link
+                    key={page.to}
+                    to={page.to}
+                    className={active ? 'subnav-link active' : 'subnav-link'}
+                    aria-current={active ? 'page' : undefined}
+                  >
+                    <Icon name={page.icon} size={15} />
+                    {page.label}
+                  </Link>
+                )
+              })}
+            </div>
+          </nav>
+        ) : null}
+
         <main className="content" key={pathname}>
           <Outlet />
         </main>

@@ -19,9 +19,10 @@ from django.http import HttpResponse
 XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 MONEY_FORMAT = "#,##0.00"
 DATE_FORMAT = "yyyy-mm-dd"
-HEADER_FILL = "E2F2FD"   # the app's light-blue accent, soft
-HEADER_INK = "0F1F3D"    # navy
-TITLE_INK = "0F1F3D"
+HEADER_FILL = "FDEADB"   # the brand orange, as a wash
+HEADER_INK = "16171A"    # the logo's black
+TITLE_INK = "16171A"
+NOTE_INK = "5F636B"
 MAX_WIDTH = 48
 
 # Columns that hold an identifier rather than a quantity: never totalled.
@@ -79,7 +80,7 @@ def _write_sheet(ws, sheet: Sheet) -> None:
             bold=True, size=14, color=TITLE_INK)
         row += 1
     for note in sheet.notes:
-        ws.cell(row=row, column=1, value=note).font = Font(italic=True, color="5B6B82")
+        ws.cell(row=row, column=1, value=note).font = Font(italic=True, color=NOTE_INK)
         row += 1
     if sheet.heading or sheet.notes:
         row += 1

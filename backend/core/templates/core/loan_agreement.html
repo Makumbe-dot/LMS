@@ -4,17 +4,25 @@
 <meta charset="utf-8">
 <title>Loan agreement {{ loan.loan_no }}</title>
 <style>
-  :root { --ink: #14181d; --muted: #5a6470; --line: #ccd3db; }
+  :root { --ink: #16171a; --muted: #5f636b; --line: #cdd0d5; --accent: #f86a00; }
   * { box-sizing: border-box; }
   body {
     font: 12pt/1.5 Georgia, "Times New Roman", serif; color: var(--ink);
-    margin: 0; padding: 32px; background: #f3f5f8;
+    margin: 0; padding: 32px; background: #f5f5f6;
   }
   .sheet {
     background: #fff; max-width: 820px; margin: 0 auto; padding: 48px 56px;
     box-shadow: 0 2px 12px rgba(0,0,0,.12);
   }
-  header { border-bottom: 2px solid var(--ink); padding-bottom: 14px; margin-bottom: 24px; }
+  /* The letterhead: the logo when one is configured, the organisation beside it,
+     and one rule in the brand's orange. `print-color-adjust` keeps that rule
+     orange on paper; browsers otherwise print borders as they like. */
+  header {
+    display: flex; align-items: center; gap: 18px;
+    border-bottom: 2px solid var(--accent); padding-bottom: 14px; margin-bottom: 24px;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  header img { height: 58px; width: auto; flex: none; }
   .org { font-size: 20pt; font-weight: 700; letter-spacing: .5px; }
   .org-detail { color: var(--muted); font-size: 10pt; }
   h1 { font-size: 15pt; text-align: center; letter-spacing: 1px; text-transform: uppercase;
@@ -30,7 +38,7 @@
     border: 1px solid var(--line); padding: 5px 7px; text-align: right;
     font-variant-numeric: tabular-nums;
   }
-  .schedule th { background: #eef2f6; text-align: right; font-size: 9.5pt; }
+  .schedule th { background: #f1f1f3; text-align: right; font-size: 9.5pt; }
   .schedule th:first-child, .schedule td:first-child,
   .schedule th:nth-child(2), .schedule td:nth-child(2) { text-align: left; }
   ol { padding-left: 20px; }
@@ -59,11 +67,15 @@
 
 <div class="sheet">
   <header>
-    <div class="org">{{ org.name }}</div>
-    <div class="org-detail">
-      {% if org.address %}{{ org.address }}{% endif %}
-      {% if org.phone %} &middot; {{ org.phone }}{% endif %}
-      {% if org.email %} &middot; {{ org.email }}{% endif %}
+    {% if logo %}<img src="{{ logo }}" alt="">{% endif %}
+    <div>
+      <div class="org">{{ org.name }}</div>
+      <div class="org-detail">
+        {% if org.address %}{{ org.address }}{% endif %}
+        {% if org.phone %} &middot; {{ org.phone }}{% endif %}
+        {% if org.email %} &middot; {{ org.email }}{% endif %}
+      </div>
+      {% if org.registration %}<div class="org-detail">{{ org.registration }}</div>{% endif %}
     </div>
   </header>
 

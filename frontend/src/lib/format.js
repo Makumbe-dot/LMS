@@ -57,12 +57,13 @@ export const bytes = (value) => {
   return `${n} B`
 }
 
-/** Compact money for axis ticks: 12.5k, 1.2m */
+/** Compact money for axis ticks and bar labels: 625, 1.3k, 12k, 1.2m */
 export function compact(value) {
   const n = num(value) ?? 0
   const abs = Math.abs(n)
-  if (abs >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}m`
-  if (abs >= 1_000) return `${Math.round(n / 1_000)}k`
+  if (abs >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}m`
+  if (abs >= 10_000) return `${Math.round(n / 1_000)}k`
+  if (abs >= 1_000) return `${(n / 1_000).toFixed(1).replace(/\.0$/, '')}k`
   return String(Math.round(n))
 }
 
@@ -78,6 +79,26 @@ export const dateTime = (value) =>
 
 /** "written_off" -> "written off" */
 export const humanise = (value) => String(value ?? '').replace(/_/g, ' ')
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+/**
+ * "2026-04" -> "Apr", for a month axis. The year is added where it changes:
+ * on the first label and on each January, so a twelve-month run reads
+ * "Nov 25 · Dec · Jan 26 · Feb …" rather than twelve "26-04"s.
+ */
+export function monthLabel(yearMonth, { first = false } = {}) {
+  const [year, month] = String(yearMonth).split('-').map(Number)
+  const name = MONTHS[month - 1] || String(yearMonth)
+  return first || month === 1 ? `${name} ${String(year).slice(2)}` : name
+}
+
+/** "2026-04" -> "April 2026", for a tooltip or a sentence. */
+export function monthName(yearMonth) {
+  const [year, month] = String(yearMonth).split('-').map(Number)
+  const date = new Date(year, (month || 1) - 1, 1)
+  return date.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })
+}
 
 /** Add months to an ISO date string, clamping to month end. */
 export function addMonthsIso(iso, months) {

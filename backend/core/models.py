@@ -280,6 +280,13 @@ class OrganisationSetting(models.Model):
     address = models.TextField(null=True, blank=True)
     phone = models.CharField(max_length=30, null=True, blank=True)
     email = models.CharField(max_length=120, null=True, blank=True)
+    # The registration or licence line printed under the name on statements and
+    # agreements ("Registered microfinance institution · Licence no. 1234"). Blank
+    # prints nothing: those words are the institution's to supply, not ours to guess.
+    registration = models.CharField(max_length=200, blank=True, default="")
+    # The declarations at the foot of every statement, one per line. Blank prints
+    # the standard set in documents.py; anything written here replaces them.
+    statement_declarations = models.TextField(blank=True, default="")
 
     # IFRS 9 expected-credit-loss provision rates, percent of exposure per stage
     ecl_stage1_pct = models.DecimalField(default=Decimal("1"), max_digits=6, decimal_places=2)

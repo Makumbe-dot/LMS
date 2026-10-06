@@ -110,7 +110,7 @@ follows the filter.
   balance. The running balance is the principal, penalties and charges owed, so the closing figure
   ties to the loan. Interest has its own column.
 - **Savings statements** also download as PDF or Excel. The PDF carries the organisation's details
-  and "page x of y", with no logo unless `STATEMENT_LOGO` sets one.
+  and "page x of y", under the logo `STATEMENT_LOGO` names (the Zinmad Capital monogram by default).
 - The **Spreadsheets** page holds the **member register**: one row per member with contact,
   employer and group details, savings balance, loans taken and repaid, and what the member owes
   and has overdue, with days overdue and the arrears bucket.
@@ -347,7 +347,17 @@ Everything lives in `backend/.env` (see `backend/.env.example` for development a
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | JWT access-token lifetime, 30 by default. This is the window in which a revoked single device keeps working, so raising it weakens revocation; the client renews silently, so lowering it costs nothing but requests. |
 | `REFRESH_TOKEN_EXPIRE_DAYS` | How long a session can be renewed before signing in again, 7 by default. |
 | `SQL_LOG_LEVEL` | Set to `DEBUG` to print every statement the ORM sends to SQL Server. |
-| `STATEMENT_LOGO` | Path to a PNG or JPEG for the top of PDF statements. Empty (the default) or a path that does not exist prints no logo. |
+| `STATEMENT_LOGO` | Path to a PNG or JPEG for the top of PDF statements and the loan agreement; a relative path is taken from `backend/`. Defaults to `branding/zinmad-mark.png`, the Zinmad Capital monogram. Set it blank, or to a path that does not exist, to print no logo. |
+
+### Branding
+
+The app wears Zinmad Capital's logo and colours. The artwork lives in `frontend/src/brand/`
+(the logo as supplied, and the crops the app uses) and `backend/branding/` (the monogram for
+PDFs); the colours are the tokens at the top of `frontend/src/styles.css`, with the same values
+in `backend/core/documents.py` and `backend/core/exports.py` for statements and spreadsheets.
+If the logo is reissued, replace `frontend/src/brand/zinmad-capital-logo.jpg` and run
+`python scripts/make_brand_assets.py` to re-cut every crop from it. The name on the sidebar,
+statements and agreements is not artwork: it is the organisation name in **System → Settings**.
 
 ## Tests
 

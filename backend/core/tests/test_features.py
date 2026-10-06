@@ -435,6 +435,30 @@ class OrganisationTests(FeatureTestBase):
         self.assertEqual(config.group_arrears_block_days, 14)
         self.assertEqual(response.json()["officer_approval_limit"], "3500.00")
 
+    def test_the_registration_line_and_declarations_are_the_institutions_own(self):
+        product = self.make_product()
+        loan = self.disbursed_loan(product, self.make_borrower())
+        response = self.admin.patch("/api/settings", {
+            "registration": "Registered microfinance institution · Licence no. 0042",
+            "statement_declarations": "First declaration.\n\nSecond declaration.",
+        }, format="json")
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["registration"],
+                         "Registered microfinance institution · Licence no. 0042")
+
+        html = self.officer.get(f"/api/loans/{loan['id']}/agreement").content.decode()
+        self.assertIn("Licence no. 0042", html)
+
+        from core import documents
+        from core.models import OrganisationSetting
+
+        own = documents._declarations(OrganisationSetting.load(), "loan", date(2026, 6, 30))
+        self.assertEqual(own, ["First declaration.", "Second declaration."])
+        self.admin.patch("/api/settings", {"statement_declarations": ""}, format="json")
+        standard = documents._declarations(OrganisationSetting.load(), "loan", date(2026, 6, 30))
+        self.assertEqual(len(standard), 6)
+        self.assertIn("30 June 2026", standard[4])
+
     def test_settings_stay_a_single_row(self):
         self.admin.patch("/api/settings", {"name": "One"}, format="json")
         self.admin.patch("/api/settings", {"name": "Two"}, format="json")
@@ -453,6 +477,22 @@ class OrganisationTests(FeatureTestBase):
 
     def test_search_ignores_one_character_terms(self):
         self.assertEqual(self.officer.get("/api/search?q=a").json()["borrowers"], [])
+
+    def test_the_sidebar_counts_waiting_applications_and_loans_in_arrears(self):
+        product = self.make_product()
+        borrower = self.make_borrower()
+        before = self.teller.get("/api/nav-summary").json()
+
+        # Disbursed in March 2026 and never repaid, so it is overdue by now.
+        self.disbursed_loan(product, borrower)
+        self.officer.post("/api/loans", {
+            "borrower_id": self.make_borrower(national_id="63-765432B63")["id"],
+            "product_id": product["id"], "principal": 500, "term_months": 3,
+        }, format="json")
+
+        after = self.teller.get("/api/nav-summary").json()
+        self.assertEqual(after["loans_in_arrears"], before["loans_in_arrears"] + 1)
+        self.assertEqual(after["pending_applications"], before["pending_applications"] + 1)
 
 
 class PasswordAndLockoutTests(FeatureTestBase):

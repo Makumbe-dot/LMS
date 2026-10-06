@@ -44,6 +44,7 @@ urlpatterns = [
     re_path(r"^holidays/?$", org.holidays),
     re_path(r"^holidays/(?P<holiday_id>\d+)/?$", org.holiday_detail),
     re_path(r"^search/?$", org.search),
+    re_path(r"^nav-summary/?$", org.nav_summary),
 
     # ---- borrowers
     re_path(r"^borrowers/?$", borrowers.borrowers),

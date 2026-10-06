@@ -602,9 +602,18 @@ class DashboardSerializer(serializers.Serializer):
     collected_this_month = money()
     due_this_month = money()
     collection_rate_pct = money()
+    par_30_loans = serializers.IntegerField()
+    arrears_total = money()
+    loans_in_arrears = serializers.IntegerField()
+    previous_month = serializers.DictField(child=money())
     arrears_buckets = serializers.DictField(child=money())
+    arrears_bucket_loans = serializers.DictField(child=serializers.IntegerField())
     status_counts = serializers.DictField(child=serializers.IntegerField())
     monthly_series = serializers.ListField(child=serializers.DictField())
+    due_next_7_days = serializers.DictField()
+    watchlist = serializers.ListField(child=serializers.DictField())
+    product_mix = serializers.ListField(child=serializers.DictField())
+    recent_activity = serializers.ListField(child=serializers.DictField())
 
 
 class NotificationSerializer(serializers.ModelSerializer):
@@ -628,6 +637,7 @@ class OrganisationSettingSerializer(serializers.ModelSerializer):
     class Meta:
         model = OrganisationSetting
         fields = ["name", "currency", "address", "phone", "email",
+                  "registration", "statement_declarations",
                   "ecl_stage1_pct", "ecl_stage2_pct", "ecl_stage3_pct",
                   "ecl_stage2_days", "ecl_stage3_days", "reminder_days_before",
                   # The Settings page has always shown these; the API silently dropped

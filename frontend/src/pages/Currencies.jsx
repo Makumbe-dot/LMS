@@ -115,7 +115,7 @@ export default function Currencies() {
       </PageHeader>
 
       <div className="grid cols-4">
-        <Kpi icon="coins" tone="blue" label="Base currency" value={base} sub="ledger, savings and tills" />
+        <Kpi icon="coins" tone="brand" label="Base currency" value={base} sub="ledger, savings and tills" />
         {others.map((c) => (
           <Kpi
             key={c.code}
