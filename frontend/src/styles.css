@@ -1366,7 +1366,7 @@ dl.kv > div:last-child > dt, dl.kv > div:last-child > dd { border-bottom: none; 
 .chart-svg { display: block; width: 100%; height: auto; overflow: visible; }
 .chart-svg text { fill: var(--muted); font-size: 10.5px; font-family: var(--font-sans); }
 .chart-svg text.axis-now { fill: var(--text); font-weight: 600; }
-.chart-svg .tick-line { stroke: var(--grid); stroke-width: 1; stroke-dasharray: 2 4; }
+.chart-svg .tick-line { stroke: var(--grid); stroke-width: 1; }
 .chart-svg .baseline { stroke: var(--axis); stroke-width: 1; }
 .chart-svg .hit { fill: transparent; cursor: pointer; }
 .chart-svg .now-band { fill: var(--surface-3); opacity: .6; }
@@ -1382,16 +1382,40 @@ dl.kv > div:last-child > dt, dl.kv > div:last-child > dd { border-bottom: none; 
   transition: filter .12s;
 }
 @keyframes grow-y { from { transform: scaleY(0); } }
+/* what was due, behind what was collected: a pale column the bar fills */
+.chart-svg path.bar-ghost {
+  fill: color-mix(in srgb, var(--series-2) 16%, var(--surface));
+  transform-box: fill-box; transform-origin: center bottom;
+  animation: grow-y .7s cubic-bezier(.2, .8, .2, 1) backwards;
+}
+.swatch.ghost { background: color-mix(in srgb, var(--series-2) 22%, var(--surface)) !important; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--series-2) 45%, transparent); }
+.chart-tooltip .tt-row .swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+.chart-tooltip .tt-foot { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); color: var(--muted); font-size: 11.5px; }
+
+/* a segmented control: two or three mutually exclusive views of one chart */
+.seg {
+  display: inline-flex; padding: 2px; gap: 2px; border-radius: 9px;
+  background: var(--surface-3); border: 1px solid var(--border);
+}
+.seg button {
+  border: 0; background: transparent; color: var(--muted); cursor: pointer;
+  font: 600 11.5px/1 var(--font-sans); padding: 6px 9px; border-radius: 7px;
+  transition: background-color .15s, color .15s, box-shadow .15s;
+}
+.seg button:hover { color: var(--text); }
+.seg button.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(17, 18, 22, 0.08); }
+.seg button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
 @keyframes grow-x { from { transform: scaleX(0); } }
 
 .chart-tooltip {
   position: absolute; pointer-events: none; z-index: 30;
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
   padding: 8px 10px; font-size: 12px; box-shadow: var(--shadow-pop);
-  min-width: 150px; animation: fade-in .12s ease-out;
+  min-width: 190px; animation: fade-in .12s ease-out;
 }
 .chart-tooltip .tt-title { font-weight: 600; margin-bottom: 4px; }
-.chart-tooltip .tt-row { display: flex; justify-content: space-between; gap: 12px; }
+.chart-tooltip .tt-row { display: flex; justify-content: space-between; gap: 16px; white-space: nowrap; line-height: 1.7; }
+.chart-legend { margin: -4px 0 10px; }
 .chart-tooltip .tt-row .tt-val { font-variant-numeric: tabular-nums; }
 .chart-frame { position: relative; }
 

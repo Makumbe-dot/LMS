@@ -5,14 +5,19 @@
    first thing anyone asks of this chart. The month in progress sits on a faint
    band so it is read as unfinished. Every group has a hover/focus tooltip and,
    while hovered, its two values written above the bars; a table view is one
-   click away for screen readers, print and forced colours. */
+   click away for screen readers, print and forced colours.
+
+   A `ghost` series is drawn as a pale column behind one of the others: what was
+   due behind what was collected, so a shortfall is the gap at the top of the
+   bar rather than a sum to work out. The range buttons show the last six or
+   twelve months; the totals in the legend follow the range. */
 import { useId, useMemo, useState } from 'react'
 
 import { compact, fmt, money, monthLabel, monthName } from '../lib/format.js'
 import DataTable from './DataTable.jsx'
 
 const W = 760
-const H = 250
+const H = 270
 const M = { top: 22, right: 12, bottom: 30, left: 52 }
 const PLOT_W = W - M.left - M.right
 const PLOT_H = H - M.top - M.bottom
@@ -52,24 +57,36 @@ function niceScale(value, ticksWanted = 4) {
 }
 
 export default function GroupedBars({
-  data,
+  data: all,
   title,
   subtitle,
   series = [
     { key: 'disbursed', label: 'Disbursed', color: 'var(--series-1)', deep: 'var(--series-1-deep)' },
     { key: 'collected', label: 'Collected', color: 'var(--series-2)', deep: 'var(--series-2-deep)' },
   ],
+  ghost = { key: 'due', label: 'Due', behind: 'collected' },
   xKey = 'month',
   // The last group is the month still in progress: banded, and named so.
   currentLast = true,
 }) {
   const [hover, setHover] = useState(null)
   const [view, setView] = useState('chart')
+  const [range, setRange] = useState(12)
   const uid = useId().replace(/[^a-zA-Z0-9]/g, '')
+  const data = all.slice(-range)
 
   const { top: max, ticks } = useMemo(
-    () => niceScale(Math.max(0, ...data.flatMap((row) => series.map((s) => Number(row[s.key]) || 0)))),
-    [data, series],
+    () =>
+      niceScale(
+        Math.max(
+          0,
+          ...data.flatMap((row) => [
+            ...series.map((s) => Number(row[s.key]) || 0),
+            ghost ? Number(row[ghost.key]) || 0 : 0,
+          ]),
+        ),
+      ),
+    [data, series, ghost],
   )
   const totals = useMemo(
     () => series.map((s) => data.reduce((sum, row) => sum + (Number(row[s.key]) || 0), 0)),
@@ -77,7 +94,8 @@ export default function GroupedBars({
   )
 
   const groupWidth = PLOT_W / Math.max(data.length, 1)
-  const barWidth = Math.min(18, (groupWidth * 0.64 - BAR_GAP) / series.length)
+  const barWidth = Math.min(24, (groupWidth * 0.62 - BAR_GAP) / series.length)
+  const ghostTotal = ghost ? data.reduce((sum, row) => sum + (Number(row[ghost.key]) || 0), 0) : 0
   const y = (value) => M.top + PLOT_H - (Math.max(0, Number(value) || 0) / max) * PLOT_H
   const lastIndex = data.length - 1
 
@@ -86,15 +104,24 @@ export default function GroupedBars({
       <div className="chart-head">
         <h3 style={{ margin: 0 }}>{title}</h3>
         <div className="row" style={{ gap: 8 }}>
-          <div className="legend legend-chips">
-            {series.map((s, i) => (
-              <span className="legend-chip" key={s.key}>
-                <span className="swatch" style={{ background: s.color }} aria-hidden="true" />
-                {s.label}
-                <b>{money(totals[i])}</b>
-              </span>
-            ))}
-          </div>
+          {all.length > 6 ? (
+            <div className="seg" role="group" aria-label="Range">
+              {[6, 12].map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  className={range === n ? 'on' : undefined}
+                  aria-pressed={range === n}
+                  onClick={() => {
+                    setRange(n)
+                    setHover(null)
+                  }}
+                >
+                  {n}M
+                </button>
+              ))}
+            </div>
+          ) : null}
           <button
             type="button"
             className="btn small"
@@ -106,6 +133,22 @@ export default function GroupedBars({
         </div>
       </div>
       {subtitle ? <p className="chart-sub">{subtitle}</p> : null}
+      <div className="legend legend-chips chart-legend">
+        {series.map((s, i) => (
+          <span className="legend-chip" key={s.key}>
+            <span className="swatch" style={{ background: s.color }} aria-hidden="true" />
+            {s.label}
+            <b>{money(totals[i])}</b>
+          </span>
+        ))}
+        {ghost ? (
+          <span className="legend-chip">
+            <span className="swatch ghost" aria-hidden="true" />
+            {ghost.label}
+            <b>{money(ghostTotal)}</b>
+          </span>
+        ) : null}
+      </div>
 
       {view === 'table' ? (
         <DataTable
@@ -120,6 +163,9 @@ export default function GroupedBars({
               num: true,
               render: (row) => fmt(row[s.key]),
             })),
+            ...(ghost
+              ? [{ key: ghost.key, header: ghost.label, num: true, render: (row) => fmt(row[ghost.key]) }]
+              : []),
           ]}
         />
       ) : (
@@ -128,7 +174,9 @@ export default function GroupedBars({
             className="chart-svg bars-svg"
             viewBox={`0 0 ${W} ${H}`}
             role="img"
-            aria-label={`${title}. ${series.map((s) => s.label).join(' and ')} per month.`}
+            aria-label={`${title}. ${series.map((s) => s.label).join(' and ')} per month${
+              ghost ? `, with ${ghost.label.toLowerCase()} behind ${ghost.behind}` : ''
+            }.`}
             onMouseLeave={() => setHover(null)}
           >
             <defs>
@@ -180,6 +228,22 @@ export default function GroupedBars({
                       rx={8}
                     />
                   ) : null}
+                  {ghost
+                    ? series.map((s, si) =>
+                        s.key === ghost.behind && Number(row[ghost.key]) > 0 ? (
+                          <path
+                            key={`ghost-${s.key}`}
+                            className="bar-ghost"
+                            d={barPath(
+                              startX + si * (barWidth + BAR_GAP),
+                              y(row[ghost.key]),
+                              barWidth,
+                              M.top + PLOT_H - y(row[ghost.key]),
+                            )}
+                          />
+                        ) : null,
+                      )
+                    : null}
                   {series.map((s, si) => {
                     const value = Number(row[s.key]) || 0
                     const top = y(value)
@@ -231,11 +295,13 @@ export default function GroupedBars({
           {hover !== null && data[hover] ? (
             <div
               className="chart-tooltip"
-              style={{
-                left: `calc(${((M.left + groupWidth * (hover + 0.5)) / W) * 100}% + 8px)`,
-                top: 0,
-                transform: hover > data.length / 2 ? 'translateX(-108%)' : 'none',
-              }}
+              // beside the hovered month, never over it: to its right in the first
+              // half of the chart, to its left in the second
+              style={
+                hover >= data.length / 2
+                  ? { left: `calc(${((M.left + groupWidth * hover) / W) * 100}% - 6px)`, top: 0, transform: 'translateX(-100%)' }
+                  : { left: `calc(${((M.left + groupWidth * (hover + 1)) / W) * 100}% + 6px)`, top: 0 }
+              }
             >
               <div className="tt-title">
                 {monthName(data[hover][xKey])}
@@ -250,6 +316,25 @@ export default function GroupedBars({
                   <span className="tt-val">{money(data[hover][s.key])}</span>
                 </div>
               ))}
+              {ghost ? (
+                <>
+                  <div className="tt-row">
+                    <span>
+                      <span className="swatch ghost" aria-hidden="true" />
+                      {ghost.label}
+                    </span>
+                    <span className="tt-val">{money(data[hover][ghost.key])}</span>
+                  </div>
+                  {Number(data[hover][ghost.key]) > 0 ? (
+                    <div className="tt-foot">
+                      {Math.round(
+                        ((Number(data[hover][ghost.behind]) || 0) / Number(data[hover][ghost.key])) * 100,
+                      )}
+                      % of what was due was collected
+                    </div>
+                  ) : null}
+                </>
+              ) : null}
             </div>
           ) : null}
         </div>

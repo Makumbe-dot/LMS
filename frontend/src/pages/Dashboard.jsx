@@ -408,7 +408,7 @@ export default function Dashboard() {
         <div className="card chart-card area-flow">
           <GroupedBars
             title="Disbursements and collections"
-            subtitle={`Last 12 months, ${getCurrency()}. Hover a month for the exact figures.`}
+            subtitle={`${getCurrency()} per calendar month. The pale column behind each collection is what fell due; hover a month for the figures.`}
             data={data.monthly_series}
           />
         </div>
