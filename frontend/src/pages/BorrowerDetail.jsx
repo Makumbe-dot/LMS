@@ -224,6 +224,8 @@ export default function BorrowerDetail() {
               ['National ID', b.national_id],
               ['Phone', b.phone],
               ['Messages by', { whatsapp: 'WhatsApp', email: 'Email' }[b.preferred_channel] || 'SMS'],
+              ['Politically exposed', b.is_pep ? 'Yes: enhanced due diligence' : 'No'],
+              ['Paid out to', [b.bank_name, b.bank_account_no].filter(Boolean).join(' · ') || `Mobile money ${b.mobile_wallet || b.phone}`],
               ['Email', b.email || '-'],
               ['Date of birth', b.date_of_birth || '-'],
               ['Gender', b.gender || '-'],

@@ -1598,3 +1598,33 @@ dl.kv > div:last-child > dt, dl.kv > div:last-child > dd { border-bottom: none; 
 .comm-kind strong { font-size: 13.5px; text-transform: capitalize; }
 .comm-kind small { color: var(--muted); font-size: 12px; line-height: 1.4; }
 .grid.cols-3 + .card, .grid.cols-3 + form.card { margin-top: 16px; }
+
+/* ---------------------------------------------------------------- go-live checklist */
+.golive-area h3 { margin-bottom: 6px; }
+.golive-list { list-style: none; margin: 0; padding: 0; }
+.golive-item {
+  display: grid; grid-template-columns: 30px 1fr max-content; gap: 12px; align-items: start;
+  padding: 12px 0; border-bottom: 1px solid var(--border);
+}
+.golive-item:last-child { border-bottom: none; padding-bottom: 0; }
+.golive-mark {
+  display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 8px;
+  background: var(--good-soft); color: var(--ok);
+}
+.golive-item.warn .golive-mark { background: var(--warn-soft); color: var(--warn); }
+.golive-item.fail .golive-mark { background: var(--critical-soft); color: var(--danger); }
+.golive-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.golive-text strong { font-size: 14px; }
+.golive-text span { color: var(--text-secondary); font-size: 13px; }
+.golive-text em { color: var(--muted); font-size: 12.5px; font-style: normal; }
+.golive-text em::before { content: '→ '; color: var(--accent-strong); }
+
+/* ---------------------------------------------------------------- the public Apply page */
+.apply-form h3 { margin: 18px 0 8px; }
+.apply-form .check { align-items: flex-start; max-width: 70ch; }
+.apply-trap { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }
+.apply-done { max-width: 640px; }
+
+/* ---------------------------------------------------------------- screening */
+.screen-lists { margin: 0 0 14px; padding-left: 18px; font-size: 13px; }
+.screen-lists li { margin: 4px 0; }

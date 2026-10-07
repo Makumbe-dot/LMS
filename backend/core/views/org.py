@@ -19,6 +19,7 @@ from ..models import (
     Notification,
     NotificationStatus,
     OrganisationSetting,
+    ScreeningHit,
 )
 from ..permissions import IsAdmin
 from ..serializers import BranchSerializer, HolidaySerializer, OrganisationSettingSerializer
@@ -146,6 +147,8 @@ def nav_summary(request):
     return Response({
         **extra,
         "pending_applications": Loan.objects.filter(status=LoanStatus.PENDING).count(),
+        # Possible sanctions matches nobody has reviewed: they block loans.
+        "screening_open": ScreeningHit.objects.filter(status="open").count(),
         # Messages that did not get through this past week, so someone looks.
         "messages_failed": Notification.objects.filter(
             status=NotificationStatus.FAILED,
@@ -200,3 +203,12 @@ def message_templates(request):
         result = templates.save(body)
         audit(request.user, "update", "message_templates", 1, ", ".join(sorted(body)))
     return Response(result)
+
+
+@api_view(["GET"])
+@permission_classes([IsAdmin])
+def go_live(request):
+    """The go-live checklist: what stands between this installation and real borrowers."""
+    from ..services import golive
+
+    return Response(golive.summary(golive.checks(request)))

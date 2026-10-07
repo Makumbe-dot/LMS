@@ -227,7 +227,8 @@ class GuarantorSerializer(serializers.ModelSerializer):
 BORROWER_FIELDS = [
     "first_name", "last_name", "national_id", "date_of_birth", "gender", "phone", "email",
     "address", "employer", "employee_no", "job_title", "net_salary", "payday",
-    "kyc_verified", "preferred_channel", "is_blacklisted", "notes", "branch",
+    "kyc_verified", "preferred_channel", "is_blacklisted", "is_pep", "notes", "branch",
+    "bank_name", "bank_branch", "bank_account_no", "bank_account_name", "mobile_wallet",
 ]
 
 
@@ -271,7 +272,23 @@ class BureauEnquirySerializer(serializers.ModelSerializer):
                   "enquired_at"]
 
 
-class BorrowerCreateSerializer(serializers.ModelSerializer):
+# Text fields a borrower may leave empty, which the forms send as null.
+BLANKABLE = ("bank_name", "bank_branch", "bank_account_no", "bank_account_name", "mobile_wallet")
+
+
+class _BlankNotNull:
+    """Treats null as "" for the BLANKABLE fields, which are stored as empty text."""
+
+    def to_internal_value(self, data):
+        if hasattr(data, "copy"):
+            data = data.copy()
+            for key in BLANKABLE:
+                if key in data and data[key] is None:
+                    data[key] = ""
+        return super().to_internal_value(data)
+
+
+class BorrowerCreateSerializer(_BlankNotNull, serializers.ModelSerializer):
     guarantors = GuarantorSerializer(many=True, required=False, default=list)
 
     class Meta:
@@ -284,13 +301,14 @@ class BorrowerCreateSerializer(serializers.ModelSerializer):
         return value
 
 
-class BorrowerUpdateSerializer(serializers.ModelSerializer):
+class BorrowerUpdateSerializer(_BlankNotNull, serializers.ModelSerializer):
     class Meta:
         model = Borrower
         # national_id is the borrower's identity in the register and is not editable
         fields = ["first_name", "last_name", "phone", "email", "address", "employer",
                   "employee_no", "job_title", "net_salary", "payday", "kyc_verified",
-                  "preferred_channel", "is_blacklisted", "notes", "branch"]
+                  "preferred_channel", "is_blacklisted", "is_pep", "notes", "branch",
+                  "bank_name", "bank_branch", "bank_account_no", "bank_account_name", "mobile_wallet"]
         extra_kwargs = {f: {"required": False} for f in fields}
 
 

@@ -337,6 +337,9 @@ def approve(loan: Loan, user: User) -> Loan:
         raise BusinessRuleError(f"Loan is {loan.status}, cannot approve")
     if user.id == loan.officer_id and not user.is_admin:
         raise BusinessRuleError("Whoever originated a loan cannot approve it")
+    from .screening import assert_clear  # screening imports models only; kept local like signatures
+
+    assert_clear(loan.borrower, "approve this loan")
     limit = user.approval_limit
     if limit is None:
         limit = OrganisationSetting.load().officer_approval_limit
@@ -372,6 +375,9 @@ def disburse(loan: Loan, user: User, disbursement_date: date | None,
     from .signatures import assert_signed_for_disbursement  # signatures imports this module
 
     assert_signed_for_disbursement(loan)
+    from .screening import assert_clear
+
+    assert_clear(loan.borrower, "pay this loan out")
     # Before the schedule is built and written. An application may sit in a closed
     # month — capturing and approving are not postings — but moving the money is.
     periods.assert_open(disb, "This disbursement")

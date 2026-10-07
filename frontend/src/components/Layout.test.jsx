@@ -94,7 +94,7 @@ describe('the tabs of a section', () => {
   })
 
   it('are not shown for an entry with a single page', () => {
-    renderShell('/loans')
+    renderShell('/savings')
     expect(screen.queryByRole('navigation', { name: /pages$/ })).toBeNull()
   })
 

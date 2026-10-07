@@ -26,6 +26,7 @@ from ..serializers import (
     LoanSerializer,
 )
 from ..services import bureau as bureau_svc
+from ..services import screening
 from ..services.loans import next_number
 from .helpers import loan_queryset, paginate, parse_int, with_arrears
 
@@ -88,6 +89,7 @@ def borrowers(request):
         for g in guarantors:
             Guarantor.objects.create(borrower=borrower, **g)
         audit(request.user, "create", "borrower", borrower.id, borrower.full_name)
+        screening.screen_if_lists(borrower)
     return Response(BorrowerSerializer(get_borrower_or_404(borrower.id)).data,
                     status=status.HTTP_201_CREATED)
 
@@ -109,6 +111,8 @@ def borrower_detail(request, borrower_id: int):
         body.save()
         audit(request.user, "update", "borrower", borrower.id,
               str(list(body.validated_data.keys())))
+        if {"first_name", "last_name", "date_of_birth"} & set(body.validated_data):
+            screening.screen_if_lists(borrower)
     return Response(BorrowerSerializer(get_borrower_or_404(borrower_id)).data)
 
 

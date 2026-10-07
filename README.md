@@ -856,6 +856,33 @@ claim otherwise.
 
 ---
 
+## Going live, applications, screening and payouts
+
+**Go-live checklist** (System > Go-live checklist, or `manage.py go_live_check`, which exits 1 while
+anything fails) checks development mode, the secret key, demo logins still on their demo passwords,
+HTTPS and the server address, the institution's details, demo data, messaging channels, sanctions
+lists, payouts, the nightly batch, backups and job alerts, and says where to fix each. The sign-in page
+lists the seed data's demo logins only when `SHOW_DEMO_LOGINS=1`.
+
+**Online applications.** `/apply` is a public page where a new client asks for a loan (with consent to
+be checked; throttled per address, with a hidden trap field for robots). A borrower signed in to the
+portal can apply for another loan there. Both land in Loans > Online applications; *Accept* creates the
+borrower (or matches them by national ID) and opens the New loan form with the figures, so the loan is
+scored and approved as any other; *Decline* records why.
+
+**AML screening.** Customers > Screening loads the UN Security Council consolidated list (its XML) and
+any other list as CSV. Every borrower is screened when added or renamed and the whole book whenever a
+list is loaded; matching ignores case, accents, punctuation and word order, an ID-number match counts
+on its own, and a different year of birth lowers the score. A possible match holds that borrower's
+loans - no approval, no payout - until a supervisor clears it or confirms it (which blacklists the
+borrower). Borrowers carry a politically-exposed-person flag.
+
+**Payouts.** A loan disbursed by bank transfer or mobile money gets a payout for the net amount. Loans >
+Payouts sends wallet payouts through the provider configured in `PAYOUT_HTTP_*` (logged only until set)
+and makes a bulk-payment CSV of bank payouts for internet banking, marking them sent; each is then marked
+paid or failed, and a failed one can be retried with corrected details. Borrowers carry bank and wallet
+details.
+
 ## Project layout
 
 ```

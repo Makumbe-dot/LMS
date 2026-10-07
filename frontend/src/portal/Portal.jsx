@@ -140,6 +140,9 @@ function PortalLogin({ onSignedIn }) {
       <button type="submit" className="btn primary" disabled={busy}>
         {step === 'details' ? 'Text me a code' : 'Sign in'}
       </button>
+      <p className="muted" style={{ marginTop: 16, fontSize: 13 }}>
+        New client? <Link to="/apply">Apply for a loan</Link>
+      </p>
     </form>
   )
 }
@@ -164,7 +167,9 @@ function usePortal(path) {
 function PortalHome() {
   const { data, error, reload } = usePortal('/api/portal/me')
   const requests = usePortal('/api/portal/requests')
+  const applications = usePortal('/api/portal/applications')
   const [asking, setAsking] = useState(false)
+  const [applying, setApplying] = useState(false)
   if (error) return <ErrorBanner error={error} onRetry={reload} />
   if (!data) return <Loading what="Fetching your loans" />
   const running = data.loans.filter((l) => l.status === 'active')
@@ -217,6 +222,39 @@ function PortalHome() {
 
       <div className="card">
         <div className="row between">
+          <h3 style={{ margin: 0 }}>Apply for another loan</h3>
+          {!applying ? (
+            <button type="button" className="btn small primary" onClick={() => setApplying(true)}>
+              Apply
+            </button>
+          ) : null}
+        </div>
+        {applying ? (
+          <PortalApplyForm
+            onDone={() => {
+              setApplying(false)
+              applications.reload()
+            }}
+          />
+        ) : null}
+        {(applications.data || []).length ? (
+          <DataTable
+            caption="Your applications"
+            rows={applications.data}
+            rowKey={(r) => r.reference}
+            columns={[
+              { key: 'ref', header: 'Reference', render: (r) => r.reference },
+              { key: 'when', header: 'Applied', render: (r) => dateOnly(r.created_at) },
+              { key: 'loan', header: 'Loan', render: (r) => r.product },
+              { key: 'amount', header: 'Amount', num: true, render: (r) => fmt(r.amount) },
+              { key: 'status', header: 'Status', render: (r) => r.status },
+            ]}
+          />
+        ) : null}
+      </div>
+
+      <div className="card">
+        <div className="row between">
           <h3 style={{ margin: 0 }}>Ask us</h3>
           {!asking ? (
             <button type="button" className="btn small primary" onClick={() => setAsking(true)}>
@@ -256,6 +294,89 @@ function PortalHome() {
         ) : null}
       </div>
     </>
+  )
+}
+
+function PortalApplyForm({ onDone }) {
+  const { toast } = useToast()
+  const [products, setProducts] = useState([])
+  const [productId, setProductId] = useState('')
+  const [error, setError] = useState(null)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    fetch(`${import.meta.env.VITE_API_BASE || ''}/api/public/products`)
+      .then((res) => (res.ok ? res.json() : []))
+      .then((list) => {
+        setProducts(list)
+        if (list.length) setProductId(String(list[0].id))
+      })
+      .catch(() => setProducts([]))
+  }, [])
+  const product = products.find((p) => String(p.id) === productId)
+
+  async function submit(event) {
+    event.preventDefault()
+    const form = new FormData(event.currentTarget)
+    setBusy(true)
+    setError(null)
+    try {
+      const made = await portalPost('/api/portal/applications', {
+        product_id: Number(productId),
+        amount: form.get('amount'),
+        term_months: Number(form.get('term_months')),
+        purpose: form.get('purpose') || '',
+      })
+      toast(`Thank you. Your reference is ${made.reference}; we will be in touch.`)
+      onDone()
+    } catch (err) {
+      setError(err)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <form onSubmit={submit} style={{ marginTop: 12 }}>
+      <div className="grid cols-3">
+        <Field as="select" label="Loan" value={productId} onChange={(e) => setProductId(e.target.value)} required>
+          {products.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </Field>
+        <Field
+          label="Amount"
+          name="amount"
+          type="number"
+          step="0.01"
+          min={product?.min_amount}
+          max={product?.max_amount}
+          required
+          hint={product ? `${product.currency} ${fmt(product.min_amount)} to ${fmt(product.max_amount)}` : undefined}
+        />
+        <Field
+          label="Months"
+          name="term_months"
+          type="number"
+          min={product?.min_term}
+          max={product?.max_term}
+          required
+          hint={product ? `${product.min_term} to ${product.max_term}` : undefined}
+        />
+      </div>
+      <Field label="What it is for" name="purpose" maxLength={200} />
+      {error ? <p className="tag-danger">{error.message}</p> : null}
+      <div className="row" style={{ gap: 8 }}>
+        <button type="submit" className="btn primary" disabled={busy || !products.length}>
+          Send application
+        </button>
+        <button type="button" className="btn" onClick={onDone}>
+          Cancel
+        </button>
+      </div>
+    </form>
   )
 }
 

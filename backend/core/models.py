@@ -586,6 +586,17 @@ class Borrower(models.Model):
     preferred_channel = models.CharField(max_length=10, choices=MessageChannel.choices,
                                          default=MessageChannel.SMS)
     is_blacklisted = models.BooleanField(default=False)
+    # Where a loan is paid out to. The wallet defaults to the phone number when blank.
+    bank_name = models.CharField(max_length=80, blank=True, default="")
+    bank_branch = models.CharField(max_length=80, blank=True, default="")
+    bank_account_no = models.CharField(max_length=40, blank=True, default="")
+    bank_account_name = models.CharField(max_length=120, blank=True, default="")
+    mobile_wallet = models.CharField(max_length=30, blank=True, default="")
+    # A politically exposed person (or a close relative or associate of one): their
+    # applications get enhanced due diligence. Flagged by staff, not by a list.
+    is_pep = models.BooleanField(default=False)
+    # When the borrower was last checked against the watch lists.
+    screened_at = models.DateTimeField(null=True, blank=True)
     notes = models.TextField(null=True, blank=True)
     branch = models.ForeignKey("Branch", on_delete=models.SET_NULL, null=True, blank=True,
                                related_name="borrowers")
@@ -2248,6 +2259,156 @@ class PortalRequest(models.Model):
     class Meta:
         db_table = "portal_requests"
         ordering = ["status", "-created_at"]
+
+
+# ---------------------------------------------------------------- payouts
+class PayoutStatus(models.TextChoices):
+    PENDING = "pending", "To pay"
+    SENT = "sent", "Sent"
+    PAID = "paid", "Paid"
+    FAILED = "failed", "Failed"
+
+
+class Payout(models.Model):
+    """The money a disbursed loan sends the borrower, by bank or mobile money.
+
+    The disbursement is posted to the ledger when the loan is disbursed; this
+    records the transfer itself - handed to the mobile-money provider, or put in a
+    bank file and uploaded - and whether it arrived. A failed payout is fixed by
+    paying again another way, never by quietly re-sending.
+    """
+    loan = models.ForeignKey("Loan", on_delete=models.PROTECT, related_name="payouts")
+    amount = models.DecimalField(**MONEY)
+    currency = models.CharField(max_length=8, blank=True, default="")
+    method = models.CharField(max_length=20, choices=PaymentMethod.choices)
+    payee_name = models.CharField(max_length=160)
+    account = models.CharField(max_length=60)            # wallet number or account number
+    bank_name = models.CharField(max_length=80, blank=True, default="")
+    bank_branch = models.CharField(max_length=80, blank=True, default="")
+    status = models.CharField(max_length=10, choices=PayoutStatus.choices,
+                              default=PayoutStatus.PENDING, db_index=True)
+    batch = models.CharField(max_length=40, blank=True, default="")   # the bank file it went in
+    provider_reference = models.CharField(max_length=120, blank=True, default="")
+    error = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(default=timezone.now)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    paid_at = models.DateTimeField(null=True, blank=True)
+    updated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="+")
+
+    class Meta:
+        db_table = "payouts"
+        ordering = ["status", "-created_at"]
+
+
+# ---------------------------------------------------------------- AML screening
+class WatchlistEntry(models.Model):
+    """One name on a sanctions or watch list, as uploaded (services/screening.py).
+
+    `source` names the list ("UN", or whatever a CSV upload is called), so a
+    re-upload of one list replaces that list's entries and leaves the others.
+    """
+    source = models.CharField(max_length=40, db_index=True)
+    name = models.CharField(max_length=255)
+    aliases = models.TextField(blank=True, default="")      # one per line
+    date_of_birth = models.CharField(max_length=40, blank=True, default="")  # "1964" or "1964-03-02"
+    id_number = models.CharField(max_length=80, blank=True, default="")
+    reference = models.CharField(max_length=80, blank=True, default="")
+    notes = models.TextField(blank=True, default="")
+    # Every name and alias, normalised and joined, for matching without re-parsing.
+    keys = models.TextField(blank=True, default="")
+    loaded_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "watchlist_entries"
+
+
+class ScreeningStatus(models.TextChoices):
+    OPEN = "open", "To review"
+    CLEARED = "cleared", "Not the same person"
+    CONFIRMED = "confirmed", "Confirmed match"
+
+
+class ScreeningHit(models.Model):
+    """A borrower whose name (or ID) resembles a watch-list entry. Until someone
+    reviews it, and for good if it is confirmed, the borrower's loans cannot be
+    approved or paid out."""
+    borrower = models.ForeignKey("Borrower", on_delete=models.CASCADE, related_name="screening_hits")
+    entry = models.ForeignKey(WatchlistEntry, on_delete=models.SET_NULL, null=True,
+                              related_name="hits")
+    # Kept on the hit, so a re-uploaded list does not erase what was reviewed.
+    listed_name = models.CharField(max_length=255)
+    source = models.CharField(max_length=40)
+    reference = models.CharField(max_length=80, blank=True, default="")
+    score = models.IntegerField()
+    reason = models.CharField(max_length=255, blank=True, default="")
+    status = models.CharField(max_length=10, choices=ScreeningStatus.choices,
+                              default=ScreeningStatus.OPEN, db_index=True)
+    review_note = models.TextField(blank=True, default="")
+    reviewed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                                    related_name="+")
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "screening_hits"
+        ordering = ["status", "-score"]
+        constraints = [models.UniqueConstraint(fields=["borrower", "source", "listed_name"],
+                                               name="uq_hit_borrower_listing")]
+
+
+# ---------------------------------------------------------------- online applications
+class ApplicationStatus(models.TextChoices):
+    NEW = "new", "New"
+    ACCEPTED = "accepted", "Accepted"
+    DECLINED = "declined", "Declined"
+
+
+class OnlineApplication(models.Model):
+    """A loan asked for online: by a new client on the public Apply page, or by an
+    existing borrower in the portal (then `borrower` is set from the start).
+
+    It is not a loan. Staff review it; accepting it creates the borrower if they
+    are new and opens the ordinary loan application with these figures, so the
+    affordability check, the scorecard and maker-checker approval apply exactly as
+    they do to any other loan.
+    """
+    borrower = models.ForeignKey("Borrower", on_delete=models.SET_NULL, null=True, blank=True,
+                                 related_name="online_applications")
+    first_name = models.CharField(max_length=80)
+    last_name = models.CharField(max_length=80)
+    national_id = models.CharField(max_length=40)
+    phone = models.CharField(max_length=30)
+    email = models.CharField(max_length=120, blank=True, default="")
+    address = models.TextField(blank=True, default="")
+    employer = models.CharField(max_length=120, blank=True, default="")
+    net_salary = models.DecimalField(null=True, blank=True, **MONEY)
+    payday = models.IntegerField(null=True, blank=True)
+    product = models.ForeignKey("LoanProduct", on_delete=models.PROTECT, related_name="+")
+    amount = models.DecimalField(**MONEY)
+    term_months = models.IntegerField()
+    purpose = models.CharField(max_length=200, blank=True, default="")
+    # The applicant agreed to be checked (credit bureau, employer) and contacted.
+    consent = models.BooleanField(default=False)
+    status = models.CharField(max_length=10, choices=ApplicationStatus.choices,
+                              default=ApplicationStatus.NEW, db_index=True)
+    outcome = models.CharField(max_length=255, blank=True, default="")
+    loan = models.ForeignKey("Loan", on_delete=models.SET_NULL, null=True, blank=True,
+                             related_name="+")
+    source = models.CharField(max_length=10, default="public")  # public | portal
+    client_address = models.CharField(max_length=64, blank=True, default="")
+    created_at = models.DateTimeField(default=timezone.now, db_index=True)
+    handled_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="+")
+    handled_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "online_applications"
+        ordering = ["status", "-created_at"]
+
+    @property
+    def full_name(self) -> str:
+        return f"{self.first_name} {self.last_name}"
 
 
 # ---------------------------------------------------------------- scheduled jobs

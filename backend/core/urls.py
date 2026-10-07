@@ -3,6 +3,7 @@ client and curl behave the same way."""
 from django.urls import re_path
 
 from .views import (
+    applications,
     auth,
     bankrec,
     borrowers,
@@ -19,6 +20,7 @@ from .views import (
     messaging,
     org,
     payments,
+    payouts,
     payroll,
     portal,
     periods,
@@ -27,6 +29,7 @@ from .views import (
     reports,
     saved_views,
     savings,
+    screening,
     tills,
 )
 
@@ -58,6 +61,10 @@ urlpatterns = [
     re_path(r"^jobs/(?P<key>[a-z_]+)/run/?$", jobs.run_now),
     re_path(r"^payments/inbound/(?P<provider>[A-Za-z0-9_-]{1,40})/?$", payments.webhook),
     re_path(r"^payments/?$", payments.payments),
+    re_path(r"^payouts/?$", payouts.payouts),
+    re_path(r"^payouts/send-mobile/?$", payouts.send_mobile),
+    re_path(r"^payouts/bank-file/?$", payouts.bank_file),
+    re_path(r"^payouts/(?P<payout_id>\d+)/(?P<action>paid|failed|retry)/?$", payouts.outcome),
     re_path(r"^payments/import/?$", payments.import_statement),
     re_path(r"^payments/retry/?$", payments.retry),
     re_path(r"^payments/(?P<payment_id>\d+)/assign/?$", payments.assign),
@@ -66,6 +73,11 @@ urlpatterns = [
     re_path(r"^holidays/(?P<holiday_id>\d+)/?$", org.holiday_detail),
     re_path(r"^search/?$", org.search),
     re_path(r"^nav-summary/?$", org.nav_summary),
+    re_path(r"^go-live/?$", org.go_live),
+    re_path(r"^screening/hits/?$", screening.hits),
+    re_path(r"^screening/hits/(?P<hit_id>\d+)/review/?$", screening.review),
+    re_path(r"^screening/lists/?$", screening.lists),
+    re_path(r"^screening/run/?$", screening.run),
 
     # ---- borrowers
     re_path(r"^borrowers/?$", borrowers.borrowers),
@@ -241,6 +253,12 @@ urlpatterns = [
     re_path(r"^portal/loans/(?P<loan_id>\d+)/signature/code/?$", portal.signature_code),
     re_path(r"^portal/loans/(?P<loan_id>\d+)/signature/verify/?$", portal.signature_verify),
     re_path(r"^portal-requests/?$", portal.staff_requests),
+    re_path(r"^public/products/?$", applications.public_products),
+    re_path(r"^public/apply/?$", applications.public_apply),
+    re_path(r"^portal/applications/?$", applications.portal_applications),
+    re_path(r"^online-applications/?$", applications.staff_list),
+    re_path(r"^online-applications/(?P<application_id>\d+)/accept/?$", applications.staff_accept),
+    re_path(r"^online-applications/(?P<application_id>\d+)/decline/?$", applications.staff_decline),
     re_path(r"^portal-requests/(?P<request_id>\d+)/done/?$", portal.staff_request_done),
     re_path(r"^reports/employers/?$", reports.employers),
     re_path(r"^reports/spreadsheets/(?P<kind>[a-z-]+)/?$", reports.spreadsheet),

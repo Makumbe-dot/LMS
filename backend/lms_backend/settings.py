@@ -48,6 +48,9 @@ DEBUG = env_bool("DEBUG", True)
 ALLOWED_HOSTS = env_list("ALLOWED_HOSTS", "localhost,127.0.0.1,[::1]")
 
 APP_NAME = env("APP_NAME", "Loan Management System")
+# The sign-in page lists the seed data's demo usernames and passwords only when
+# this is on. Off by default: a live system must never print them.
+SHOW_DEMO_LOGINS = env_bool("SHOW_DEMO_LOGINS", False)
 CURRENCY = env("CURRENCY", "USD")
 # A PNG or JPEG for the top of PDF statements and the loan agreement. The default
 # is the Zinmad Capital monogram that ships with the code; a relative path is
@@ -196,6 +199,8 @@ REST_FRAMEWORK = {
         "inbound_payments": env("THROTTLE_INBOUND_PAYMENTS", "600/min"),
         "portal": env("THROTTLE_PORTAL", "120/min"),
         "portal_login": env("THROTTLE_PORTAL_LOGIN", "10/min"),
+        # The public Apply page, per calling address.
+        "applications": env("THROTTLE_APPLICATIONS", "10/hour"),
     },
 }
 
@@ -344,6 +349,21 @@ TWILIO = {
     "timeout": int(env("TWILIO_TIMEOUT", "20")),
     # Overridable only so tests can point it somewhere harmless.
     "api_base": env("TWILIO_API_BASE", "https://api.twilio.com"),
+}
+
+# Mobile-money payouts (services/payouts.py): a provider's "send money" call,
+# configured like the SMS gateway. Blank URL: payouts are logged, not sent.
+PAYOUT_HTTP = {
+    "url": env("PAYOUT_HTTP_URL", ""),
+    "format": env("PAYOUT_HTTP_FORMAT", "json"),                 # json | form
+    "to_field": env("PAYOUT_HTTP_TO_FIELD", "msisdn"),
+    "amount_field": env("PAYOUT_HTTP_AMOUNT_FIELD", "amount"),
+    "reference_field": env("PAYOUT_HTTP_REFERENCE_FIELD", "reference"),
+    "number_format": env("PAYOUT_HTTP_NUMBER_FORMAT", "plain"),  # plain 2637... | plus +2637...
+    "id_path": env("PAYOUT_HTTP_ID_PATH", ""),
+    "timeout": int(env("PAYOUT_HTTP_TIMEOUT", "30")),
+    "extra": _pairs(env("PAYOUT_HTTP_FIELDS", "")),
+    "headers": _pairs(env("PAYOUT_HTTP_HEADERS", "")),
 }
 
 # Meta's WhatsApp Cloud API, for MESSAGE_WHATSAPP_BACKEND=meta: WhatsApp with no

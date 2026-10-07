@@ -25,10 +25,17 @@ export const NAV = [
         key: 'customers',
         label: 'Customers',
         icon: 'users',
+        badge: {
+          key: 'screening_open',
+          one: 'screening match to review',
+          many: 'screening matches to review',
+          tone: 'warn',
+        },
         pages: [
           { to: '/borrowers', label: 'Borrowers', icon: 'user' },
           { to: '/groups', label: 'Groups', icon: 'users' },
           { to: '/portal-requests', label: 'Portal requests', icon: 'inbox' },
+          { to: '/screening', label: 'Screening', icon: 'shield' },
         ],
       },
       {
@@ -37,7 +44,11 @@ export const NAV = [
         icon: 'loans',
         // A count from /api/nav-summary shown beside the row: work that is waiting.
         badge: { key: 'pending_applications', one: 'application waiting', many: 'applications waiting' },
-        pages: [{ to: '/loans', label: 'Loans', icon: 'loans' }],
+        pages: [
+          { to: '/loans', label: 'Loans', icon: 'loans' },
+          { to: '/online-applications', label: 'Online applications', icon: 'inbox' },
+          { to: '/payouts', label: 'Payouts', icon: 'coins' },
+        ],
       },
       {
         key: 'savings',
@@ -153,6 +164,7 @@ export const NAV = [
         },
         pages: [
           { to: '/settings', label: 'Settings', icon: 'settings', rights: ADMIN },
+          { to: '/go-live', label: 'Go-live checklist', icon: 'shield', rights: ADMIN },
           { to: '/users', label: 'Users', icon: 'userCog', rights: ADMIN },
           { to: '/imports/loan-book', label: 'Loan book migration', icon: 'database', rights: ADMIN },
           { to: '/jobs', label: 'Scheduled jobs', icon: 'play', rights: ADMIN },

@@ -60,6 +60,7 @@ from ..serializers import (
     WaiverSerializer,
 )
 from ..services import arrears as arrears_svc
+from ..services import payouts
 from ..services import charges as chg
 from ..services import loans as svc
 from ..services import repayments as rep
@@ -223,6 +224,7 @@ def disburse(request, loan_id: int):
         audit(request.user, "disburse", "loan", loan.id,
               f"{loan.loan_no} {loan.principal} on {loan.disbursement_date}")
         queue_welcome(loan)
+        payouts.create_for(loan, data["method"], request.user)
     return detail_response(loan_id)
 
 
