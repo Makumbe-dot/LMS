@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 
 import DataTable from '../components/DataTable.jsx'
+import Icon from '../components/Icons.jsx'
 import SignaturePanel from '../components/SignaturePanel.jsx'
 import Modal, { FormModal } from '../components/Modal.jsx'
 import Scorecard from '../components/Scorecard.jsx'
@@ -272,6 +273,24 @@ export default function LoanDetail() {
     }
   }
 
+  /**
+   * Open WhatsApp with today's reminder or arrears notice typed in. The window is
+   * opened before the request, inside the click, or the browser blocks it as a
+   * pop-up; the address is filled in when the message arrives.
+   */
+  async function openWhatsApp() {
+    const tab = window.open('', '_blank')
+    try {
+      const result = await post(`/api/loans/${id}/whatsapp`)
+      if (tab) tab.location.href = result.url
+      else window.location.href = result.url
+      toast(`WhatsApp opened for ${result.phone}. Press send there; it is noted on the Messages page.`)
+    } catch (err) {
+      tab?.close()
+      toastError(err)
+    }
+  }
+
   async function openSettlement() {
     try {
       setSettlement(await get(`/api/loans/${id}/settlement-quote`))
@@ -382,6 +401,17 @@ export default function LoanDetail() {
         {canLoans && loan.status === 'active' ? (
           <button type="button" className="btn" onClick={() => setAction({ kind: 'topup' })}>
             Top up
+          </button>
+        ) : null}
+        {(canCollections || can('messages')) && loan.status === 'active' ? (
+          <button
+            type="button"
+            className="btn"
+            onClick={openWhatsApp}
+            title={arrears > 0 ? 'Send the arrears notice from WhatsApp' : 'Send the next instalment reminder from WhatsApp'}
+          >
+            <Icon name="message" size={15} />
+            WhatsApp
           </button>
         ) : null}
         <button

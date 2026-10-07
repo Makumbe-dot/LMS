@@ -33,7 +33,7 @@ describe('the sidebar', () => {
     expect(within(nav).getByRole('link', { name: /customers/i })).not.toHaveAttribute('aria-current')
     // The ledger is a tab of Accounting now, not a row of its own.
     expect(within(nav).queryByRole('link', { name: /general ledger/i })).toBeNull()
-    expect(within(nav).getAllByRole('link')).toHaveLength(11)
+    expect(within(nav).getAllByRole('link')).toHaveLength(12)
   })
 
   it('groups the entries under captions', () => {

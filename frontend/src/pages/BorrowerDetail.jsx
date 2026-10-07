@@ -223,6 +223,7 @@ export default function BorrowerDetail() {
             items={[
               ['National ID', b.national_id],
               ['Phone', b.phone],
+              ['Messages by', { whatsapp: 'WhatsApp', email: 'Email' }[b.preferred_channel] || 'SMS'],
               ['Email', b.email || '-'],
               ['Date of birth', b.date_of_birth || '-'],
               ['Gender', b.gender || '-'],

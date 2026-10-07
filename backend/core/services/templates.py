@@ -49,6 +49,15 @@ TEMPLATES = {
                          "amount": "The amount promised, with currency",
                          "promised_date": "The date promised"},
     },
+    "welcome": {
+        "label": "Payout confirmation",
+        "default": ("Dear {first_name}, your loan {loan_no} of {amount} has been paid out. "
+                    "Your first instalment of {instalment} is due on {due_date}. Thank you."),
+        "placeholders": {**COMMON, "loan_no": "The loan number",
+                         "amount": "The amount advanced, with currency",
+                         "instalment": "The first instalment, with currency",
+                         "due_date": "The first due date"},
+    },
     "signing_code": {
         "label": "Agreement signing code",
         "default": ("{institution}: your code to sign the agreement for loan {loan_no} is "
@@ -114,17 +123,60 @@ def save(templates: dict) -> list[dict]:
     return catalogue()
 
 
-def render(kind: str, borrower=None, settings_row=None, **values) -> str:
-    """The message for one borrower, from the institution's wording or the default."""
+def context(borrower=None, settings_row=None, **values) -> dict:
+    """Every placeholder's value for one message, as text."""
     settings_row = settings_row or OrganisationSetting.load()
-    text = (settings_row.message_templates or {}).get(kind) or TEMPLATES[kind]["default"]
-    context = {
+    return {
         "first_name": getattr(borrower, "first_name", "") or "",
         "last_name": getattr(borrower, "last_name", "") or "",
         "institution": settings_row.name or "",
         "institution_phone": settings_row.phone or "",
-        **{k: "" if v is None else v for k, v in values.items()},
+        **{k: "" if v is None else str(v) for k, v in values.items()},
     }
+
+
+# ---------------------------------------------------------------- WhatsApp
+# A WhatsApp message to someone who has not written in the last 24 hours must be
+# an approved template, and a template takes numbered variables, not free text.
+# This is the order each kind's values are handed over in: {{1}} is the first
+# name, and so on. A template is submitted to Meta (through Twilio) with exactly
+# these variables in this order; `whatsapp_wording()` writes the suggested text.
+WHATSAPP_VARIABLES = {
+    "reminder": ["first_name", "number", "amount", "loan_no", "due_date"],
+    "arrears": ["first_name", "loan_no", "amount", "days"],
+    "receipt": ["first_name", "amount", "loan_no", "balance"],
+    "promise": ["first_name", "amount", "loan_no", "promised_date"],
+    "welcome": ["first_name", "loan_no", "amount", "instalment", "due_date"],
+}
+
+
+def whatsapp_variables(kind: str, values: dict) -> dict:
+    """{"1": "Tendai", "2": "3", ...} for a template, from a message's values."""
+    names = WHATSAPP_VARIABLES.get(kind, [])
+    return {str(i): str(values.get(name, "") or "-") for i, name in enumerate(names, start=1)}
+
+
+def whatsapp_wording(kind: str) -> str | None:
+    """The built-in wording with {{1}}, {{2}}... in place of the placeholders: the
+    text to submit for approval, so the template and the SMS say the same thing."""
+    names = WHATSAPP_VARIABLES.get(kind)
+    if not names:
+        return None
+    text = TEMPLATES[kind]["default"]
+    for i, name in enumerate(names, start=1):
+        text = text.replace("{" + name + "}", "{{" + str(i) + "}}")
+    return text
+
+
+def render(kind: str, borrower=None, settings_row=None, **values) -> str:
+    """The message for one borrower, from the institution's wording or the default."""
+    settings_row = settings_row or OrganisationSetting.load()
+    text = (settings_row.message_templates or {}).get(kind) or TEMPLATES[kind]["default"]
+    context_values = context(borrower, settings_row, **values)
+    return _format(kind, text, context_values)
+
+
+def _format(kind: str, text: str, context: dict) -> str:
     try:
         return text.format_map(context)
     except (KeyError, ValueError, IndexError):

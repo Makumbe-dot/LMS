@@ -64,7 +64,7 @@ from ..services import charges as chg
 from ..services import loans as svc
 from ..services import repayments as rep
 from ..services import signatures, workdays
-from ..services.notifications import queue_receipt
+from ..services.notifications import queue_receipt, queue_welcome
 from ..services.penalties import accrue_penalties
 from ..services.reports import loan_statement
 from .helpers import (
@@ -222,6 +222,7 @@ def disburse(request, loan_id: int):
                      data.get("first_instalment_date"), data["method"], data.get("reference"))
         audit(request.user, "disburse", "loan", loan.id,
               f"{loan.loan_no} {loan.principal} on {loan.disbursement_date}")
+        queue_welcome(loan)
     return detail_response(loan_id)
 
 

@@ -297,6 +297,12 @@ SPECTACULAR_SETTINGS = {
 # fill in MESSAGE_HTTP_URL to deliver for real.
 MESSAGE_SMS_BACKEND = env("MESSAGE_SMS_BACKEND", "console")
 MESSAGE_EMAIL_BACKEND = env("MESSAGE_EMAIL_BACKEND", "console")
+# WhatsApp: "console" (log only, the default), "meta", "twilio", or "off" to send every
+# WhatsApp-preferring borrower's messages by SMS instead.
+MESSAGE_WHATSAPP_BACKEND = env("MESSAGE_WHATSAPP_BACKEND", "console")
+# Numbers are kept as people write them (0771 234 567). Providers want them in
+# international form, so a number with no country code is given this one.
+MESSAGE_DEFAULT_COUNTRY_CODE = env("MESSAGE_DEFAULT_COUNTRY_CODE", "263").lstrip("+")
 MESSAGE_MAX_ATTEMPTS = int(env("MESSAGE_MAX_ATTEMPTS", "3"))
 MESSAGE_FILE_PATH = env("MESSAGE_FILE_PATH", "")
 
@@ -314,6 +320,50 @@ MESSAGE_HTTP = {
     # the URL so an API key never lands in an access log.
     "extra": _pairs(env("MESSAGE_HTTP_FIELDS", "")),
     "headers": _pairs(env("MESSAGE_HTTP_HEADERS", "")),
+}
+
+# Twilio, for MESSAGE_SMS_BACKEND=twilio and/or MESSAGE_WHATSAPP_BACKEND=twilio.
+# The account SID and auth token are on the Twilio console's front page. An API
+# key (SK...) and its secret may be used instead of the auth token.
+TWILIO = {
+    "account_sid": env("TWILIO_ACCOUNT_SID", ""),
+    "auth_token": env("TWILIO_AUTH_TOKEN", ""),
+    "api_key_sid": env("TWILIO_API_KEY_SID", ""),
+    "api_key_secret": env("TWILIO_API_KEY_SECRET", ""),
+    # SMS: a Twilio number (+1...), an approved alphanumeric sender ("ZINMAD"), or a
+    # Messaging Service SID (MG...), which picks the sender per country for you.
+    "sms_from": env("TWILIO_SMS_FROM", ""),
+    "messaging_service_sid": env("TWILIO_MESSAGING_SERVICE_SID", ""),
+    # WhatsApp: the WhatsApp-enabled number, e.g. +14155238886 for Twilio's sandbox.
+    "whatsapp_from": env("TWILIO_WHATSAPP_FROM", ""),
+    # Approved WhatsApp templates (Content SIDs, HX...), one per message kind:
+    # "reminder=HX...|arrears=HX...|receipt=HX...|promise=HX...". A kind with no
+    # template is sent as plain text, which WhatsApp only delivers within 24 hours
+    # of the borrower last writing to you; otherwise it falls back to SMS.
+    "whatsapp_templates": _pairs(env("TWILIO_WHATSAPP_TEMPLATES", "")),
+    "timeout": int(env("TWILIO_TIMEOUT", "20")),
+    # Overridable only so tests can point it somewhere harmless.
+    "api_base": env("TWILIO_API_BASE", "https://api.twilio.com"),
+}
+
+# Meta's WhatsApp Cloud API, for MESSAGE_WHATSAPP_BACKEND=meta: WhatsApp with no
+# provider in between. All of it comes from Meta's WhatsApp Manager / the app's
+# WhatsApp "API Setup" page.
+META_WHATSAPP = {
+    # A permanent system-user token (the one on the API Setup page lasts 24 hours).
+    "token": env("META_WHATSAPP_TOKEN", ""),
+    # The id of the business phone number (not the number itself).
+    "phone_number_id": env("META_WHATSAPP_PHONE_NUMBER_ID", ""),
+    # Approved template names, one per kind: "reminder=lms_reminder|arrears=lms_arrears|..."
+    "templates": _pairs(env("META_WHATSAPP_TEMPLATES", "")),
+    "language": env("META_WHATSAPP_LANGUAGE", "en"),
+    "version": env("META_GRAPH_VERSION", "v23.0"),
+    # For the delivery webhook: any string you choose (entered again in Meta's
+    # webhook settings), and the app secret Meta signs each call with.
+    "verify_token": env("META_WHATSAPP_VERIFY_TOKEN", ""),
+    "app_secret": env("META_APP_SECRET", ""),
+    "timeout": int(env("META_WHATSAPP_TIMEOUT", "20")),
+    "api_base": env("META_GRAPH_API_BASE", "https://graph.facebook.com"),
 }
 
 # ---------------------------------------------------------------- credit bureau

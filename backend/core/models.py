@@ -94,6 +94,15 @@ class RepaymentFrequency(models.TextChoices):
 class NotificationChannel(models.TextChoices):
     SMS = "sms", "SMS"
     EMAIL = "email", "Email"
+    WHATSAPP = "whatsapp", "WhatsApp"
+
+
+class MessageChannel(models.TextChoices):
+    """How a borrower prefers to be messaged. Email and WhatsApp fall back to SMS
+    when a message cannot be delivered (or there is no email address on file)."""
+    SMS = "sms", "SMS"
+    WHATSAPP = "whatsapp", "WhatsApp"
+    EMAIL = "email", "Email"
 
 
 class NotificationStatus(models.TextChoices):
@@ -347,6 +356,9 @@ class OrganisationSetting(models.Model):
     # The institution's own wording for borrower messages, by kind (services/templates.py).
     # A kind left out uses the built-in wording.
     message_templates = models.JSONField(default=dict, blank=True)
+    # Which messages go out by themselves, and how often; see services/communications.py
+    # for the defaults a blank row means.
+    communication_rules = models.JSONField(default=dict, blank=True)
 
     # IFRS 9 expected-credit-loss provision rates, percent of exposure per stage
     ecl_stage1_pct = models.DecimalField(default=Decimal("1"), max_digits=6, decimal_places=2)
@@ -569,6 +581,10 @@ class Borrower(models.Model):
         help_text="Day of the month the salary is paid",
     )
     kyc_verified = models.BooleanField(default=False)
+    # Reminders, notices and receipts go by this channel. WhatsApp falls back to
+    # SMS by itself when a message cannot be delivered there.
+    preferred_channel = models.CharField(max_length=10, choices=MessageChannel.choices,
+                                         default=MessageChannel.SMS)
     is_blacklisted = models.BooleanField(default=False)
     notes = models.TextField(null=True, blank=True)
     branch = models.ForeignKey("Branch", on_delete=models.SET_NULL, null=True, blank=True,
@@ -1890,6 +1906,18 @@ class Notification(models.Model):
     # back to the borrower it was about.
     provider = models.CharField(max_length=20, null=True, blank=True)
     provider_message_id = models.CharField(max_length=120, null=True, blank=True)
+    # "Sent" means the provider accepted it. What happened next - delivered, read,
+    # undelivered - is asked of the provider afterwards (gateways.refresh_deliveries),
+    # because WhatsApp in particular accepts a message and fails it minutes later.
+    delivery_status = models.CharField(max_length=20, null=True, blank=True)
+    delivery_checked_at = models.DateTimeField(null=True, blank=True)
+    # The placeholder values the body was made from, so a WhatsApp template (which
+    # takes variables, not text) can be filled in at send time.
+    template_vars = models.JSONField(null=True, blank=True)
+    # A WhatsApp message that could not be delivered is sent again by SMS; the SMS
+    # points back at the message it replaces.
+    fallback_of = models.ForeignKey("self", on_delete=models.SET_NULL, null=True, blank=True,
+                                    related_name="fallbacks")
 
     # Stops the reminder job queueing the same message twice
     dedupe_key = models.CharField(max_length=120, unique=True)

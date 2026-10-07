@@ -1561,3 +1561,40 @@ dl.kv > div:last-child > dt, dl.kv > div:last-child > dd { border-bottom: none; 
 }
 
 .saved-views { display: inline-flex; gap: 6px; align-items: center; }
+
+/* ---------------------------------------------------------------- communications */
+.comm-channel { display: flex; flex-direction: column; margin-bottom: 0; }
+.comm-title { display: flex; align-items: center; gap: 10px; margin: 0; }
+.comm-icon {
+  display: inline-grid; place-items: center; width: 34px; height: 34px; border-radius: 10px;
+  background: var(--surface-3); color: var(--text-secondary);
+}
+.comm-icon.sms { background: rgba(42, 120, 214, 0.12); color: #2a78d6; }
+.comm-icon.whatsapp { background: rgba(37, 160, 90, 0.14); color: #1f9a55; }
+.comm-icon.email { background: rgba(248, 106, 0, 0.13); color: #e05a00; }
+.comm-figures {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 14px 0 8px;
+}
+.comm-figures > div { padding: 10px 12px; border-radius: 10px; background: var(--surface-sunken); }
+.comm-figures dt {
+  color: var(--muted); font: 600 10.5px/1.2 var(--font-head); letter-spacing: .06em;
+  text-transform: uppercase;
+}
+.comm-figures dd { margin: 4px 0 0; font: 700 20px/1.1 var(--font-head); font-variant-numeric: tabular-nums; }
+.comm-foot { margin: auto 0 0; padding-top: 8px; font-size: 12.5px; }
+.comm-lead { margin: 12px 0 8px; color: var(--text-secondary); font-size: 13px; line-height: 1.5; }
+.comm-keys { margin: 0 0 4px; padding-left: 18px; font-size: 12px; color: var(--muted); }
+.comm-keys li { margin: 3px 0; }
+.comm-switches p.muted { margin: -4px 0 12px 26px; font-size: 12.5px; }
+.comm-kinds { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+.comm-kind {
+  display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; cursor: pointer;
+  border: 1px solid var(--border); border-radius: 12px; background: var(--surface);
+  transition: border-color .15s, background-color .15s;
+}
+.comm-kind.on { border-color: color-mix(in srgb, var(--accent) 55%, transparent); background: var(--accent-soft); }
+.comm-kind input { margin-top: 2px; }
+.comm-kind span { display: flex; flex-direction: column; gap: 3px; }
+.comm-kind strong { font-size: 13.5px; text-transform: capitalize; }
+.comm-kind small { color: var(--muted); font-size: 12px; line-height: 1.4; }
+.grid.cols-3 + .card, .grid.cols-3 + form.card { margin-top: 16px; }

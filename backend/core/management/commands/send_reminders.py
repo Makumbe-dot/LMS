@@ -52,6 +52,13 @@ class Command(BaseCommand):
 
         if not options["send"]:
             return
+        from core.services.communications import rules
+
+        if not rules()["auto_send"]:
+            self.stdout.write(self.style.WARNING(
+                "Automatic sending is off (Communications > Automation): the messages wait "
+                "in the Outbox for someone to send them."))
+            return
 
         outcome = send(as_of=as_of, limit=options.get("limit"))
         audit(None, "send_notifications", "system", None, str(
@@ -60,7 +67,8 @@ class Command(BaseCommand):
         gateway = outcome["gateway"]
         self.stdout.write(self.style.SUCCESS(
             f"Delivered {outcome['sent']} of {outcome['attempted']} message(s) "
-            f"via {gateway['sms_backend']}/{gateway['email_backend']}"))
+            f"via SMS {gateway['sms_backend']}, WhatsApp {gateway['whatsapp_backend']}, "
+            f"email {gateway['email_backend']}"))
         if outcome["retrying"]:
             self.stdout.write(self.style.WARNING(
                 f"{outcome['retrying']} will be retried on the next run "
@@ -70,8 +78,8 @@ class Command(BaseCommand):
                 f"{outcome['failed']} gave up permanently:"))
             for line in outcome["errors"]:
                 self.stdout.write(self.style.ERROR(f"  {line}"))
-        if not gateway["sms_delivers"] and not gateway["email_delivers"]:
+        if not (gateway["sms_delivers"] or gateway["email_delivers"]
+                or gateway["whatsapp_delivers"]):
             self.stdout.write(self.style.WARNING(
-                "Nothing actually left the building: both backends are "
-                f"'{gateway['sms_backend']}'/'{gateway['email_backend']}'. Set "
-                "MESSAGE_SMS_BACKEND=http and MESSAGE_HTTP_URL to deliver for real."))
+                "Nothing actually left the building: no channel is set to deliver. "
+                "See Communications > Channels."))

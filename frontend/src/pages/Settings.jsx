@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 
 import DataTable from '../components/DataTable.jsx'
-import MessageTemplates from '../components/MessageTemplates.jsx'
 import { FormModal } from '../components/Modal.jsx'
 import { useToast } from '../components/Toast.jsx'
 import { Check, ErrorBanner, Field, Loading, PageHeader } from '../components/ui.jsx'
@@ -13,7 +13,7 @@ import { useApi } from '../lib/useApi.js'
 const FIELDS = [
   'name', 'currency', 'address', 'phone', 'email', 'registration', 'statement_declarations',
   'ecl_stage1_pct', 'ecl_stage2_pct', 'ecl_stage3_pct',
-  'ecl_stage2_days', 'ecl_stage3_days', 'reminder_days_before',
+  'ecl_stage2_days', 'ecl_stage3_days',
   'officer_approval_limit', 'min_credit_score', 'group_arrears_block_days',
   'require_open_till', 'require_signature', 'portal_enabled', 'closed_weekdays',
   'interest_method',
@@ -259,14 +259,6 @@ export default function Settings() {
             onChange={set('ecl_stage3_days')}
           />
           <Field
-            label="Reminder window (days before due)"
-            type="number"
-            min="0"
-            value={values.reminder_days_before}
-            onChange={set('reminder_days_before')}
-            hint="How far ahead instalment reminders are queued"
-          />
-          <Field
             label="Group borrowing blocked after (days in arrears)"
             type="number"
             min="0"
@@ -336,7 +328,10 @@ export default function Settings() {
         </div>
       </form>
 
-      <MessageTemplates />
+      <div className="hint">
+        Message wording, reminder timing and which messages go out automatically are under{' '}
+        <Link to="/communications">Communications</Link>.
+      </div>
 
       <div className="card">
         <div className="row between" style={{ marginBottom: 12 }}>

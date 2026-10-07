@@ -43,9 +43,20 @@ function Write-Log([string] $message, [string] $colour = 'Gray') {
 function Invoke-Step([string] $name, [string[]] $arguments) {
     Write-Log "START  $name" 'Cyan'
     try {
-        $output = & $python @arguments 2>&1
-        $output | ForEach-Object { Write-Log "       $_" }
-        if ($LASTEXITCODE -ne 0) { throw "exit code $LASTEXITCODE" }
+        # Python writes its log (every message the console backend "sends", every
+        # warning) to stderr. Under 'Stop', Windows PowerShell turns the first such
+        # line into a terminating error, abandons the process mid-run, and a job is
+        # left marked "running" for good. Only the exit code decides success.
+        $previous = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            $output = & $python @arguments 2>&1
+            $exitCode = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $previous
+        }
+        $output | ForEach-Object { Write-Log "       $($_.ToString())" }
+        if ($exitCode -ne 0) { throw "exit code $exitCode" }
         Write-Log "OK     $name" 'Green'
         return $true
     } catch {

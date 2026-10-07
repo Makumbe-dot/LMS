@@ -777,7 +777,7 @@ Reminders, arrears notices and receipts are generated into an outbox and deliver
 in one UPDATE that contacted nobody, so the system reported arrears notices as delivered that no
 borrower had received, which is worse than admitting it cannot send.
 
-Four backends, picked per channel by setting. None is a vendor SDK:
+Five backends, picked per channel by setting. None is a vendor SDK:
 
 | Backend | What it does |
 |---|---|
@@ -785,6 +785,7 @@ Four backends, picked per channel by setting. None is a vendor SDK:
 | `file` | Appends JSON lines to a file — for a demo, or to hand an aggregator a batch by hand. |
 | `smtp` | Real email through Django's mail backend. No third-party account needed. |
 | `http` | A form or JSON POST, configured entirely by `.env`. |
+| `twilio` | Twilio's REST API, for SMS and for WhatsApp (see below). |
 
 The HTTP backend is configuration rather than code: the URL, the method, the format, which field
 carries the recipient, which carries the text, any fixed fields and headers, and where the provider's
@@ -807,6 +808,45 @@ permanent**: a 5xx or a timeout is retried on the next run up to `MESSAGE_MAX_AT
 malformed address or a 4xx is marked failed at once, because retrying it twice more only delays
 someone noticing. A *misconfigured* gateway raises instead of failing the queue, so a missing URL
 cannot mark two hundred messages failed.
+
+### WhatsApp through Meta, and the WhatsApp button
+
+**The WhatsApp button** needs no account. On an active loan, *WhatsApp* opens WhatsApp on the staff
+member's phone or computer (a `wa.me` link) with today's arrears notice, or the next instalment
+reminder, already typed in; they press send. It is recorded on the Messages page as sent *by hand*.
+
+**Automatic WhatsApp through Meta's Cloud API** (`MESSAGE_WHATSAPP_BACKEND=meta`) sends with no
+provider in between. You need a Meta Business account, a WhatsApp Business number (not one already on
+ordinary WhatsApp), business verification, and the templates approved, as for any WhatsApp sender. The
+settings are in `backend/.env.example`. Meta reports *delivered*, *read* and *failed* only by calling
+a webhook, `/api/whatsapp/meta/webhook`, which must be reachable over HTTPS from the internet; the
+calls are checked against the app secret. Without the webhook, a message Meta refuses outright is
+still resent by SMS at once, but one that fails later is not noticed.
+
+### SMS and WhatsApp through Twilio
+
+`twilio` (and `meta`, above, for WhatsApp only) is a further backend, for SMS (`MESSAGE_SMS_BACKEND=twilio`) and for WhatsApp
+(`MESSAGE_WHATSAPP_BACKEND=twilio`). Each borrower has a **Send messages by** choice, SMS or WhatsApp,
+on their record. Phone numbers stay as staff type them; `MESSAGE_DEFAULT_COUNTRY_CODE` (263) turns
+`0771 234 567` into `+263771234567` for sending.
+
+WhatsApp has one rule that shapes everything: a business may only send free text to someone who has
+written to it in the last 24 hours. Anything else must be a **template approved by Meta**. So:
+
+1. In Twilio, create one template per message (Content Template Builder, category *Utility*) with the
+   wording shown on the Messages page under *WhatsApp templates*. The numbered variables are filled in
+   that order: `{{1}}` is always the first name.
+2. Once approved, put the Content SIDs in `TWILIO_WHATSAPP_TEMPLATES`
+   (`reminder=HX...|arrears=HX...|receipt=HX...|promise=HX...`).
+3. A message without a template is sent as plain text. When WhatsApp cannot deliver it - outside the
+   24-hour window, or to a number not on WhatsApp - Twilio reports it undelivered, and the next send run
+   asks Twilio, marks it failed with the reason, and **resends it by SMS**. A WhatsApp message Twilio
+   refuses outright is resent by SMS in the same run.
+
+Every send run first asks Twilio what became of the last three days' messages, so the Messages page
+shows *delivered*, *read* or *undelivered* beside each one rather than only "accepted". One-time codes
+(portal sign-in, agreement signing) always go by SMS. Wrong Twilio credentials stop the run rather than
+failing the whole queue.
 
 The Messages page says in a banner whether anything is actually being delivered, because that is the
 first question anyone asks about an outbox. `POST /api/notifications/mark-sent` still exists for the

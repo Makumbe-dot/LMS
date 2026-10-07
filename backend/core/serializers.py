@@ -227,7 +227,7 @@ class GuarantorSerializer(serializers.ModelSerializer):
 BORROWER_FIELDS = [
     "first_name", "last_name", "national_id", "date_of_birth", "gender", "phone", "email",
     "address", "employer", "employee_no", "job_title", "net_salary", "payday",
-    "kyc_verified", "is_blacklisted", "notes", "branch",
+    "kyc_verified", "preferred_channel", "is_blacklisted", "notes", "branch",
 ]
 
 
@@ -290,7 +290,7 @@ class BorrowerUpdateSerializer(serializers.ModelSerializer):
         # national_id is the borrower's identity in the register and is not editable
         fields = ["first_name", "last_name", "phone", "email", "address", "employer",
                   "employee_no", "job_title", "net_salary", "payday", "kyc_verified",
-                  "is_blacklisted", "notes", "branch"]
+                  "preferred_channel", "is_blacklisted", "notes", "branch"]
         extra_kwargs = {f: {"required": False} for f in fields}
 
 
@@ -657,7 +657,7 @@ class NotificationSerializer(serializers.ModelSerializer):
         fields = ["id", "borrower_id", "borrower_name", "loan_id", "loan_no", "kind", "channel",
                   "to_address", "subject", "body", "status", "scheduled_for", "sent_at", "error",
                   "attempts", "last_attempt_at", "provider", "provider_message_id",
-                  "created_at"]
+                  "delivery_status", "delivery_checked_at", "fallback_of_id", "created_at"]
 
 
 class NotificationActionSerializer(serializers.Serializer):

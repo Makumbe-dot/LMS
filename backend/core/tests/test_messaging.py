@@ -24,6 +24,9 @@ class MessagingBase(LedgerBase):
         self.product = self.make_product()
         self.borrower = self.make_borrower()
         self.loan = self.disbursed_loan(self.product, self.borrower)
+        # Disbursing queues a payout confirmation; each test starts from an empty outbox.
+        self.payout_confirmation = Notification.objects.filter(kind="welcome").first()
+        Notification.objects.all().delete()
 
     def queue(self, **overrides):
         from core.models import Borrower

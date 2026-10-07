@@ -23,6 +23,7 @@ const BLANK = {
   net_salary: '0',
   payday: '25',
   kyc_verified: false,
+  preferred_channel: 'sms',
   is_blacklisted: false,
   notes: '',
   branch: '',
@@ -131,6 +132,17 @@ export default function BorrowerForm() {
           </Field>
           <Field label="Phone" required value={values.phone} onChange={set('phone')} />
           <Field label="Email" type="email" value={values.email || ''} onChange={set('email')} />
+          <Field
+            as="select"
+            label="Send messages by"
+            value={values.preferred_channel || 'sms'}
+            onChange={set('preferred_channel')}
+            hint="Reminders, notices and receipts. WhatsApp and email fall back to SMS by themselves if a message cannot be delivered."
+          >
+            <option value="sms">SMS</option>
+            <option value="whatsapp">WhatsApp</option>
+            <option value="email">Email</option>
+          </Field>
           <Field label="Employer" value={values.employer || ''} onChange={set('employer')} />
           <Field label="Employee no." value={values.employee_no || ''} onChange={set('employee_no')} />
           <Field label="Job title" value={values.job_title || ''} onChange={set('job_title')} />

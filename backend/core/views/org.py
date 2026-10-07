@@ -1,15 +1,25 @@
 """Branches, institution settings, the holiday calendar and cross-entity search."""
-from datetime import date
+from datetime import date, timedelta
 
 from django.db import transaction
 from django.db.models import Q
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 
 from ..audit import audit
 from ..exceptions import BusinessRuleError, NotFound
-from ..models import Borrower, Branch, Holiday, Loan, LoanStatus, OrganisationSetting
+from ..models import (
+    Borrower,
+    Branch,
+    Holiday,
+    Loan,
+    LoanStatus,
+    Notification,
+    NotificationStatus,
+    OrganisationSetting,
+)
 from ..permissions import IsAdmin
 from ..serializers import BranchSerializer, HolidaySerializer, OrganisationSettingSerializer
 from ..services import arrears as arrears_svc
@@ -136,6 +146,10 @@ def nav_summary(request):
     return Response({
         **extra,
         "pending_applications": Loan.objects.filter(status=LoanStatus.PENDING).count(),
+        # Messages that did not get through this past week, so someone looks.
+        "messages_failed": Notification.objects.filter(
+            status=NotificationStatus.FAILED,
+            created_at__gte=timezone.now() - timedelta(days=7)).count(),
         "loans_in_arrears": (Loan.objects
                              .filter(status=LoanStatus.ACTIVE)
                              .filter(arrears_svc.is_overdue(date.today()))

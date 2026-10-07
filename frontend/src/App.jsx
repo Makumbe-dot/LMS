@@ -28,6 +28,12 @@ import LoanNew from './pages/LoanNew.jsx'
 import Loans from './pages/Loans.jsx'
 import Login from './pages/Login.jsx'
 import Notifications from './pages/Notifications.jsx'
+import {
+  CommunicationsAutomation,
+  CommunicationsChannels,
+  CommunicationsOverview,
+  CommunicationsWording,
+} from './pages/Communications.jsx'
 import Payments from './pages/Payments.jsx'
 import PortalRequests from './pages/PortalRequests.jsx'
 import Payroll from './pages/Payroll.jsx'
@@ -115,6 +121,10 @@ export default function App() {
             }
           />
           <Route path="/notifications" element={<Notifications />} />
+          <Route path="/communications" element={<CommunicationsOverview />} />
+          <Route path="/communications/automation" element={<CommunicationsAutomation />} />
+          <Route path="/communications/wording" element={<CommunicationsWording />} />
+          <Route path="/communications/channels" element={<CommunicationsChannels />} />
           <Route path="/payments" element={<Payments />} />
 
           <Route path="/transactions" element={<Transactions />} />

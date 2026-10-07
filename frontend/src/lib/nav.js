@@ -63,7 +63,24 @@ export const NAV = [
           { to: '/payroll', label: 'Payroll deductions', icon: 'briefcase' },
           { to: '/payments', label: 'Incoming payments', icon: 'inbox' },
           { to: '/imports', label: 'Bulk repayments', icon: 'upload', rights: CASH, end: true },
-          { to: '/notifications', label: 'Messages', icon: 'message' },
+        ],
+      },
+      {
+        key: 'communications',
+        label: 'Communications',
+        icon: 'message',
+        badge: {
+          key: 'messages_failed',
+          one: 'message failed this week',
+          many: 'messages failed this week',
+          tone: 'warn',
+        },
+        pages: [
+          { to: '/communications', label: 'Overview', icon: 'dashboard', end: true },
+          { to: '/notifications', label: 'Outbox', icon: 'inbox' },
+          { to: '/communications/automation', label: 'Automation', icon: 'play' },
+          { to: '/communications/wording', label: 'Wording', icon: 'pen' },
+          { to: '/communications/channels', label: 'Channels', icon: 'whatsapp' },
         ],
       },
       {
