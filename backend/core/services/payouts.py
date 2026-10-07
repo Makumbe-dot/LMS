@@ -71,6 +71,10 @@ def _send_one(payout: Payout, config: dict) -> tuple[bool, str, str]:
     if not to:
         return False, "", f"{payout.account!r} is not a mobile number"
     reference = f"{payout.loan.loan_no}-P{payout.id}"
+    if (getattr(settings, "MESSAGE_TEST_RECIPIENT", "") or "").strip():
+        # Test mode: money is never sent, to the borrower or to the test number.
+        log.info("[test mode: payout not sent to %s] %s %s", to, payout.amount, reference)
+        return True, f"test-{payout.id}", ""
     if not config.get("url"):
         log.info("[payout to %s] %s %s %s", to, payout.currency, payout.amount, reference)
         return True, f"console-{payout.id}", ""
@@ -109,7 +113,9 @@ def send_mobile_money(ids: list[int] | None, user) -> dict:
         if ok:
             payout.status, payout.sent_at, payout.provider_reference, payout.error = (
                 PayoutStatus.SENT, timezone.now(), ref, "")
-            if not config.get("url"):
+            if (getattr(settings, "MESSAGE_TEST_RECIPIENT", "") or "").strip():
+                payout.error = "Test mode: logged only, no money was sent."
+            elif not config.get("url"):
                 payout.error = "Logged only: no mobile-money provider is configured (PAYOUT_HTTP_URL)."
             sent += 1
         else:

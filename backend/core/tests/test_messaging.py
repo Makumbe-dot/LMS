@@ -430,3 +430,35 @@ class MessagingApiTests(MessagingBase):
         self.assertIn("Delivered", printed)
         # And warns that nothing actually left the building on the console backend.
         self.assertIn("Nothing actually left the building", printed)
+
+
+class HttpNumberFormatTests(MessagingBase):
+    def test_the_number_can_be_sent_in_international_form(self):
+        import unittest.mock as mock
+
+        captured = {}
+
+        class Response:
+            def read(self):
+                return b"{}"
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        def opener(request, timeout=None):
+            captured["body"] = json.loads(request.data)
+            return Response()
+
+        self.queue(to_address="0780 062 362")
+        config = {"url": "https://api.httpsms.example/v1/messages/send", "format": "json",
+                  "to_field": "to", "body_field": "content", "number_format": "plus",
+                  "extra": {"from": "+263780062362"}, "headers": {"x-api-key": "k"}}
+        with override_settings(MESSAGE_SMS_BACKEND="http", MESSAGE_HTTP=config):
+            with mock.patch("urllib.request.urlopen", opener):
+                self.assertEqual(notify.send()["sent"], 1)
+        self.assertEqual(captured["body"], {"to": "+263780062362", "from": "+263780062362",
+                                            "content": "Your instalment is due on Friday."})
+

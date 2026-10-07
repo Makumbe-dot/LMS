@@ -48,3 +48,45 @@ def send_test(request):
     audit(request.user, "test_message", "communications", None,
           f"{result['channel']} to {result['to']}: {'ok' if result['ok'] else result['error']}")
     return Response(result)
+
+
+# ---------------------------------------------------------------- bulk messages
+@api_view(["GET", "POST"])
+def campaigns(request):
+    """GET recent bulk messages with how they went; POST {audience: {who, branch_id,
+    product_id}, channel, text, subject, scheduled_for, name} to send one."""
+    from datetime import date as _date
+
+    from ..models import Campaign
+    from ..services import campaigns as svc
+
+    if request.method == "GET":
+        recent = Campaign.objects.select_related("created_by")[:50]
+        return Response({"audiences": svc.AUDIENCES, "placeholders": svc.PLACEHOLDERS,
+                         "campaigns": [svc.summary(c) for c in recent]})
+    if not _may_change(request):
+        return Response({"detail": "Sending bulk messages needs the messaging right."},
+                        status=status.HTTP_403_FORBIDDEN)
+    data = request.data or {}
+    when = data.get("scheduled_for")
+    try:
+        when = _date.fromisoformat(when) if when else None
+    except ValueError:
+        raise BusinessRuleError("The send date must be a date")
+    with transaction.atomic():
+        made = svc.create(data.get("audience") or {}, data.get("channel") or "preferred",
+                          data.get("text"), data.get("subject"), when, data.get("name"),
+                          request.user)
+        audit(request.user, "bulk_message", "campaign", made.id,
+              f"{made.name}: {made.queued} queued, {made.skipped} skipped, {made.channel}")
+    return Response(svc.summary(made), status=status.HTTP_201_CREATED)
+
+
+@api_view(["POST"])
+def campaign_preview(request):
+    """{audience, channel, text}: how many it reaches and three messages as they will read."""
+    from ..services import campaigns as svc
+
+    data = request.data or {}
+    return Response(svc.preview(data.get("audience") or {}, data.get("channel") or "preferred",
+                                data.get("text")))

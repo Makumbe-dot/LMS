@@ -89,6 +89,7 @@ export const NAV = [
         pages: [
           { to: '/communications', label: 'Overview', icon: 'dashboard', end: true },
           { to: '/notifications', label: 'Outbox', icon: 'inbox' },
+          { to: '/communications/bulk', label: 'Bulk message', icon: 'users' },
           { to: '/communications/automation', label: 'Automation', icon: 'play' },
           { to: '/communications/wording', label: 'Wording', icon: 'pen' },
           { to: '/communications/channels', label: 'Channels', icon: 'whatsapp' },

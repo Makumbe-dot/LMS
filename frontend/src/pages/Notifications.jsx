@@ -10,7 +10,7 @@ import { useApi, useDebounced } from '../lib/useApi.js'
 
 const STATUSES = ['queued', 'sent', 'cancelled', 'failed']
 const CHANNELS = { sms: 'SMS', whatsapp: 'WhatsApp', email: 'Email' }
-const KINDS = ['reminder', 'arrears', 'receipt', 'welcome', 'signing_code', 'portal_code']
+const KINDS = ['reminder', 'arrears', 'receipt', 'welcome', 'bulk', 'signing_code', 'portal_code']
 
 /**
  * The borrower messaging outbox: generated here, delivered through the configured
@@ -277,6 +277,7 @@ export default function Notifications() {
                     <>
                       {dateTime(r.sent_at)}
                       {r.provider ? <span className="muted"> via {r.provider}</span> : null}
+                      {r.test_redirect ? <span className="muted"> · test, to {r.test_redirect}</span> : null}
                       {r.delivery_status ? (
                         <span className="muted"> · {humanise(r.delivery_status)}</span>
                       ) : null}

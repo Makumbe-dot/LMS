@@ -675,7 +675,8 @@ class NotificationSerializer(serializers.ModelSerializer):
         fields = ["id", "borrower_id", "borrower_name", "loan_id", "loan_no", "kind", "channel",
                   "to_address", "subject", "body", "status", "scheduled_for", "sent_at", "error",
                   "attempts", "last_attempt_at", "provider", "provider_message_id",
-                  "delivery_status", "delivery_checked_at", "fallback_of_id", "created_at"]
+                  "delivery_status", "delivery_checked_at", "fallback_of_id", "test_redirect",
+                  "campaign_id", "created_at"]
 
 
 class NotificationActionSerializer(serializers.Serializer):

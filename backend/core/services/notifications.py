@@ -264,7 +264,7 @@ def send(ids: list[int] | None = None, as_of=None, limit: int | None = None) -> 
     fallbacks: list[int] = []
     for message in list(queue):
         backend = gateways.backend_for(message.channel)  # raises if misconfigured
-        result = backend.send(message)
+        result = _send_one(backend, message)
 
         message.attempts += 1
         message.last_attempt_at = timezone.now()
@@ -288,7 +288,7 @@ def send(ids: list[int] | None = None, as_of=None, limit: int | None = None) -> 
                 # Stays QUEUED, so the next run picks it up.
                 retrying += 1
         fields = ["status", "sent_at", "error", "attempts", "last_attempt_at", "provider",
-                  "provider_message_id"]
+                  "provider_message_id", "test_redirect"]
         if message.kind in SECRET_KINDS and message.status != NotificationStatus.QUEUED:
             # Delivered or given up on: the code is no use to anyone now, so keep none.
             message.body = "[one-time code]"
@@ -309,6 +309,46 @@ def send(ids: list[int] | None = None, as_of=None, limit: int | None = None) -> 
         "errors": (errors + (resent["errors"] if resent else []))[:20],
         "gateway": gateways.describe(),
     }
+
+
+def test_recipient(channel: str) -> str | None:
+    """In test mode, where every message of this channel goes instead of the
+    borrower: MESSAGE_TEST_RECIPIENT for SMS and WhatsApp, MESSAGE_TEST_EMAIL for
+    email. None when test mode is off."""
+    from django.conf import settings
+
+    phone = (getattr(settings, "MESSAGE_TEST_RECIPIENT", "") or "").strip()
+    if not phone:
+        return None
+    if channel == NotificationChannel.EMAIL:
+        return (getattr(settings, "MESSAGE_TEST_EMAIL", "") or "").strip() or ""
+    return phone
+
+
+def _send_one(backend, message: Notification):
+    """Hand one message to its backend - in test mode, to the test number or
+    address instead, marked with whom it was really for. The message keeps the
+    borrower's own address; `test_redirect` records where it went."""
+    from .gateways import Delivery
+
+    target = test_recipient(message.channel)
+    if target is None:
+        message.test_redirect = ""
+        return backend.send(message)
+    if not target:  # email in test mode with no test address: nobody to send to
+        message.test_redirect = "(test mode: no test email)"
+        return Delivery(ok=False, provider=backend.name, permanent=True,
+                        error="Test mode: set MESSAGE_TEST_EMAIL to receive test emails")
+    real_to, real_body = message.to_address, message.body
+    who = message.borrower.full_name if message.borrower_id else "?"
+    message.to_address = target
+    if message.kind not in SECRET_KINDS:
+        message.body = f"TEST for {who}, {real_to}: {real_body}"
+    try:
+        return backend.send(message)
+    finally:
+        message.to_address, message.body = real_to, real_body
+        message.test_redirect = target
 
 
 def _fall_back(message: Notification) -> Notification | None:
@@ -393,7 +433,7 @@ def whatsapp_by_hand(loan: Loan, user=None) -> dict:
             number=upcoming.number, amount=_money(upcoming.balance, currency),
             loan_no=loan.loan_no, due_date=f"{upcoming.due_date:%d %b %Y}")
     body = templates.render(kind, borrower, settings_row, **values)
-    phone = gateways.international(borrower.phone)
+    phone = gateways.international(test_recipient(NotificationChannel.WHATSAPP) or borrower.phone)
     if not phone:
         raise BusinessRuleError(f"{borrower.phone!r} is not a phone number WhatsApp can use.")
     url = f"https://wa.me/{phone.lstrip('+')}?text={quote(body)}"

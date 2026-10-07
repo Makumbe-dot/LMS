@@ -29,6 +29,7 @@ import LoanNew from './pages/LoanNew.jsx'
 import Loans from './pages/Loans.jsx'
 import Login from './pages/Login.jsx'
 import Notifications from './pages/Notifications.jsx'
+import BulkMessages from './pages/BulkMessages.jsx'
 import OnlineApplications from './pages/OnlineApplications.jsx'
 import Payouts from './pages/Payouts.jsx'
 import Screening from './pages/Screening.jsx'
@@ -137,6 +138,7 @@ export default function App() {
           />
           <Route path="/notifications" element={<Notifications />} />
           <Route path="/communications" element={<CommunicationsOverview />} />
+          <Route path="/communications/bulk" element={<BulkMessages />} />
           <Route path="/communications/automation" element={<CommunicationsAutomation />} />
           <Route path="/communications/wording" element={<CommunicationsWording />} />
           <Route path="/communications/channels" element={<CommunicationsChannels />} />

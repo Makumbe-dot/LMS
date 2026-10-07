@@ -305,6 +305,11 @@ MESSAGE_EMAIL_BACKEND = env("MESSAGE_EMAIL_BACKEND", "console")
 # WhatsApp: "console" (log only, the default), "meta", "twilio", or "off" to send every
 # WhatsApp-preferring borrower's messages by SMS instead.
 MESSAGE_WHATSAPP_BACKEND = env("MESSAGE_WHATSAPP_BACKEND", "console")
+# Test mode: when set, every SMS and WhatsApp goes to this number (and every email
+# to MESSAGE_TEST_EMAIL) instead of the borrower, marked with whom it was for.
+# For testing against real-looking data without texting real people.
+MESSAGE_TEST_RECIPIENT = env("MESSAGE_TEST_RECIPIENT", "")
+MESSAGE_TEST_EMAIL = env("MESSAGE_TEST_EMAIL", "")
 # Numbers are kept as people write them (0771 234 567). Providers want them in
 # international form, so a number with no country code is given this one.
 MESSAGE_DEFAULT_COUNTRY_CODE = env("MESSAGE_DEFAULT_COUNTRY_CODE", "263").lstrip("+")
@@ -320,6 +325,9 @@ MESSAGE_HTTP = {
     "to_field": env("MESSAGE_HTTP_TO_FIELD", "to"),
     "body_field": env("MESSAGE_HTTP_BODY_FIELD", "message"),
     "id_path": env("MESSAGE_HTTP_ID_PATH", ""),          # e.g. SMSMessageData.Recipients.0.messageId
+    # How the recipient's number is sent: as_typed (0771 234 567), plus (+263771234567)
+    # or plain (263771234567). Most APIs want plus or plain.
+    "number_format": env("MESSAGE_HTTP_NUMBER_FORMAT", "as_typed"),
     "timeout": int(env("MESSAGE_HTTP_TIMEOUT", "20")),
     # Fixed fields and headers, as "key=value" pairs separated by "|". Kept out of
     # the URL so an API key never lands in an access log.

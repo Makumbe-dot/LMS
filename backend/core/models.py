@@ -119,6 +119,7 @@ class NotificationKind(models.TextChoices):
     WELCOME = "welcome", "Disbursement confirmation"
     SIGNING_CODE = "signing_code", "Agreement signing code"
     PORTAL_CODE = "portal_code", "Portal sign-in code"
+    BULK = "bulk", "Bulk message"
 
 
 # Messages carrying a one-time code. Staff never see their text: whoever could read
@@ -1929,6 +1930,11 @@ class Notification(models.Model):
     # points back at the message it replaces.
     fallback_of = models.ForeignKey("self", on_delete=models.SET_NULL, null=True, blank=True,
                                     related_name="fallbacks")
+    # A bulk message is one of a campaign's.
+    campaign = models.ForeignKey("Campaign", on_delete=models.SET_NULL, null=True, blank=True,
+                                 related_name="messages")
+    # In test mode (MESSAGE_TEST_RECIPIENT) the number or address it actually went to.
+    test_redirect = models.CharField(max_length=160, blank=True, default="")
 
     # Stops the reminder job queueing the same message twice
     dedupe_key = models.CharField(max_length=120, unique=True)
@@ -2259,6 +2265,27 @@ class PortalRequest(models.Model):
     class Meta:
         db_table = "portal_requests"
         ordering = ["status", "-created_at"]
+
+
+# ---------------------------------------------------------------- bulk messages
+class Campaign(models.Model):
+    """A message sent to many borrowers at once (services/campaigns.py). The
+    messages themselves are ordinary outbox rows pointing back here."""
+    name = models.CharField(max_length=120)
+    audience = models.JSONField(default=dict)     # {"who": ..., "branch_id": ..., "product_id": ...}
+    channel = models.CharField(max_length=10, default="preferred")  # preferred | sms | whatsapp | email
+    subject = models.CharField(max_length=200, blank=True, default="")
+    text = models.TextField()
+    scheduled_for = models.DateField()
+    queued = models.IntegerField(default=0)
+    skipped = models.IntegerField(default=0)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="+")
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "campaigns"
+        ordering = ["-created_at"]
 
 
 # ---------------------------------------------------------------- payouts

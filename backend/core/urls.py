@@ -282,6 +282,8 @@ urlpatterns = [
     re_path(r"^communications/overview/?$", communications.overview),
     re_path(r"^communications/rules/?$", communications.rules),
     re_path(r"^communications/test/?$", communications.send_test),
+    re_path(r"^communications/campaigns/?$", communications.campaigns),
+    re_path(r"^communications/campaigns/preview/?$", communications.campaign_preview),
     re_path(r"^loans/(?P<loan_id>\d+)/whatsapp/?$", messaging.whatsapp_by_hand),
     re_path(r"^imports/repayments/?$", reports.bulk_repayments),
     re_path(r"^imports/loan-book/?$", reports.loan_book_import),

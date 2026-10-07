@@ -8,6 +8,10 @@ algorithm: the password validators, lockout, change and reset all behave the
 same. PBKDF2 stays in the list so a hash made under the production setting still
 verifies. Production settings are untouched; this only runs under `manage.py test`.
 
+Messaging starts from the defaults (test mode off, every channel logging only),
+so a developer's own .env - test mode on, a live gateway - cannot change what the
+suite sees.
+
 The cache is a no-op under test because the rate limits count in it: the suite
 signs in hundreds of times a minute from one address. The throttle tests switch a
 real cache on for themselves.
@@ -22,6 +26,12 @@ def _use_test_settings(*_args):
     # Through override_settings, so the cache handler hears of the change.
     override_settings(CACHES={"default": {
         "BACKEND": "django.core.cache.backends.dummy.DummyCache"}}).enable()
+    # Whatever this machine's .env says about messaging, the suite starts from the
+    # defaults: test mode off and every channel logging only. Tests that need a
+    # gateway or test mode switch it on for themselves.
+    override_settings(MESSAGE_TEST_RECIPIENT="", MESSAGE_TEST_EMAIL="",
+                      MESSAGE_SMS_BACKEND="console", MESSAGE_WHATSAPP_BACKEND="console",
+                      MESSAGE_EMAIL_BACKEND="console").enable()
 
 
 def _use_fast_hashers():

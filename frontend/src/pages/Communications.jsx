@@ -68,6 +68,14 @@ export function CommunicationsOverview() {
         </Link>
       </PageHeader>
 
+      {data.gateway.test_recipient ? (
+        <div className="hint" role="status">
+          <strong>Test mode is on. </strong>
+          Every SMS and WhatsApp goes to <strong>{data.gateway.test_recipient}</strong> instead of the borrower
+          {data.gateway.test_email ? `, every email to ${data.gateway.test_email}` : ''}, marked with whom it was for.
+          Remove <code>MESSAGE_TEST_RECIPIENT</code> from <code>backend/.env</code> to message borrowers for real.
+        </div>
+      ) : null}
       <div className={anyLive ? 'hint' : 'banner'} role={anyLive ? undefined : 'status'}>
         {anyLive ? (
           <strong>Messages are reaching borrowers. </strong>

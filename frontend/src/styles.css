@@ -1628,3 +1628,15 @@ dl.kv > div:last-child > dt, dl.kv > div:last-child > dd { border-bottom: none; 
 /* ---------------------------------------------------------------- screening */
 .screen-lists { margin: 0 0 14px; padding-left: 18px; font-size: 13px; }
 .screen-lists li { margin: 4px 0; }
+
+/* ---------------------------------------------------------------- bulk messages */
+.bulk-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: -6px 0 14px; font-size: 12.5px; }
+.bulk-chips .btn.small { font-family: var(--font-mono); font-size: 11.5px; }
+.bulk-preview {
+  margin: 0 0 14px; padding: 12px 14px; border-radius: 12px; background: var(--surface-sunken);
+  border: 1px solid var(--border);
+}
+.bulk-preview > p { margin: 0 0 8px; }
+.bulk-sample { padding: 8px 10px; margin-top: 6px; border-radius: 10px; background: var(--surface); border: 1px solid var(--border); }
+.bulk-sample span { font-size: 11.5px; }
+.bulk-sample p { margin: 3px 0 0; font-size: 13px; white-space: pre-wrap; }

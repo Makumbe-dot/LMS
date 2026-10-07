@@ -147,8 +147,17 @@ class HttpBackend(Backend):
 
     def send(self, notification) -> Delivery:
         config = self.config()
+        to = notification.to_address
+        number_format = (config.get("number_format") or "as_typed").lower()
+        if number_format in ("plus", "plain"):
+            # Most APIs want +263771234567 (plus) or 263771234567 (plain), not 0771 234 567.
+            formatted = international(to)
+            if not formatted:
+                return Delivery(ok=False, provider=self.name, permanent=True,
+                                error=f"{to!r} is not a phone number")
+            to = formatted if number_format == "plus" else formatted.lstrip("+")
         payload = {
-            config.get("to_field", "to"): notification.to_address,
+            config.get("to_field", "to"): to,
             config.get("body_field", "message"): notification.body,
             **(config.get("extra") or {}),
         }
@@ -540,6 +549,9 @@ def describe() -> dict:
         "meta_webhook_ready": bool(meta.get("verify_token") and meta.get("app_secret")),
         "whatsapp_templates": sorted(templates.keys()),
         "whatsapp_template_guide": _template_guide(templates),
+        # Test mode: everything goes to these instead of borrowers.
+        "test_recipient": (getattr(settings, "MESSAGE_TEST_RECIPIENT", "") or "").strip(),
+        "test_email": (getattr(settings, "MESSAGE_TEST_EMAIL", "") or "").strip(),
     }
 
 
