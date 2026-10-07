@@ -103,7 +103,7 @@ BRANCHES = [
 # Everyone but the administrator holds the rights ticked for them: here, the sets
 # the old loan officer, teller and viewer roles carried.
 USERS = [
-    ("admin", "System Administrator", "admin123", Role.ADMIN, []),
+    ("admin", "Administrator", "admin123", Role.ADMIN, []),
     ("officer", "Tendai Moyo", "officer123", Role.USER, RIGHT_PRESETS["loan_officer"]),
     ("officer2", "Rudo Chikwanha", "officer123", Role.USER, RIGHT_PRESETS["loan_officer"]),
     ("teller", "Blessing Ncube", "teller123", Role.USER, RIGHT_PRESETS["teller"]),

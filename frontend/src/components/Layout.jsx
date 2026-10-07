@@ -130,7 +130,7 @@ function UserMenu({ user, onSignOut }) {
         <span className="avatar">{initials(user?.full_name)}</span>
         <span className="avatar-text">
           <strong>{user?.full_name}</strong>
-          <small>{roleLabel(user)}</small>
+          {roleLabel(user) !== user?.full_name ? <small>{roleLabel(user)}</small> : null}
         </span>
         <Icon name="chevron" size={14} className="avatar-caret" />
       </button>
