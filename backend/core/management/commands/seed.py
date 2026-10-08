@@ -144,6 +144,42 @@ PRODUCTS = [
          insurance_fee_pct=Decimal("1"), penalty_rate_pct_per_day=Decimal("0.5"), grace_days=2),
 ]
 
+# The rest of a typical Zimbabwean microlender's shelf. Created after the loan book,
+# so the seeded loans (and everything that counts them) stay as they were.
+MORE_PRODUCTS = [
+    dict(code="SME-BUS", name="SME Business Loan",
+         description="Working capital and stock for small businesses, repaid monthly",
+         interest_rate_pct=Decimal("6"), min_amount=Decimal("500"), max_amount=Decimal("20000"),
+         min_term_months=3, max_term_months=18, admin_fee_pct=Decimal("3"),
+         insurance_fee_pct=Decimal("1.5"), penalty_rate_pct_per_day=Decimal("0.3"), grace_days=5),
+    dict(code="ASSET", name="Asset Finance",
+         description="Solar systems, equipment and household assets, paid to the supplier",
+         interest_rate_pct=Decimal("4.5"), min_amount=Decimal("300"), max_amount=Decimal("15000"),
+         min_term_months=6, max_term_months=24, admin_fee_pct=Decimal("2.5"),
+         insurance_fee_pct=Decimal("1.5"), penalty_rate_pct_per_day=Decimal("0.3"), grace_days=5),
+    dict(code="SSB-PAY", name="Civil Servant Payroll Loan (SSB)",
+         description="For government employees, deducted from salary through SSB",
+         interest_rate_pct=Decimal("5"), min_amount=Decimal("100"), max_amount=Decimal("5000"),
+         min_term_months=3, max_term_months=24, admin_fee_pct=Decimal("2"),
+         insurance_fee_pct=Decimal("1"), penalty_rate_pct_per_day=Decimal("0.3"), grace_days=5),
+    dict(code="AGRI", name="Agricultural Input Loan", rate_method=RateMethod.FLAT,
+         description="Seed, fertiliser and chemicals for the season, flat rate",
+         interest_rate_pct=Decimal("5"), min_amount=Decimal("200"), max_amount=Decimal("5000"),
+         min_term_months=4, max_term_months=8, admin_fee_pct=Decimal("2"),
+         insurance_fee_pct=Decimal("2"), penalty_rate_pct_per_day=Decimal("0.3"), grace_days=7),
+    dict(code="EMERG", name="Emergency Loan", rate_method=RateMethod.FLAT,
+         description="Small, fast loan for medical bills, funerals and urgent needs",
+         interest_rate_pct=Decimal("10"), min_amount=Decimal("50"), max_amount=Decimal("500"),
+         min_term_months=1, max_term_months=3, admin_fee_pct=Decimal("3"),
+         insurance_fee_pct=Decimal("1"), penalty_rate_pct_per_day=Decimal("0.5"), grace_days=2),
+    dict(code="MUKANDO", name="Mukando Group Loan", repayment_frequency=RepaymentFrequency.WEEKLY,
+         description="For savings clubs, backed by the group's savings and repaid weekly. "
+                     "Terms are in weeks.",
+         interest_rate_pct=Decimal("6"), min_amount=Decimal("50"), max_amount=Decimal("2000"),
+         min_term_months=4, max_term_months=26, admin_fee_pct=Decimal("2"),
+         insurance_fee_pct=Decimal("1"), penalty_rate_pct_per_day=Decimal("0.5"), grace_days=2),
+]
+
 FIRST = ["Tatenda", "Chipo", "Farai", "Nyasha", "Kudzai", "Rumbidzai", "Tinashe", "Vimbai",
          "Simbarashe", "Ropafadzo", "Takudzwa", "Anesu", "Munashe", "Tapiwa", "Shamiso",
          "Tawanda", "Panashe", "Nomsa", "Sipho", "Thandiwe"]
@@ -498,12 +534,16 @@ class Command(BaseCommand):
         with transaction.atomic():
             provision = provisioning_svc.run_provision(users["admin"], today)
 
+        for p in MORE_PRODUCTS:
+            LoanProduct.objects.create(**p)
+
         balance = trial_balance()
         sheet = balance_sheet()
         ties = reconciliation()
 
         self.stdout.write(self.style.SUCCESS(
-            f"Seeded {len(USERS)} users, {len(BRANCHES)} branches, {len(PRODUCTS)} products, "
+            f"Seeded {len(USERS)} users, {len(BRANCHES)} branches, "
+            f"{len(PRODUCTS) + len(MORE_PRODUCTS)} products, "
             f"{len(borrowers)} borrowers, {n_active} disbursed loans, "
             f"{n_pending} pending applications, {secured} secured loans."))
         self.stdout.write(
