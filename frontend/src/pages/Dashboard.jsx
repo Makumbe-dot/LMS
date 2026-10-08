@@ -196,7 +196,9 @@ export default function Dashboard() {
     }))
   const totalLoans = statuses.reduce((sum, s) => sum + s.value, 0)
   const parTone = toneFor(data.par_30_pct, 5, 10, true)
-  const rateTone = toneFor(data.collection_rate_pct, RATE_TARGET, 75)
+  // No rate until something has fallen due this month: a neutral tile, not a red 0%.
+  const hasRate = data.collection_rate_pct !== null && data.collection_rate_pct !== undefined
+  const rateTone = hasRate ? toneFor(data.collection_rate_pct, RATE_TARGET, 75) : 'slate'
   const firstName = (user?.full_name || '').split(' ')[0]
   const prev = data.previous_month
   const soon = data.due_next_7_days
@@ -321,8 +323,12 @@ export default function Dashboard() {
           icon="percent"
           tone={rateTone}
           label="Collection rate"
-          value={<CountUp value={data.collection_rate_pct} format={pct} />}
-          sub={`${money(data.collected_this_month)} of ${money(data.due_this_month)} due`}
+          value={hasRate ? <CountUp value={data.collection_rate_pct} format={pct} /> : '—'}
+          sub={
+            hasRate
+              ? `${money(data.collected_this_month)} of ${money(data.due_to_date)} due so far`
+              : 'nothing has fallen due yet this month'
+          }
           foot={`${prevMonth} closed at ${pct(prev.collection_rate_pct)}`}
           trend={settled.map((m) => m.collection_rate_pct)}
           trendLabel={sparkLabel('Collection rate', settled, 'collection_rate_pct', pct)}
@@ -404,7 +410,7 @@ export default function Dashboard() {
           <div className="card chart-card">
             <TrendLine
               title="Collection rate"
-              subtitle="Repayments received as a share of principal and interest due, per month. The current month is drawn hollow: it is still being collected."
+              subtitle="Repayments received as a share of principal and interest due, per month. The current month counts only what has fallen due so far, and is drawn hollow."
               data={data.monthly_series}
               target={RATE_TARGET}
               partialLast

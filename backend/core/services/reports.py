@@ -77,7 +77,15 @@ def dashboard(as_of: date | None = None, branch_id=None) -> dict:
         loan_scope = loan_scope.filter(branch_id=branch_id)
         borrower_scope = borrower_scope.filter(branch_id=branch_id)
 
-    disb, coll, due = _month_flows(txn_scope, inst_scope, month_start, next_month)
+    disb, coll, due = _month_flows(txn_scope, inst_scope, month_start, next_month,
+                                   until=as_of)
+    # The month is not over, so its rate is measured against what has fallen due
+    # so far: on the 8th, before the month's paydays, nothing is late yet, and
+    # measuring against the whole month's dues read as a collapse to 0%.
+    due_to_date = _sum(
+        inst_scope.filter(loan__status__in=[LoanStatus.ACTIVE, LoanStatus.CLOSED],
+                          due_date__gte=month_start, due_date__lte=as_of),
+        F("principal_due") + F("interest_due"))
     # Last month, so the tiles can say which way things moved. Flows compare
     # like-for-like: the 5th of this month against the 1st-5th of last month, not
     # against all of it, or every month would open with a "fall" of nearly 100%.
@@ -109,7 +117,9 @@ def dashboard(as_of: date | None = None, branch_id=None) -> dict:
         "disbursed_this_month": q(disb),
         "collected_this_month": q(coll),
         "due_this_month": q(due),
-        "collection_rate_pct": q(coll / due * 100) if due else ZERO,
+        "due_to_date": q(due_to_date),
+        # None while nothing has fallen due this month: there is no rate to show yet.
+        "collection_rate_pct": q(coll / due_to_date * 100) if due_to_date else None,
         "previous_month": {
             "disbursed_to_date": q(prev_disb),
             "collected_to_date": q(prev_coll),
@@ -129,18 +139,20 @@ def dashboard(as_of: date | None = None, branch_id=None) -> dict:
 
 
 def _month_flows(txn_scope, inst_scope, start: date, end: date, *,
-                 with_disbursed: bool = True, with_due: bool = True) -> tuple:
+                 with_disbursed: bool = True, with_due: bool = True,
+                 until: date | None = None) -> tuple:
     """Principal disbursed, repayments collected and principal + interest due in [start, end).
 
-    A figure not asked for comes back as ZERO without a query.
+    `until` stops the money flows at that day (the as-at date), so a snapshot of a
+    past date does not count what was paid after it. A figure not asked for comes
+    back as ZERO without a query.
     """
-    disb = _sum(
-        txn_scope.filter(txn_type=TxnType.DISBURSEMENT, txn_date__gte=start, txn_date__lt=end),
-        "principal_component") if with_disbursed else ZERO
-    coll = _sum(
-        txn_scope.filter(txn_type=TxnType.REPAYMENT, reversed=False,
-                         txn_date__gte=start, txn_date__lt=end),
-        "amount")
+    flows = txn_scope.filter(txn_date__gte=start, txn_date__lt=end)
+    if until is not None:
+        flows = flows.filter(txn_date__lte=until)
+    disb = _sum(flows.filter(txn_type=TxnType.DISBURSEMENT),
+                "principal_component") if with_disbursed else ZERO
+    coll = _sum(flows.filter(txn_type=TxnType.REPAYMENT, reversed=False), "amount")
     due = _sum(
         inst_scope.filter(loan__status__in=[LoanStatus.ACTIVE, LoanStatus.CLOSED],
                           due_date__gte=start, due_date__lt=end),
@@ -242,7 +254,7 @@ def monthly_series(as_of: date, months: int = 12, branch_id=None) -> list[dict]:
                 .annotate(total=Sum(F("principal_due") + F("interest_due"), output_field=_money))
                 .order_by("month"))
     rows = (scope
-            .filter(txn_date__gte=start, reversed=False,
+            .filter(txn_date__gte=start, txn_date__lte=as_of, reversed=False,
                     txn_type__in=[TxnType.DISBURSEMENT, TxnType.REPAYMENT])
             .annotate(month=TruncMonth("txn_date"))
             .values("txn_type", "month")
@@ -263,8 +275,16 @@ def monthly_series(as_of: date, months: int = 12, branch_id=None) -> list[dict]:
         key = row["month"].strftime("%Y-%m")
         if key in series:
             series[key]["due"] = q(Decimal(row["total"] or 0))
+    # The month in progress is measured against what has fallen due so far, as the
+    # tile is; its whole month's dues stay in `due` for the table.
+    current = as_of.strftime("%Y-%m")
+    due_to_date = _sum(inst_scope.filter(due_date__gte=as_of.replace(day=1), due_date__lte=as_of),
+                       F("principal_due") + F("interest_due"))
     for point in series.values():
-        due = point["due"]
+        partial = point["month"] == current
+        due = q(due_to_date) if partial else point["due"]
+        point["partial"] = partial
+        point["due_to_date"] = due
         # None, not 0, for a month with nothing due: a gap in the line, not a fall.
         point["collection_rate_pct"] = q(point["collected"] / due * 100) if due else None
     return list(series.values())
