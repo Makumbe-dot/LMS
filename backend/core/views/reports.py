@@ -346,8 +346,31 @@ def spreadsheet(request, kind: str):
         return table_response(request, rows, file_name)
     # JSON turns Decimal into a float, so say which columns are money for the screen.
     money = sorted({k for row in rows for k, v in row.items() if isinstance(v, Decimal)})
-    return Response(paginate_list(request, rows, default_size=100,
-                                  extra={"title": title, "money_columns": money}))
+    total_rows = len(rows)
+    search = (request.query_params.get("search") or "").strip().lower()
+    if search:
+        rows = [row for row in rows
+                if any(search in str(v).lower() for v in row.values() if v is not None)]
+    body = paginate_list(request, rows, default_size=100,
+                         extra={"title": title, "money_columns": money, "total_rows": total_rows})
+    body["results"] = _with_record_ids(body["results"])
+    return Response(body)
+
+
+def _with_record_ids(rows: list[dict]) -> list[dict]:
+    """The screen opens the member or loan a row is about, so each row on the page
+    gets their ids. Only here: the Excel and CSV files keep to the numbers people
+    read (member no., loan no.)."""
+    from ..models import Borrower, Loan
+
+    members = {r["member_no"] for r in rows if r.get("member_no")}
+    loans = {r["loan_no"] for r in rows if r.get("loan_no")}
+    borrower_ids = (dict(Borrower.objects.filter(borrower_no__in=members)
+                         .values_list("borrower_no", "id")) if members else {})
+    loan_ids = (dict(Loan.objects.filter(loan_no__in=loans).values_list("loan_no", "id"))
+                if loans else {})
+    return [{**r, "borrower_id": borrower_ids.get(r.get("member_no")),
+             "loan_id": loan_ids.get(r.get("loan_no"))} for r in rows]
 
 
 @api_view(["GET"])

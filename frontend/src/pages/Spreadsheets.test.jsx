@@ -1,5 +1,6 @@
 import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import * as api from '../lib/api.js'
@@ -33,14 +34,34 @@ describe('Spreadsheets', () => {
     expect(within(table).queryByText('Borrower id')).not.toBeInTheDocument()
   })
 
-  it('switches the preview to another sheet', async () => {
+  it('opens another sheet from its View button', async () => {
     stubApi({ get: { 'spreadsheets/members': MEMBERS, 'spreadsheets/overdue': OVERDUE } })
     renderPage(<Spreadsheets />)
     await screen.findByText('Rudo Moyo')
     const card = screen.getByRole('heading', { name: 'Overdue loans' }).closest('.sheet-card')
-    await userEvent.click(within(card).getByRole('button', { name: 'Preview' }))
+    await userEvent.click(within(card).getByRole('button', { name: 'View' }))
     const table = await screen.findByRole('table', { name: 'Overdue loans' })
     expect(within(table).getByText('LN-9')).toBeInTheDocument()
+  })
+
+  it('opens a sheet by clicking anywhere on its card', async () => {
+    stubApi({ get: { 'spreadsheets/members': MEMBERS, 'spreadsheets/overdue': OVERDUE } })
+    renderPage(<Spreadsheets />)
+    await screen.findByText('Rudo Moyo')
+    await userEvent.click(screen.getByRole('button', { name: 'View the overdue loans' }))
+    expect(await screen.findByRole('table', { name: 'Overdue loans' })).toBeInTheDocument()
+  })
+
+  it('opens the member a row is about', async () => {
+    stubApi({ get: { 'spreadsheets/members': MEMBERS } })
+    renderPage(
+      <Routes>
+        <Route path="/" element={<Spreadsheets />} />
+        <Route path="/borrowers/:id" element={<p>Borrower page 7</p>} />
+      </Routes>,
+    )
+    await userEvent.click(await screen.findByText('Rudo Moyo'))
+    expect(await screen.findByText('Borrower page 7')).toBeInTheDocument()
   })
 
   it('downloads a sheet as Excel, narrowed to the branch chosen', async () => {
