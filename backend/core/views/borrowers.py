@@ -66,7 +66,8 @@ def borrowers(request):
             qs = qs.filter(
                 Q(first_name__icontains=search) | Q(last_name__icontains=search)
                 | Q(national_id__icontains=search) | Q(borrower_no__icontains=search)
-                | Q(phone__icontains=search) | Q(employer__icontains=search))
+                | Q(phone__icontains=search) | Q(employer__icontains=search)
+                | Q(business_name__icontains=search))
         branch_id = parse_int(request, "branch_id")
         if branch_id:
             qs = qs.filter(branch_id=branch_id)

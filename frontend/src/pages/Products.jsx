@@ -12,7 +12,7 @@ import { useApi } from '../lib/useApi.js'
 const NUMERIC = [
   'interest_rate_pct', 'min_amount', 'max_amount', 'min_term_months', 'max_term_months',
   'admin_fee_pct', 'insurance_fee_pct', 'penalty_rate_pct_per_day', 'grace_days',
-  'max_instalment_to_salary_pct',
+  'max_instalment_to_salary_pct', 'max_instalment_to_business_pct',
 ]
 
 export default function Products() {
@@ -112,9 +112,13 @@ export default function Products() {
             { key: 'grace', header: 'Grace', num: true, render: (r) => `${r.grace_days}d` },
             {
               key: 'cap',
-              header: 'Max inst/salary',
+              header: 'Max of income',
               num: true,
-              render: (r) => pct(r.max_instalment_to_salary_pct),
+              render: (r) => (
+                <span title="Most of a month's net income the repayments may take: salaried / business owners">
+                  {pct(r.max_instalment_to_salary_pct)} / {pct(r.max_instalment_to_business_pct)}
+                </span>
+              ),
             },
             {
               key: 'active',
@@ -253,6 +257,15 @@ export default function Products() {
               type="number"
               step="0.01"
               defaultValue={product?.max_instalment_to_salary_pct ?? 40}
+              hint="For salaried borrowers"
+            />
+            <Field
+              label="Max instalment / business income %"
+              name="max_instalment_to_business_pct"
+              type="number"
+              step="0.01"
+              defaultValue={product?.max_instalment_to_business_pct ?? 50}
+              hint="For business owners, traders and farmers: their income is already net of business costs"
             />
           </div>
           <Field

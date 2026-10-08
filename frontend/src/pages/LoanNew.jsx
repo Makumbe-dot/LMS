@@ -254,10 +254,14 @@ export default function LoanNew() {
                   ...(quote.affordability_pct !== null
                     ? [
                         [
-                          'Repayments / salary, a month',
+                          quote.income_basis === 'net business income'
+                            ? 'Repayments / business income, a month'
+                            : 'Repayments / salary, a month',
                           <span key="a" className={quote.affordable ? 'tag-ok' : 'tag-danger'}>
                             {pct(quote.affordability_pct)}{' '}
-                            {quote.affordable ? '(affordable)' : '(exceeds the product limit)'}
+                            {quote.affordable
+                              ? '(affordable)'
+                              : `(over the product's ${pct(quote.affordability_limit_pct)} limit)`}
                           </span>,
                         ],
                       ]

@@ -211,9 +211,10 @@ def quote(product: LoanProduct, principal: Decimal, term: int,
     per_month = monthly_equivalent(rows[0].instalment, frequency)
     per_month_base = fx.to_base(per_month, rate)
     aff_pct = affordable = None
+    cap = income_cap(product, borrower)
     if borrower and borrower.net_salary and borrower.net_salary > 0:
         aff_pct = q(per_month_base / borrower.net_salary * 100)
-        affordable = aff_pct <= product.max_instalment_to_salary_pct
+        affordable = aff_pct <= cap
     return {
         "currency": currency,
         "fx_rate": rate,
@@ -238,10 +239,21 @@ def quote(product: LoanProduct, principal: Decimal, term: int,
         "apr_pct": _apr(q(principal) - fees, rows, disb),
         "affordability_pct": aff_pct,
         "affordable": affordable,
+        "affordability_limit_pct": cap,
+        "income_basis": ("net salary" if borrower is None or borrower.is_employed
+                         else "net business income"),
         "schedule": [vars(r) for r in rows],
         "scorecard": (score_application(borrower, product, principal, term, per_month_base)
                       if borrower else None),
     }
+
+
+def income_cap(product: LoanProduct, borrower: Borrower | None) -> Decimal:
+    """The most of a month's net income this product lets repayments take: the
+    salary limit for the employed, the business limit for everyone else."""
+    if borrower is not None and not borrower.is_employed:
+        return product.max_instalment_to_business_pct
+    return product.max_instalment_to_salary_pct
 
 
 def _borrowers_guarantors(borrower: Borrower, guarantor_ids) -> list:
@@ -306,11 +318,15 @@ def apply(borrower: Borrower, product: LoanProduct, principal: Decimal, term: in
 
         membership = GroupMember.objects.filter(borrower=borrower, is_active=True).first()
         group = membership.group if membership else None
+    if not borrower.net_salary or borrower.net_salary <= 0:
+        raise BusinessRuleError(
+            "Record the borrower's net monthly income first: the net salary, or for a "
+            "business owner the monthly sales and costs, so affordability can be checked")
     qt = quote(product, principal, term, application_date, borrower)
     if qt["affordable"] is False:
         raise BusinessRuleError(
-            f"Repayments come to {qt['affordability_pct']}% of net salary a month; "
-            f"product limit is {product.max_instalment_to_salary_pct}%")
+            f"Repayments come to {qt['affordability_pct']}% of {qt['income_basis']} a month; "
+            f"product limit is {qt['affordability_limit_pct']}%")
     loan = Loan.objects.create(
         loan_no=next_number("LN"), borrower=borrower, product=product, officer=officer,
         branch_id=borrower.branch_id or getattr(officer, "branch_id", None),

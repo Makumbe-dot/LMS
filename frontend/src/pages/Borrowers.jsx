@@ -41,7 +41,7 @@ export default function Borrowers() {
     { key: 'name', header: 'Name', render: (r) => `${r.first_name} ${r.last_name}` },
     { key: 'nid', header: 'National ID', render: (r) => r.national_id },
     { key: 'phone', header: 'Phone', render: (r) => r.phone },
-    { key: 'employer', header: 'Employer', render: (r) => r.employer || '-' },
+    { key: 'employer', header: 'Employer or business', render: (r) => r.employer || r.business_name || '-' },
     { key: 'branch', header: 'Branch', render: (r) => r.branch_name || '-' },
     { key: 'salary', header: 'Net salary', num: true, render: (r) => fmt(r.net_salary) },
     {
@@ -74,7 +74,7 @@ export default function Borrowers() {
       <PageHeader title="Borrowers" meta={data ? `${data.count} on the register` : undefined}>
         <input
           type="search"
-          placeholder="Search name, ID, phone, employer"
+          placeholder="Search name, ID, phone, employer or business"
           value={search}
           onChange={onFilter(setSearch)}
           aria-label="Search borrowers"

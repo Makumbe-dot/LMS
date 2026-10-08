@@ -108,3 +108,11 @@ export function addMonthsIso(iso, months) {
   target.setUTCDate(Math.min(d, lastDay))
   return target.toISOString().slice(0, 10)
 }
+
+/** Where a borrower's money comes from. Everyone but the employed is assessed on a business. */
+export const INCOME_SOURCES = {
+  employed: 'Employed (salary)',
+  self_employed: 'Own business',
+  informal: 'Informal trader',
+  farmer: 'Farmer',
+}

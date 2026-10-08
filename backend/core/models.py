@@ -562,6 +562,15 @@ class RevokedToken(models.Model):
 
 
 # ---------------------------------------------------------------- borrowers
+class IncomeSource(models.TextChoices):
+    """Where the money to repay comes from. Everyone but the employed is assessed
+    on the business's cash flow rather than a payslip."""
+    EMPLOYED = "employed", "Employed (salary)"
+    SELF_EMPLOYED = "self_employed", "Own business"
+    INFORMAL = "informal", "Informal trader"
+    FARMER = "farmer", "Farmer"
+
+
 class Borrower(models.Model):
     borrower_no = models.CharField(max_length=20, unique=True, db_index=True)
     first_name = models.CharField(max_length=80)
@@ -575,12 +584,37 @@ class Borrower(models.Model):
     employer = models.CharField(max_length=120, null=True, blank=True)
     employee_no = models.CharField(max_length=40, null=True, blank=True)
     job_title = models.CharField(max_length=80, null=True, blank=True)
+    # Net monthly income, whatever its source: the payslip's net pay for the
+    # employed, and for everyone else what the cash-flow worksheet below leaves
+    # (save() works it out). Affordability and the scorecard read this one figure.
+    # The column keeps its first name; the API and SQL views already use it.
     net_salary = models.DecimalField(default=ZERO, **MONEY)
     payday = models.IntegerField(
         default=25,
         validators=[MinValueValidator(1), MaxValueValidator(31)],
-        help_text="Day of the month the salary is paid",
+        help_text="Day of the month the salary is paid, or the business is best placed to pay",
     )
+    income_source = models.CharField(max_length=14, choices=IncomeSource.choices,
+                                     default=IncomeSource.EMPLOYED)
+    # The business, for everyone who is not employed. employer stays blank for
+    # them, so they never land on an employer's payroll deduction schedule.
+    business_name = models.CharField(max_length=120, blank=True, default="",
+                                     help_text="The business, or the trade (e.g. vegetable vending, Mbare)")
+    business_sector = models.CharField(max_length=60, blank=True, default="")
+    business_registration_no = models.CharField(max_length=60, blank=True, default="")
+    trading_since = models.DateField(null=True, blank=True)
+    business_address = models.TextField(blank=True, default="",
+                                        help_text="Where the business operates")
+    # The cash-flow worksheet: an ordinary month, as the officer assessed it.
+    monthly_sales = models.DecimalField(default=ZERO, **MONEY)
+    monthly_cost_of_sales = models.DecimalField(default=ZERO, help_text="Stock and materials",
+                                                **MONEY)
+    monthly_expenses = models.DecimalField(default=ZERO,
+                                           help_text="Rent, wages, transport, power and the like",
+                                           **MONEY)
+    monthly_other_repayments = models.DecimalField(default=ZERO,
+                                                   help_text="Repayments to other lenders",
+                                                   **MONEY)
     kyc_verified = models.BooleanField(default=False)
     # Reminders, notices and receipts go by this channel. WhatsApp falls back to
     # SMS by itself when a message cannot be delivered there.
@@ -613,6 +647,29 @@ class Borrower(models.Model):
     @property
     def full_name(self) -> str:
         return f"{self.first_name} {self.last_name}"
+
+    @property
+    def is_employed(self) -> bool:
+        return self.income_source in ("", None, IncomeSource.EMPLOYED)
+
+    @property
+    def business_net_income(self) -> Decimal:
+        """What an ordinary month leaves once the business and other lenders are paid."""
+        return max(ZERO, (self.monthly_sales or ZERO) - (self.monthly_cost_of_sales or ZERO)
+                   - (self.monthly_expenses or ZERO) - (self.monthly_other_repayments or ZERO))
+
+    def years_trading(self, as_of: date | None = None) -> Decimal | None:
+        if not self.trading_since:
+            return None
+        days = ((as_of or date.today()) - self.trading_since).days
+        return max(ZERO, Decimal(days) / Decimal("365.25")).quantize(Decimal("0.1"))
+
+    def save(self, *args, **kwargs):
+        # A business owner's income is what the worksheet leaves, once there is a
+        # worksheet; until then whatever figure was typed in stands.
+        if not self.is_employed and (self.monthly_sales or ZERO) > 0:
+            self.net_salary = self.business_net_income
+        super().save(*args, **kwargs)
 
 
 class Guarantor(models.Model):
@@ -658,6 +715,11 @@ class LoanProduct(models.Model):
     penalty_rate_pct_per_day = models.DecimalField(default=Decimal("0.5"), **RATE)
     grace_days = models.IntegerField(default=3)
     max_instalment_to_salary_pct = models.DecimalField(default=Decimal("40"), max_digits=6, decimal_places=2)
+    # The same limit for borrowers who live off a business. Their income is already
+    # net of the business's costs and other lenders, so a lender may allow more of it.
+    max_instalment_to_business_pct = models.DecimalField(
+        default=Decimal("50"), max_digits=6, decimal_places=2,
+        help_text="Most of a business owner's net monthly income the repayments may take")
     # The currency the product lends in. Blank means the organisation's own; any
     # other code needs a rate on the Currencies page before a loan can be quoted.
     currency = models.CharField(max_length=8, blank=True, default="",
@@ -2409,6 +2471,9 @@ class OnlineApplication(models.Model):
     email = models.CharField(max_length=120, blank=True, default="")
     address = models.TextField(blank=True, default="")
     employer = models.CharField(max_length=120, blank=True, default="")
+    income_source = models.CharField(max_length=14, choices=IncomeSource.choices,
+                                     default=IncomeSource.EMPLOYED)
+    business_name = models.CharField(max_length=120, blank=True, default="")
     net_salary = models.DecimalField(null=True, blank=True, **MONEY)
     payday = models.IntegerField(null=True, blank=True)
     product = models.ForeignKey("LoanProduct", on_delete=models.PROTECT, related_name="+")

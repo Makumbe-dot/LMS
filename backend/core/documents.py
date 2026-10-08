@@ -651,7 +651,8 @@ def loan_statement_pdf(data: dict) -> HttpResponse:
         "Statement for",
         [data["borrower"], f"Member {data['borrower_no']} · ID {data['national_id']}",
          data.get("phone"), data.get("address"),
-         f"Employer: {data['employer']}" if data.get("employer") else None],
+         f"Employer: {data['employer']}" if data.get("employer") else None,
+         f"Business: {data['business']}" if data.get("business") else None],
         [("Period", _esc(_period(data))), ("Product", _esc(data["product"])),
          ("Branch", _esc(data.get("branch"))), ("Status", _esc(status))]
         + ([("Reference", _esc(data["external_ref"]))] if data.get("external_ref") else []),

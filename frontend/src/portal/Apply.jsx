@@ -19,7 +19,9 @@ const BLANK = {
   phone: '',
   email: '',
   address: '',
+  income_source: 'employed',
   employer: '',
+  business_name: '',
   net_salary: '',
   payday: '',
   product_id: '',
@@ -146,9 +148,27 @@ export default function Apply() {
               <Field label="National ID" required value={values.national_id} onChange={set('national_id')} />
               <Field label="Mobile number" required value={values.phone} onChange={set('phone')} placeholder="0771 234 567" />
               <Field label="Email (optional)" type="email" value={values.email} onChange={set('email')} />
-              <Field label="Employer" value={values.employer} onChange={set('employer')} />
-              <Field label="Net monthly salary" type="number" min="0" step="0.01" value={values.net_salary} onChange={set('net_salary')} />
-              <Field label="Payday (day of the month)" type="number" min="1" max="31" value={values.payday} onChange={set('payday')} />
+              <Field as="select" label="I earn my income" value={values.income_source} onChange={set('income_source')}>
+                <option value="employed">From a job (salary)</option>
+                <option value="self_employed">From my own business</option>
+                <option value="informal">As an informal trader</option>
+                <option value="farmer">From farming</option>
+              </Field>
+              {values.income_source === 'employed' ? (
+                <Field label="Employer" value={values.employer} onChange={set('employer')} />
+              ) : (
+                <Field label="Business or trade" required value={values.business_name} onChange={set('business_name')}
+                       placeholder="e.g. hardware shop, Mbare" />
+              )}
+              <Field
+                label={values.income_source === 'employed' ? 'Net monthly salary' : 'What the business leaves you a month'}
+                type="number" min="0" step="0.01" value={values.net_salary} onChange={set('net_salary')}
+                hint={values.income_source === 'employed' ? undefined : 'Sales less stock and running costs'}
+              />
+              <Field
+                label={values.income_source === 'employed' ? 'Payday (day of the month)' : 'Best day of the month to pay'}
+                type="number" min="1" max="31" value={values.payday} onChange={set('payday')}
+              />
             </div>
             <Field as="textarea" label="Home address" rows={2} value={values.address} onChange={set('address')} />
 
@@ -160,7 +180,7 @@ export default function Apply() {
             </div>
 
             <Check
-              label="I agree to be contacted about this application, and to my details being checked with my employer and a credit bureau."
+              label="I agree to be contacted about this application, and to my details being checked with my employer (if I have one) and a credit bureau."
               checked={values.consent}
               onChange={set('consent')}
               required

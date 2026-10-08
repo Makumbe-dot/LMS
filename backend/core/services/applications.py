@@ -15,6 +15,7 @@ from ..exceptions import BusinessRuleError
 from ..models import (
     ApplicationStatus,
     Borrower,
+    IncomeSource,
     LoanProduct,
     OnlineApplication,
     OrganisationSetting,
@@ -86,6 +87,12 @@ def submit_public(data: dict, client_address: str = "") -> OnlineApplication:
         raise BusinessRuleError("Email: that is not an email address")
     salary = data.get("net_salary")
     payday = data.get("payday")
+    source = data.get("income_source") or IncomeSource.EMPLOYED
+    if source not in IncomeSource.values:
+        raise BusinessRuleError("Say how you earn your income")
+    business = (data.get("business_name") or "").strip()
+    if source != IncomeSource.EMPLOYED and not business:
+        raise BusinessRuleError("Business name: the business or trade you run")
     terms = _loan_terms(data)
 
     waiting = OnlineApplication.objects.filter(status=ApplicationStatus.NEW)
@@ -95,8 +102,9 @@ def submit_public(data: dict, client_address: str = "") -> OnlineApplication:
 
     return OnlineApplication.objects.create(
         **fields, email=email[:120], address=(data.get("address") or "").strip()[:500],
-        employer=(data.get("employer") or "").strip()[:120],
-        net_salary=_money(salary, "Net salary") if salary not in (None, "") else None,
+        employer=(data.get("employer") or "").strip()[:120] if source == IncomeSource.EMPLOYED else "",
+        income_source=source, business_name=business[:120],
+        net_salary=_money(salary, "Net monthly income") if salary not in (None, "") else None,
         payday=int(payday) if str(payday or "").isdigit() and 1 <= int(payday) <= 31 else None,
         consent=True, source="public", client_address=(client_address or "")[:64],
         borrower=Borrower.objects.filter(national_id__iexact=fields["national_id"]).first(),
@@ -113,6 +121,7 @@ def submit_portal(borrower: Borrower, data: dict) -> OnlineApplication:
         borrower=borrower, first_name=borrower.first_name, last_name=borrower.last_name,
         national_id=borrower.national_id, phone=borrower.phone, email=borrower.email or "",
         address=borrower.address or "", employer=borrower.employer or "",
+        income_source=borrower.income_source, business_name=borrower.business_name,
         net_salary=borrower.net_salary, payday=borrower.payday, consent=True,
         source="portal", **terms)
 
@@ -132,6 +141,7 @@ def accept(application: OnlineApplication, user, branch_id=None) -> dict:
             last_name=application.last_name, national_id=application.national_id,
             phone=application.phone, email=application.email or None,
             address=application.address or None, employer=application.employer or None,
+            income_source=application.income_source, business_name=application.business_name,
             net_salary=application.net_salary or 0, payday=application.payday or 25,
             branch_id=branch_id or getattr(user, "branch_id", None),
             notes="Applied online; KYC documents still to be collected.")

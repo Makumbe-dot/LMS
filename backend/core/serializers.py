@@ -37,6 +37,7 @@ from .models import (
     ManualJournal,
     ManualJournalLine,
     Guarantor,
+    IncomeSource,
     Holiday,
     InboundPayment,
     JobRun,
@@ -224,11 +225,19 @@ class GuarantorSerializer(serializers.ModelSerializer):
                   "employer", "address"]
 
 
+# Who the borrower is when they live off a business, and its cash-flow worksheet.
+BUSINESS_FIELDS = [
+    "income_source", "business_name", "business_sector", "business_registration_no",
+    "trading_since", "business_address", "monthly_sales", "monthly_cost_of_sales",
+    "monthly_expenses", "monthly_other_repayments",
+]
+
 BORROWER_FIELDS = [
     "first_name", "last_name", "national_id", "date_of_birth", "gender", "phone", "email",
     "address", "employer", "employee_no", "job_title", "net_salary", "payday",
     "kyc_verified", "preferred_channel", "is_blacklisted", "is_pep", "notes", "branch",
     "bank_name", "bank_branch", "bank_account_no", "bank_account_name", "mobile_wallet",
+    *BUSINESS_FIELDS,
 ]
 
 
@@ -252,11 +261,18 @@ class BorrowerSerializer(serializers.ModelSerializer):
     active_loans = serializers.IntegerField(read_only=True, default=0)
     total_outstanding = money(read_only=True, default=Decimal("0"))
     branch_name = serializers.CharField(source="branch.name", read_only=True, default=None)
+    years_trading = serializers.SerializerMethodField()
+    business_net_income = money(read_only=True)
 
     class Meta:
         model = Borrower
         fields = ["id", "borrower_no", "created_at", *BORROWER_FIELDS, "branch_name",
+                  "years_trading", "business_net_income",
                   "guarantors", "documents", "active_loans", "total_outstanding"]
+
+    def get_years_trading(self, obj):
+        years = obj.years_trading()
+        return None if years is None else str(years)
 
 
 class BureauEnquirySerializer(serializers.ModelSerializer):
@@ -273,7 +289,10 @@ class BureauEnquirySerializer(serializers.ModelSerializer):
 
 
 # Text fields a borrower may leave empty, which the forms send as null.
-BLANKABLE = ("bank_name", "bank_branch", "bank_account_no", "bank_account_name", "mobile_wallet")
+BLANKABLE = ("bank_name", "bank_branch", "bank_account_no", "bank_account_name", "mobile_wallet",
+             "business_name", "business_sector", "business_registration_no", "business_address")
+WORKSHEET = ("monthly_sales", "monthly_cost_of_sales", "monthly_expenses",
+             "monthly_other_repayments", "net_salary")
 
 
 class _BlankNotNull:
@@ -288,7 +307,32 @@ class _BlankNotNull:
         return super().to_internal_value(data)
 
 
-class BorrowerCreateSerializer(_BlankNotNull, serializers.ModelSerializer):
+class _IncomeChecks:
+    """A business owner names the business and is never on an employer's payroll
+    deduction schedule; nobody's income or costs are negative."""
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        current = getattr(self, "instance", None)
+
+        def value(key, default=None):
+            return attrs[key] if key in attrs else getattr(current, key, default)
+
+        for key in WORKSHEET:
+            if key in attrs and attrs[key] is not None and attrs[key] < 0:
+                raise serializers.ValidationError({key: "Cannot be negative"})
+        source = value("income_source") or IncomeSource.EMPLOYED
+        if source != IncomeSource.EMPLOYED:
+            if not (value("business_name") or "").strip():
+                raise serializers.ValidationError(
+                    {"business_name": "Name the business or trade the borrower lives off"})
+            # Their repayments do not come off a payslip.
+            attrs["employer"] = None
+            attrs["employee_no"] = None
+        return attrs
+
+
+class BorrowerCreateSerializer(_IncomeChecks, _BlankNotNull, serializers.ModelSerializer):
     guarantors = GuarantorSerializer(many=True, required=False, default=list)
 
     class Meta:
@@ -301,14 +345,15 @@ class BorrowerCreateSerializer(_BlankNotNull, serializers.ModelSerializer):
         return value
 
 
-class BorrowerUpdateSerializer(_BlankNotNull, serializers.ModelSerializer):
+class BorrowerUpdateSerializer(_IncomeChecks, _BlankNotNull, serializers.ModelSerializer):
     class Meta:
         model = Borrower
         # national_id is the borrower's identity in the register and is not editable
         fields = ["first_name", "last_name", "phone", "email", "address", "employer",
                   "employee_no", "job_title", "net_salary", "payday", "kyc_verified",
                   "preferred_channel", "is_blacklisted", "is_pep", "notes", "branch",
-                  "bank_name", "bank_branch", "bank_account_no", "bank_account_name", "mobile_wallet"]
+                  "bank_name", "bank_branch", "bank_account_no", "bank_account_name", "mobile_wallet",
+                  *BUSINESS_FIELDS]
         extra_kwargs = {f: {"required": False} for f in fields}
 
 
@@ -462,6 +507,8 @@ class LoanQuoteSerializer(serializers.Serializer):
     apr_pct = serializers.DecimalField(max_digits=10, decimal_places=2, allow_null=True)
     affordability_pct = money(allow_null=True, required=False)
     affordable = serializers.BooleanField(allow_null=True, required=False)
+    affordability_limit_pct = money(required=False)
+    income_basis = serializers.CharField(required=False)
     schedule = ScheduleRowSerializer(many=True)
     scorecard = ScorecardSerializer(allow_null=True, required=False)
 

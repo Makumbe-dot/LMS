@@ -7,7 +7,7 @@ import { useToast } from '../components/Toast.jsx'
 import { Badge, ErrorBanner, Field, Loading, PageHeader } from '../components/ui.jsx'
 import { post, qs } from '../lib/api.js'
 import { useAuth } from '../lib/auth.jsx'
-import { dateTime, fmt } from '../lib/format.js'
+import { INCOME_SOURCES, dateTime, fmt } from '../lib/format.js'
 import { useApi } from '../lib/useApi.js'
 
 /**
@@ -98,11 +98,18 @@ export default function OnlineApplications() {
             { key: 'term', header: 'Months', num: true, render: (r) => r.term_months },
             {
               key: 'salary',
-              header: 'Net salary',
+              header: 'Net income',
               num: true,
               render: (r) => (r.net_salary ? fmt(r.net_salary) : '-'),
             },
-            { key: 'employer', header: 'Employer', render: (r) => r.employer || '-' },
+            {
+              key: 'employer',
+              header: 'Earns from',
+              render: (r) =>
+                r.income_source && r.income_source !== 'employed'
+                  ? `${r.business_name || '-'} (${INCOME_SOURCES[r.income_source] || r.income_source})`
+                  : r.employer || '-',
+            },
             {
               key: 'status',
               header: 'Status',

@@ -126,6 +126,7 @@ def loan_statement(loan: Loan, start: date | None = None, end: date | None = Non
         "borrower": borrower.full_name, "borrower_no": borrower.borrower_no,
         "national_id": borrower.national_id, "phone": borrower.phone,
         "address": borrower.address, "employer": borrower.employer,
+        "business": "" if borrower.is_employed else borrower.business_name,
         "product": loan.product.name, "principal": loan.principal,
         "rate_pct": loan.interest_rate_pct, "rate_method": loan.get_rate_method_display(),
         "repayment_frequency": loan.repayment_frequency,

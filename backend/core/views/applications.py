@@ -33,7 +33,8 @@ class OnlineApplicationSerializer(serializers.ModelSerializer):
     class Meta:
         model = OnlineApplication
         fields = ["id", "status", "source", "first_name", "last_name", "national_id", "phone",
-                  "email", "address", "employer", "net_salary", "payday", "product_id",
+                  "email", "address", "employer", "income_source", "business_name",
+                  "net_salary", "payday", "product_id",
                   "product_name", "amount", "term_months", "purpose", "borrower_id",
                   "borrower_no", "outcome", "created_at", "handled_by_name", "handled_at"]
 
