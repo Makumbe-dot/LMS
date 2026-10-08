@@ -225,6 +225,35 @@ export async function downloadFile(path, fmt = 'csv', fallbackName = 'export') {
 export const downloadCsv = (path, fallbackName = 'export') =>
   downloadFile(path, 'csv', fallbackName)
 
+/**
+ * POST and save the reply as a file: for an action that both produces a file and
+ * changes something (a bank payment file marks its payments sent).
+ */
+export async function postDownload(path, body = {}, fallbackName = 'download') {
+  const fetchIt = () =>
+    fetch(BASE + path, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${getToken()}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  let res = await fetchIt()
+  if (res.status === 401 && getRefreshToken() && (await refreshSession())) res = await fetchIt()
+  if (!res.ok) {
+    const isJson = (res.headers.get('content-type') || '').includes('json')
+    const data = isJson ? await res.json() : null
+    throw new ApiError(data?.detail || 'Download failed', res.status)
+  }
+  const blob = await res.blob()
+  const match = (res.headers.get('content-disposition') || '').match(/filename="?([^";]+)"?/)
+  const link = document.createElement('a')
+  link.href = URL.createObjectURL(blob)
+  link.download = match ? match[1] : fallbackName
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(link.href)
+}
+
 async function signInRequest(path, body) {
   const res = await fetch(`${BASE}${path}`, {
     method: 'POST',

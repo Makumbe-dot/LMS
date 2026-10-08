@@ -6,6 +6,7 @@ import { useToast } from '../components/Toast.jsx'
 import { ErrorBanner, Field, KeyValues, Kpi, Loading, PageHeader } from '../components/ui.jsx'
 import { del, get, post, qs } from '../lib/api.js'
 import { useAuth } from '../lib/auth.jsx'
+import { revaluedBalance, revaluedKind } from '../lib/currency.js'
 import { dateTime, fmt, money, num, today } from '../lib/format.js'
 import { useApi } from '../lib/useApi.js'
 
@@ -24,9 +25,10 @@ function Movement({ value, currency }) {
 }
 
 /**
- * The exchange-rate table and the month-end revaluation of foreign-currency
- * loans. The ledger is kept in the organisation's currency; a loan in another
- * is carried at its booked rate until a run here moves it to the closing rate.
+ * The exchange-rate table and the month-end revaluation of foreign-currency loans,
+ * savings accounts and funding facilities. The ledger is kept in the organisation's
+ * currency; a balance in another is carried at its booked rate until a run here
+ * moves it to the closing rate.
  */
 export default function Currencies() {
   const { can } = useAuth()
@@ -38,7 +40,8 @@ export default function Currencies() {
   const [asOf, setAsOf] = useState(today())
   const [preview, setPreview] = useState(null)
   const [busy, setBusy] = useState(false)
-  const isAdmin = can('admin')
+  const canSetup = can('setup')
+  const canAccount = can('accounting')
 
   const base = overview.data?.base_currency
 
@@ -80,11 +83,19 @@ export default function Currencies() {
   }
 
   async function postRevaluation() {
-    if (!window.confirm(`Restate every open foreign-currency loan at the rates for ${asOf}?`)) return
+    if (
+      !window.confirm(
+        `Restate every open foreign-currency loan, savings account and facility at the rates for ${asOf}?`,
+      )
+    )
+      return
     setBusy(true)
     try {
       const run = await post('/api/currencies/revaluations', { as_of: asOf })
-      toast(`${run.run_no}: ${run.loans_revalued} loans restated, movement ${money(run.movement)}`)
+      toast(
+        `${run.run_no}: ${run.loans_revalued} loans, ${run.savings_revalued ?? 0} savings accounts ` +
+          `and ${run.facilities_revalued ?? 0} facilities restated, movement ${money(run.movement)}`,
+      )
       setPreview(null)
       runs.reload()
       overview.reload()
@@ -107,7 +118,7 @@ export default function Currencies() {
         title="Currencies"
         meta={`The ledger is kept in ${base}. A loan in another currency is carried at its booked rate until a revaluation moves it to the closing rate.`}
       >
-        {isAdmin ? (
+        {canSetup ? (
           <button type="button" className="btn primary" onClick={() => setAdding(true)}>
             Add a rate
           </button>
@@ -125,7 +136,9 @@ export default function Currencies() {
             value={c.rate ? rate6(c.rate) : 'No rate'}
             sub={
               c.rate
-                ? `${base} per ${c.code}, from ${c.rate_date} · ${c.open_loans} open loan${c.open_loans === 1 ? '' : 's'}`
+                ? `${base} per ${c.code}, from ${c.rate_date} · ${c.open_loans} open loan${c.open_loans === 1 ? '' : 's'}` +
+                  (c.open_savings ? `, ${c.open_savings} savings` : '') +
+                  (c.open_facilities ? `, ${c.open_facilities} facilit${c.open_facilities === 1 ? 'y' : 'ies'}` : '')
                 : 'add one before a loan is quoted'
             }
           />
@@ -161,7 +174,7 @@ export default function Currencies() {
                   key: 'actions',
                   header: '',
                   render: (r) =>
-                    isAdmin ? (
+                    canSetup ? (
                       <button type="button" className="btn small" onClick={() => removeRate(r)}>
                         Delete
                       </button>
@@ -186,7 +199,7 @@ export default function Currencies() {
             <button type="button" className="btn" onClick={loadPreview} disabled={busy}>
               Preview
             </button>
-            {isAdmin && preview && preview.lines.length > 0 && !preview.missing_rates.length ? (
+            {canAccount && preview && preview.lines.length > 0 && !preview.missing_rates.length ? (
               <button type="button" className="btn primary" onClick={postRevaluation} disabled={busy}>
                 Post revaluation
               </button>
@@ -202,6 +215,8 @@ export default function Currencies() {
               <KeyValues
                 items={[
                   ['Loans to restate', preview.loans],
+                  ['Savings accounts to restate', preview.savings_accounts ?? 0],
+                  ['Facilities to restate', preview.facilities ?? 0],
                   ['Movement', <Movement key="m" value={preview.movement} currency={base} />],
                 ]}
               />
@@ -209,16 +224,16 @@ export default function Currencies() {
                 <DataTable
                   caption="Revaluation preview"
                   rows={preview.lines}
-                  rowKey={(r) => r.loan_id}
+                  rowKey={(r) => `${r.kind || 'loan'}-${r.reference || r.loan_no}`}
                   columns={[
-                    { key: 'loan', header: 'Loan', render: (r) => r.loan_no },
-                    { key: 'borrower', header: 'Borrower', render: (r) => r.borrower },
+                    { key: 'kind', header: 'What', render: (r) => revaluedKind(r) },
+                    { key: 'ref', header: 'Number', render: (r) => r.reference || r.loan_no },
+                    { key: 'holder', header: 'Borrower, member or funder', render: (r) => r.holder || r.borrower },
                     {
                       key: 'outstanding',
-                      header: 'Outstanding',
+                      header: 'Balance',
                       num: true,
-                      render: (r) =>
-                        `${r.currency} ${fmt(num(r.principal_outstanding) + num(r.penalties_outstanding) + num(r.charges_outstanding))}`,
+                      render: (r) => `${r.currency} ${fmt(revaluedBalance(r))}`,
                     },
                     { key: 'old', header: 'Booked at', num: true, render: (r) => rate6(r.old_rate) },
                     { key: 'new', header: 'Closing', num: true, render: (r) => rate6(r.new_rate) },
@@ -226,7 +241,7 @@ export default function Currencies() {
                   ]}
                 />
               ) : (
-                <p className="muted">No open foreign-currency loans.</p>
+                <p className="muted">No open foreign-currency loans, savings or facilities.</p>
               )}
             </>
           ) : null}
@@ -246,6 +261,8 @@ export default function Currencies() {
               { key: 'run', header: 'Run', render: (r) => r.run_no },
               { key: 'as_of', header: 'As at', render: (r) => r.as_of },
               { key: 'loans', header: 'Loans', num: true, render: (r) => r.loans_revalued },
+              { key: 'savings', header: 'Savings', num: true, render: (r) => r.savings_revalued ?? 0 },
+              { key: 'facilities', header: 'Facilities', num: true, render: (r) => r.facilities_revalued ?? 0 },
               {
                 key: 'movement',
                 header: 'Movement',

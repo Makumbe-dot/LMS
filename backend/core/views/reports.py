@@ -11,8 +11,8 @@ from rest_framework.response import Response
 
 from ..audit import audit
 from ..exceptions import BusinessRuleError
-from ..models import AuditLog, Notification, NotificationStatus
-from ..permissions import IsAdmin, IsOfficer, IsTeller
+from ..models import SECRET_KINDS, AuditLog, Notification, NotificationStatus
+from ..permissions import CanCash, CanMessages, CanSupervise, IsAdmin
 from ..serializers import (
     NOTIFICATION_STATUS_CHOICES,
     TXN_TYPE_CHOICES,
@@ -100,7 +100,7 @@ def transactions(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsOfficer])
+@permission_classes([CanSupervise])
 def run_penalties(request):
     """End-of-day job: accrue late-payment penalties across all active loans."""
     as_of = parse_date(request, "as_of")
@@ -204,7 +204,9 @@ def notifications(request):
         qs = qs.filter(kind=kind)
     term = request.query_params.get("q")
     if term:
-        qs = qs.filter(Q(to_address__icontains=term) | Q(body__icontains=term)
+        # A code's text is never searchable: searching digits would find it.
+        qs = qs.filter(Q(to_address__icontains=term)
+                       | (Q(body__icontains=term) & ~Q(kind__in=SECRET_KINDS))
                        | Q(borrower__first_name__icontains=term)
                        | Q(borrower__last_name__icontains=term))
 
@@ -212,13 +214,13 @@ def notifications(request):
         rows = [{"id": n.id, "scheduled_for": n.scheduled_for, "channel": n.channel,
                  "to": n.to_address, "borrower": n.borrower.full_name,
                  "loan_no": n.loan.loan_no if n.loan_id else "", "kind": n.kind,
-                 "status": n.status, "message": n.body} for n in qs[:5000]]
+                 "status": n.status, "message": n.shown_body} for n in qs[:5000]]
         return table_response(request, rows, "notifications")
     return Response(paginate(request, qs, NotificationSerializer, default_size=50))
 
 
 @api_view(["POST"])
-@permission_classes([IsOfficer])
+@permission_classes([CanMessages])
 def generate_notifications(request):
     """Queue instalment reminders and arrears notices across the active book."""
     as_of = parse_date(request, "as_of")
@@ -229,7 +231,7 @@ def generate_notifications(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsOfficer])
+@permission_classes([CanMessages])
 def send_notifications(request):
     """Deliver queued messages through the configured gateway.
 
@@ -246,7 +248,7 @@ def send_notifications(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsOfficer])
+@permission_classes([CanMessages])
 def mark_notifications_sent(request):
     """Mark messages sent WITHOUT delivering them.
 
@@ -277,7 +279,7 @@ def message_gateway(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsOfficer])
+@permission_classes([CanMessages])
 def cancel_notifications(request):
     body = NotificationActionSerializer(data=request.data)
     body.is_valid(raise_exception=True)
@@ -292,7 +294,7 @@ def cancel_notifications(request):
 
 # ---------------------------------------------------------------- bulk import
 @api_view(["POST"])
-@permission_classes([IsTeller])
+@permission_classes([CanCash])
 @parser_classes([MultiPartParser, FormParser])
 def bulk_repayments(request):
     """Validate, and optionally post, a CSV of repayments.
@@ -344,8 +346,31 @@ def spreadsheet(request, kind: str):
         return table_response(request, rows, file_name)
     # JSON turns Decimal into a float, so say which columns are money for the screen.
     money = sorted({k for row in rows for k, v in row.items() if isinstance(v, Decimal)})
-    return Response(paginate_list(request, rows, default_size=100,
-                                  extra={"title": title, "money_columns": money}))
+    total_rows = len(rows)
+    search = (request.query_params.get("search") or "").strip().lower()
+    if search:
+        rows = [row for row in rows
+                if any(search in str(v).lower() for v in row.values() if v is not None)]
+    body = paginate_list(request, rows, default_size=100,
+                         extra={"title": title, "money_columns": money, "total_rows": total_rows})
+    body["results"] = _with_record_ids(body["results"])
+    return Response(body)
+
+
+def _with_record_ids(rows: list[dict]) -> list[dict]:
+    """The screen opens the member or loan a row is about, so each row on the page
+    gets their ids. Only here: the Excel and CSV files keep to the numbers people
+    read (member no., loan no.)."""
+    from ..models import Borrower, Loan
+
+    members = {r["member_no"] for r in rows if r.get("member_no")}
+    loans = {r["loan_no"] for r in rows if r.get("loan_no")}
+    borrower_ids = (dict(Borrower.objects.filter(borrower_no__in=members)
+                         .values_list("borrower_no", "id")) if members else {})
+    loan_ids = (dict(Loan.objects.filter(loan_no__in=loans).values_list("loan_no", "id"))
+                if loans else {})
+    return [{**r, "borrower_id": borrower_ids.get(r.get("member_no")),
+             "loan_id": loan_ids.get(r.get("loan_no"))} for r in rows]
 
 
 @api_view(["GET"])

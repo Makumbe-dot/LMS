@@ -6,13 +6,14 @@
    a list to read; ten entries is a menu, and pages that are used together (the
    ledger, its journals, the bank reconciliation) sit one click apart.
 
-   `roles` on a page hides it from everyone else; an entry with no page left for
-   the signed-in role disappears, and so does a section with no entry left. */
+   `rights` on a page hides it from users holding none of them ('admin' meaning an
+   administrator); an entry with no page left for the signed-in user disappears,
+   and so does a section with no entry left. */
 
 export const HOME = { to: '/dashboard', label: 'Dashboard', icon: 'dashboard', end: true }
 export const ACCOUNT = { to: '/account', label: 'My account', icon: 'user' }
 
-const COUNTER = ['admin', 'loan_officer', 'teller']
+const CASH = ['cash']
 const ADMIN = ['admin']
 
 export const NAV = [
@@ -24,9 +25,17 @@ export const NAV = [
         key: 'customers',
         label: 'Customers',
         icon: 'users',
+        badge: {
+          key: 'screening_open',
+          one: 'screening match to review',
+          many: 'screening matches to review',
+          tone: 'warn',
+        },
         pages: [
           { to: '/borrowers', label: 'Borrowers', icon: 'user' },
           { to: '/groups', label: 'Groups', icon: 'users' },
+          { to: '/portal-requests', label: 'Portal requests', icon: 'inbox' },
+          { to: '/screening', label: 'Screening', icon: 'shield' },
         ],
       },
       {
@@ -35,7 +44,11 @@ export const NAV = [
         icon: 'loans',
         // A count from /api/nav-summary shown beside the row: work that is waiting.
         badge: { key: 'pending_applications', one: 'application waiting', many: 'applications waiting' },
-        pages: [{ to: '/loans', label: 'Loans', icon: 'loans' }],
+        pages: [
+          { to: '/loans', label: 'Loans', icon: 'loans' },
+          { to: '/online-applications', label: 'Online applications', icon: 'inbox' },
+          { to: '/payouts', label: 'Payouts', icon: 'coins' },
+        ],
       },
       {
         key: 'savings',
@@ -55,18 +68,38 @@ export const NAV = [
         icon: 'calendar',
         badge: { key: 'loans_in_arrears', one: 'loan in arrears', many: 'loans in arrears', tone: 'warn' },
         pages: [
-          { to: '/collections', label: 'Collections due', icon: 'calendar' },
+          { to: '/collections', label: 'Collections due', icon: 'calendar', end: true },
+          { to: '/collections/work', label: 'Work queue', icon: 'list' },
           { to: '/arrears', label: 'Arrears / PAR', icon: 'trending' },
           { to: '/payroll', label: 'Payroll deductions', icon: 'briefcase' },
-          { to: '/imports', label: 'Bulk repayments', icon: 'upload', roles: COUNTER, end: true },
-          { to: '/notifications', label: 'Messages', icon: 'message' },
+          { to: '/payments', label: 'Incoming payments', icon: 'inbox' },
+          { to: '/imports', label: 'Bulk repayments', icon: 'upload', rights: CASH, end: true },
+        ],
+      },
+      {
+        key: 'communications',
+        label: 'Communications',
+        icon: 'message',
+        badge: {
+          key: 'messages_failed',
+          one: 'message failed this week',
+          many: 'messages failed this week',
+          tone: 'warn',
+        },
+        pages: [
+          { to: '/communications', label: 'Overview', icon: 'dashboard', end: true },
+          { to: '/notifications', label: 'Outbox', icon: 'inbox' },
+          { to: '/communications/bulk', label: 'Bulk message', icon: 'users' },
+          { to: '/communications/automation', label: 'Automation', icon: 'play' },
+          { to: '/communications/wording', label: 'Wording', icon: 'pen' },
+          { to: '/communications/channels', label: 'Channels', icon: 'whatsapp' },
         ],
       },
       {
         key: 'till',
         label: 'Teller till',
         icon: 'till',
-        pages: [{ to: '/till', label: 'Teller till', icon: 'till', roles: COUNTER }],
+        pages: [{ to: '/till', label: 'Teller till', icon: 'till', rights: CASH }],
       },
     ],
   },
@@ -124,11 +157,19 @@ export const NAV = [
         key: 'system',
         label: 'System',
         icon: 'settings',
+        badge: {
+          key: 'jobs_needing_attention',
+          one: 'job needs attention',
+          many: 'jobs need attention',
+          tone: 'warn',
+        },
         pages: [
-          { to: '/settings', label: 'Settings', icon: 'settings', roles: ADMIN },
-          { to: '/users', label: 'Users', icon: 'userCog', roles: ADMIN },
-          { to: '/imports/loan-book', label: 'Loan book migration', icon: 'database', roles: ADMIN },
-          { to: '/audit', label: 'Audit log', icon: 'history', roles: ADMIN },
+          { to: '/settings', label: 'Settings', icon: 'settings', rights: ADMIN },
+          { to: '/go-live', label: 'Go-live checklist', icon: 'shield', rights: ADMIN },
+          { to: '/users', label: 'Users', icon: 'userCog', rights: ADMIN },
+          { to: '/imports/loan-book', label: 'Loan book migration', icon: 'database', rights: ADMIN },
+          { to: '/jobs', label: 'Scheduled jobs', icon: 'play', rights: ADMIN },
+          { to: '/audit', label: 'Audit log', icon: 'history', rights: ADMIN },
         ],
       },
     ],
@@ -163,22 +204,22 @@ export function findPage(pathname) {
 }
 
 /**
- * The menu as one role sees it. Each entry gains `to`: the first of its pages
- * that role can open, which is where the sidebar row leads.
+ * The menu as one user sees it. Each entry gains `to`: the first of its pages
+ * that user can open, which is where the sidebar row leads.
  */
 export function visibleNav(can) {
   return NAV.map((section) => ({
     ...section,
     entries: section.entries
       .map((entry) => {
-        const pages = entry.pages.filter((page) => !page.roles || can(...page.roles))
+        const pages = entry.pages.filter((page) => !page.rights || can(...page.rights))
         return { ...entry, pages, to: pages[0]?.to }
       })
       .filter((entry) => entry.pages.length),
   })).filter((section) => section.entries.length)
 }
 
-/** Every page a role can open, flat, for the search box's "go to" results. */
+/** Every page a user can open, flat, for the search box's "go to" results. */
 export function allPages(can) {
   const pages = [{ ...HOME, entry: null }]
   for (const section of visibleNav(can)) {

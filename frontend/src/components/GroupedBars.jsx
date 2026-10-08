@@ -3,20 +3,21 @@
    Two series, so a legend is always present and identity never rests on colour
    alone; the legend also carries each series' total for the period, which is the
    first thing anyone asks of this chart. The month in progress sits on a faint
-   band so it is read as unfinished. Every group has a hover/focus tooltip and,
-   while hovered, its two values written above the bars; a table view is one
-   click away for screen readers, print and forced colours. */
+   band so it is read as unfinished. Hovering or focusing a month fades the others
+   and opens a tooltip with both figures and the net; values are not written over
+   the bars, where a pair of close figures ran together into one number. A table
+   view is one click away for screen readers, print and forced colours. */
 import { useId, useMemo, useState } from 'react'
 
 import { compact, fmt, money, monthLabel, monthName } from '../lib/format.js'
 import DataTable from './DataTable.jsx'
 
 const W = 760
-const H = 250
-const M = { top: 22, right: 12, bottom: 30, left: 52 }
+const H = 262
+const M = { top: 18, right: 12, bottom: 30, left: 52 }
 const PLOT_W = W - M.left - M.right
 const PLOT_H = H - M.top - M.bottom
-const BAR_GAP = 3 // surface gap between the two bars of a pair
+const BAR_GAP = 2 // surface gap between the two bars of a pair
 const RADIUS = 4
 
 /** A rectangle with only its top corners rounded, anchored to the baseline. */
@@ -62,6 +63,11 @@ export default function GroupedBars({
   xKey = 'month',
   // The last group is the month still in progress: banded, and named so.
   currentLast = true,
+  // An optional derived line for the tooltip, e.g. collected less disbursed.
+  net = {
+    label: 'Net (collected − disbursed)',
+    value: (row) => (Number(row.collected) || 0) - (Number(row.disbursed) || 0),
+  },
 }) {
   const [hover, setHover] = useState(null)
   const [view, setView] = useState('chart')
@@ -77,7 +83,7 @@ export default function GroupedBars({
   )
 
   const groupWidth = PLOT_W / Math.max(data.length, 1)
-  const barWidth = Math.min(18, (groupWidth * 0.64 - BAR_GAP) / series.length)
+  const barWidth = Math.min(22, (groupWidth * 0.66 - BAR_GAP) / series.length)
   const y = (value) => M.top + PLOT_H - (Math.max(0, Number(value) || 0) / max) * PLOT_H
   const lastIndex = data.length - 1
 
@@ -125,7 +131,7 @@ export default function GroupedBars({
       ) : (
         <div className="chart-frame">
           <svg
-            className="chart-svg bars-svg"
+            className={`chart-svg bars-svg${hover !== null ? ' has-hover' : ''}`}
             viewBox={`0 0 ${W} ${H}`}
             role="img"
             aria-label={`${title}. ${series.map((s) => s.label).join(' and ')} per month.`}
@@ -156,7 +162,7 @@ export default function GroupedBars({
             {ticks.map((tick) => (
               <g key={tick}>
                 <line className="tick-line" x1={M.left} x2={W - M.right} y1={y(tick)} y2={y(tick)} />
-                <text x={M.left - 10} y={y(tick) + 3} textAnchor="end">
+                <text className="tick-text" x={M.left - 10} y={y(tick) + 3} textAnchor="end">
                   {compact(tick)}
                 </text>
               </g>
@@ -173,9 +179,9 @@ export default function GroupedBars({
                   {hovered ? (
                     <rect
                       className="hover-band"
-                      x={M.left + groupWidth * index + 1}
+                      x={M.left + groupWidth * index + 2}
                       y={M.top - 8}
-                      width={groupWidth - 2}
+                      width={groupWidth - 4}
                       height={PLOT_H + 8}
                       rx={8}
                     />
@@ -185,19 +191,13 @@ export default function GroupedBars({
                     const top = y(value)
                     const x = startX + si * (barWidth + BAR_GAP)
                     return (
-                      <g key={s.key}>
-                        <path
-                          className="bar"
-                          d={barPath(x, top, barWidth, M.top + PLOT_H - top)}
-                          fill={`url(#${uid}-${s.key})`}
-                          style={{ animationDelay: `${index * 35 + si * 60}ms` }}
-                        />
-                        {hovered && value > 0 ? (
-                          <text className="bar-value" x={x + barWidth / 2} y={top - 5} textAnchor="middle">
-                            {compact(value)}
-                          </text>
-                        ) : null}
-                      </g>
+                      <path
+                        key={s.key}
+                        className="bar"
+                        d={barPath(x, top, barWidth, M.top + PLOT_H - top)}
+                        fill={`url(#${uid}-${s.key})`}
+                        style={{ animationDelay: `${index * 35 + si * 60}ms` }}
+                      />
                     )
                   })}
                   <rect
@@ -250,6 +250,12 @@ export default function GroupedBars({
                   <span className="tt-val">{money(data[hover][s.key])}</span>
                 </div>
               ))}
+              {net ? (
+                <div className="tt-row tt-total">
+                  <span>{net.label}</span>
+                  <span className="tt-val">{money(net.value(data[hover]))}</span>
+                </div>
+              ) : null}
             </div>
           ) : null}
         </div>

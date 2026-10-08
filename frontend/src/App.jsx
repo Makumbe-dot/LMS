@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 
 import Layout from './components/Layout.jsx'
 import { Loading } from './components/ui.jsx'
@@ -14,10 +14,13 @@ import Borrowers from './pages/Borrowers.jsx'
 import BulkImport from './pages/BulkImport.jsx'
 import Charges from './pages/Charges.jsx'
 import Collections from './pages/Collections.jsx'
+import CollectionsWork from './pages/CollectionsWork.jsx'
 import Currencies from './pages/Currencies.jsx'
 import Dashboard from './pages/Dashboard.jsx'
 import Funding from './pages/Funding.jsx'
 import Groups from './pages/Groups.jsx'
+import GoLive from './pages/GoLive.jsx'
+import Jobs from './pages/Jobs.jsx'
 import Journals from './pages/Journals.jsx'
 import Ledger from './pages/Ledger.jsx'
 import LoanBookImport from './pages/LoanBookImport.jsx'
@@ -26,6 +29,18 @@ import LoanNew from './pages/LoanNew.jsx'
 import Loans from './pages/Loans.jsx'
 import Login from './pages/Login.jsx'
 import Notifications from './pages/Notifications.jsx'
+import BulkMessages from './pages/BulkMessages.jsx'
+import OnlineApplications from './pages/OnlineApplications.jsx'
+import Payouts from './pages/Payouts.jsx'
+import Screening from './pages/Screening.jsx'
+import {
+  CommunicationsAutomation,
+  CommunicationsChannels,
+  CommunicationsOverview,
+  CommunicationsWording,
+} from './pages/Communications.jsx'
+import Payments from './pages/Payments.jsx'
+import PortalRequests from './pages/PortalRequests.jsx'
 import Payroll from './pages/Payroll.jsx'
 import Performance from './pages/Performance.jsx'
 import Spreadsheets from './pages/Spreadsheets.jsx'
@@ -37,16 +52,36 @@ import Settings from './pages/Settings.jsx'
 import Till from './pages/Till.jsx'
 import Transactions from './pages/Transactions.jsx'
 import Users from './pages/Users.jsx'
+import Apply from './portal/Apply.jsx'
+import Portal from './portal/Portal.jsx'
 
-/** Blocks a route for roles that must not see it at all. */
-function RequireRole({ roles, children }) {
+/** Blocks a route for users without any of the named access rights. */
+function RequireRight({ rights, children }) {
   const { can } = useAuth()
-  if (!can(...roles)) return <Navigate to="/dashboard" replace />
+  if (!can(...rights)) return <Navigate to="/dashboard" replace />
   return children
 }
 
 export default function App() {
   const { status } = useAuth()
+  const { pathname } = useLocation()
+
+  // The borrower portal stands apart from the staff application: its own sign-in,
+  // its own token, and no staff page reachable from it.
+  if (pathname === '/apply') {
+    return (
+      <Routes>
+        <Route path="/apply" element={<Apply />} />
+      </Routes>
+    )
+  }
+  if (pathname === '/portal' || pathname.startsWith('/portal/')) {
+    return (
+      <Routes>
+        <Route path="/portal/*" element={<Portal />} />
+      </Routes>
+    )
+  }
 
   if (status === 'loading') return <Loading what="Restoring your session" />
   if (status !== 'signed-in') return <Login />
@@ -63,6 +98,10 @@ export default function App() {
           <Route path="/borrowers/:id" element={<BorrowerDetail />} />
           <Route path="/borrowers/:id/edit" element={<BorrowerForm />} />
           <Route path="/groups" element={<Groups />} />
+          <Route path="/portal-requests" element={<PortalRequests />} />
+          <Route path="/online-applications" element={<OnlineApplications />} />
+          <Route path="/screening" element={<Screening />} />
+          <Route path="/payouts" element={<Payouts />} />
           <Route path="/savings" element={<Savings />} />
 
           <Route path="/loans" element={<Loans />} />
@@ -70,12 +109,13 @@ export default function App() {
           <Route path="/loans/:id" element={<LoanDetail />} />
 
           <Route path="/collections" element={<Collections />} />
+          <Route path="/collections/work" element={<CollectionsWork />} />
           <Route
             path="/till"
             element={
-              <RequireRole roles={['admin', 'loan_officer', 'teller']}>
+              <RequireRight rights={['cash']}>
                 <Till />
-              </RequireRole>
+              </RequireRight>
             }
           />
           <Route path="/arrears" element={<Arrears />} />
@@ -83,20 +123,26 @@ export default function App() {
           <Route
             path="/imports"
             element={
-              <RequireRole roles={['admin', 'loan_officer', 'teller']}>
+              <RequireRight rights={['cash']}>
                 <BulkImport />
-              </RequireRole>
+              </RequireRight>
             }
           />
           <Route
             path="/imports/loan-book"
             element={
-              <RequireRole roles={['admin']}>
+              <RequireRight rights={['admin']}>
                 <LoanBookImport />
-              </RequireRole>
+              </RequireRight>
             }
           />
           <Route path="/notifications" element={<Notifications />} />
+          <Route path="/communications" element={<CommunicationsOverview />} />
+          <Route path="/communications/bulk" element={<BulkMessages />} />
+          <Route path="/communications/automation" element={<CommunicationsAutomation />} />
+          <Route path="/communications/wording" element={<CommunicationsWording />} />
+          <Route path="/communications/channels" element={<CommunicationsChannels />} />
+          <Route path="/payments" element={<Payments />} />
 
           <Route path="/transactions" element={<Transactions />} />
           <Route path="/ledger" element={<Ledger />} />
@@ -116,25 +162,41 @@ export default function App() {
           <Route
             path="/users"
             element={
-              <RequireRole roles={['admin']}>
+              <RequireRight rights={['admin']}>
                 <Users />
-              </RequireRole>
+              </RequireRight>
             }
           />
           <Route
             path="/settings"
             element={
-              <RequireRole roles={['admin']}>
+              <RequireRight rights={['admin']}>
                 <Settings />
-              </RequireRole>
+              </RequireRight>
+            }
+          />
+          <Route
+            path="/go-live"
+            element={
+              <RequireRight rights={['admin']}>
+                <GoLive />
+              </RequireRight>
+            }
+          />
+          <Route
+            path="/jobs"
+            element={
+              <RequireRight rights={['admin']}>
+                <Jobs />
+              </RequireRight>
             }
           />
           <Route
             path="/audit"
             element={
-              <RequireRole roles={['admin']}>
+              <RequireRight rights={['admin']}>
                 <Audit />
-              </RequireRole>
+              </RequireRight>
             }
           />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />

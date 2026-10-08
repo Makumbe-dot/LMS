@@ -1,19 +1,30 @@
 """Branches, institution settings, the holiday calendar and cross-entity search."""
-from datetime import date
+from datetime import date, timedelta
 
 from django.db import transaction
 from django.db.models import Q
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 
 from ..audit import audit
 from ..exceptions import BusinessRuleError, NotFound
-from ..models import Borrower, Branch, Holiday, Loan, LoanStatus, OrganisationSetting
+from ..models import (
+    Borrower,
+    Branch,
+    Holiday,
+    Loan,
+    LoanStatus,
+    Notification,
+    NotificationStatus,
+    OrganisationSetting,
+    ScreeningHit,
+)
 from ..permissions import IsAdmin
 from ..serializers import BranchSerializer, HolidaySerializer, OrganisationSettingSerializer
 from ..services import arrears as arrears_svc
-from ..services import workdays
+from ..services import templates, workdays
 
 
 @api_view(["GET", "POST"])
@@ -124,10 +135,24 @@ def holiday_detail(request, holiday_id: int):
 def nav_summary(request):
     """The counts the sidebar shows beside a section: work that is waiting.
 
-    Two COUNTs and nothing else, because the shell asks for this on every page.
+    Two COUNTs and nothing else, because the shell asks for this on every page;
+    an administrator's also reads the recent job runs, one query.
     """
+    extra = {}
+    if request.user.is_admin:
+        # One more query, for administrators only: jobs failing or not running.
+        from ..services import jobs
+
+        extra["jobs_needing_attention"] = jobs.attention()
     return Response({
+        **extra,
         "pending_applications": Loan.objects.filter(status=LoanStatus.PENDING).count(),
+        # Possible sanctions matches nobody has reviewed: they block loans.
+        "screening_open": ScreeningHit.objects.filter(status="open").count(),
+        # Messages that did not get through this past week, so someone looks.
+        "messages_failed": Notification.objects.filter(
+            status=NotificationStatus.FAILED,
+            created_at__gte=timezone.now() - timedelta(days=7)).count(),
         "loans_in_arrears": (Loan.objects
                              .filter(status=LoanStatus.ACTIVE)
                              .filter(arrears_svc.is_overdue(date.today()))
@@ -161,3 +186,29 @@ def search(request):
         "loans": [{"id": l.id, "label": f"{l.loan_no} - {l.borrower.full_name}",
                    "sub": l.status} for l in loans],
     })
+
+
+@api_view(["GET", "PUT"])
+def message_templates(request):
+    """The wording of borrower messages. Everyone reads it; an admin changes it.
+    PUT {"templates": {kind: text}}; a blank text restores the built-in wording."""
+    if request.method == "GET":
+        return Response(templates.catalogue())
+    if not IsAdmin().has_permission(request, None):
+        return Response({"detail": IsAdmin.message}, status=status.HTTP_403_FORBIDDEN)
+    body = request.data.get("templates")
+    if not isinstance(body, dict):
+        raise BusinessRuleError("Send {\"templates\": {kind: text}}")
+    with transaction.atomic():
+        result = templates.save(body)
+        audit(request.user, "update", "message_templates", 1, ", ".join(sorted(body)))
+    return Response(result)
+
+
+@api_view(["GET"])
+@permission_classes([IsAdmin])
+def go_live(request):
+    """The go-live checklist: what stands between this installation and real borrowers."""
+    from ..services import golive
+
+    return Response(golive.summary(golive.checks(request)))

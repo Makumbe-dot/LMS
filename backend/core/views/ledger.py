@@ -10,7 +10,7 @@ from rest_framework.response import Response
 from ..audit import audit
 from ..exceptions import BusinessRuleError, NotFound
 from ..models import JournalEntry, JournalLine, LedgerAccount
-from ..permissions import IsAdmin
+from ..permissions import CanAccounting
 from ..serializers import (
     BalanceSheetSerializer,
     JournalEntrySerializer,
@@ -23,7 +23,7 @@ from .helpers import table_response, wants_table, paginate, parse_date, parse_in
 
 
 @api_view(["POST"])
-@permission_classes([IsAdmin])
+@permission_classes([CanAccounting])
 def accrue_interest(request):
     """Month-end: recognise interest at the effective rate for every instalment
     period that has ended. Only under the effective interest method."""
@@ -44,8 +44,8 @@ def accounts(request):
             qs = qs.filter(type=request.query_params["type"])
         return Response(LedgerAccountSerializer(qs, many=True).data)
 
-    if not IsAdmin().has_permission(request, None):
-        return Response({"detail": IsAdmin.message}, status=status.HTTP_403_FORBIDDEN)
+    if not CanAccounting().has_permission(request, None):
+        return Response({"detail": CanAccounting.message}, status=status.HTTP_403_FORBIDDEN)
     if LedgerAccount.objects.filter(code=request.data.get("code")).exists():
         raise BusinessRuleError("An account with this code already exists")
     body = LedgerAccountSerializer(data=request.data)
@@ -57,7 +57,7 @@ def accounts(request):
 
 
 @api_view(["PATCH"])
-@permission_classes([IsAdmin])
+@permission_classes([CanAccounting])
 def account_detail(request, account_id: int):
     account = LedgerAccount.objects.filter(pk=account_id).first()
     if account is None:
@@ -173,7 +173,7 @@ def reconciliation(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsAdmin])
+@permission_classes([CanAccounting])
 def rebuild(request):
     """Create the default chart of accounts and post any transaction missing an entry.
 

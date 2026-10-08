@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import DataTable from '../components/DataTable.jsx'
+import PayrollReturns from '../components/PayrollReturns.jsx'
 import { useToast } from '../components/Toast.jsx'
 import { ExportButtons, ErrorBanner, Loading, PageHeader } from '../components/ui.jsx'
 import { qs } from '../lib/api.js'
@@ -128,6 +129,8 @@ export default function Payroll() {
           ]}
         />
       )}
+
+      <PayrollReturns employer={employer} start={start} end={end} />
     </>
   )
 }

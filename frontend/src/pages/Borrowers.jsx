@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 
 import DataTable from '../components/DataTable.jsx'
+import SavedViews from '../components/SavedViews.jsx'
 import { ErrorBanner, Loading, PageHeader, Pager } from '../components/ui.jsx'
 import { qs } from '../lib/api.js'
 import { useAuth } from '../lib/auth.jsx'
@@ -23,6 +24,13 @@ export default function Borrowers() {
     `/api/borrowers${qs({ q: debounced, branch_id: branchId, kyc, page, page_size: 50 })}`,
   )
 
+  function applyView(view) {
+    setSearch(view.q || '')
+    setBranchId(view.branch_id || '')
+    setKyc(view.kyc || '')
+    setPage(1)
+  }
+
   const onFilter = (setter) => (event) => {
     setter(event.target.value)
     setPage(1)
@@ -33,7 +41,7 @@ export default function Borrowers() {
     { key: 'name', header: 'Name', render: (r) => `${r.first_name} ${r.last_name}` },
     { key: 'nid', header: 'National ID', render: (r) => r.national_id },
     { key: 'phone', header: 'Phone', render: (r) => r.phone },
-    { key: 'employer', header: 'Employer', render: (r) => r.employer || '-' },
+    { key: 'employer', header: 'Employer or business', render: (r) => r.employer || r.business_name || '-' },
     { key: 'branch', header: 'Branch', render: (r) => r.branch_name || '-' },
     { key: 'salary', header: 'Net salary', num: true, render: (r) => fmt(r.net_salary) },
     {
@@ -66,7 +74,7 @@ export default function Borrowers() {
       <PageHeader title="Borrowers" meta={data ? `${data.count} on the register` : undefined}>
         <input
           type="search"
-          placeholder="Search name, ID, phone, employer"
+          placeholder="Search name, ID, phone, employer or business"
           value={search}
           onChange={onFilter(setSearch)}
           aria-label="Search borrowers"
@@ -87,7 +95,12 @@ export default function Borrowers() {
           <option value="1">KYC verified</option>
           <option value="0">KYC pending</option>
         </select>
-        {can('admin', 'loan_officer') ? (
+        <SavedViews
+          page="borrowers"
+          current={{ q: search, branch_id: branchId, kyc }}
+          onApply={applyView}
+        />
+        {can('borrowers') ? (
           <Link className="btn primary" to="/borrowers/new">
             New borrower
           </Link>

@@ -26,3 +26,8 @@ backend/media/
 node_modules/
 frontend/dist/
 npm-debug.log*
+
+# Playwright
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/

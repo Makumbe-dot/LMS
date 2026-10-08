@@ -8,7 +8,7 @@ from decimal import Decimal
 
 from rest_framework.test import APIClient, APITestCase
 
-from core.models import Role, User
+from core.models import RIGHT_PRESETS, Role, User
 
 
 def as_decimal(value) -> Decimal:
@@ -20,8 +20,9 @@ class LoanLifecycleTests(APITestCase):
     def setUpTestData(cls):
         User.objects.create_user("admin", "admin123", full_name="Admin", role=Role.ADMIN)
         User.objects.create_user("officer", "officer123", full_name="Officer",
-                                 role=Role.LOAN_OFFICER)
-        User.objects.create_user("teller", "teller123", full_name="Teller", role=Role.TELLER)
+                                 rights=RIGHT_PRESETS["loan_officer"])
+        User.objects.create_user("teller", "teller123", full_name="Teller",
+                                 rights=RIGHT_PRESETS["teller"])
 
     def client_for(self, username: str, password: str) -> APIClient:
         client = APIClient()
@@ -70,7 +71,7 @@ class LoanLifecycleTests(APITestCase):
         self.assertEqual(response.status_code, 403)
 
     def test_viewer_cannot_reach_the_audit_log(self):
-        User.objects.create_user("viewer", "viewer123", full_name="Viewer", role=Role.VIEWER)
+        User.objects.create_user("viewer", "viewer123", full_name="Viewer", role=Role.USER)
         viewer = self.client_for("viewer", "viewer123")
         self.assertEqual(viewer.get("/api/reports/audit").status_code, 403)
         self.assertEqual(viewer.get("/api/reports/dashboard").status_code, 200)

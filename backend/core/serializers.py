@@ -37,7 +37,10 @@ from .models import (
     ManualJournal,
     ManualJournalLine,
     Guarantor,
+    IncomeSource,
     Holiday,
+    InboundPayment,
+    JobRun,
     Instalment,
     Loan,
     LoanNote,
@@ -47,6 +50,9 @@ from .models import (
     NotificationStatus,
     OrganisationSetting,
     PaymentMethod,
+    PayrollRun,
+    PayrollRunLine,
+    PortalRequest,
     ProductCharge,
     ExchangeRate,
     ProvisionRun,
@@ -55,6 +61,7 @@ from .models import (
     RevaluationRun,
     ProvisionRunStatus,
     RateMethod,
+    Right,
     Role,
     SavingsAccount,
     SavingsProduct,
@@ -86,9 +93,26 @@ class UserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ["id", "username", "full_name", "role", "is_active", "branch_id", "branch_name",
-                  "phone", "email", "mfa_enabled"]
+        fields = ["id", "username", "full_name", "role", "rights", "approval_limit", "is_active",
+                  "branch_id", "branch_name", "phone", "email", "mfa_enabled"]
         read_only_fields = ["mfa_enabled"]
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # What the user can actually do: every right for an administrator, in the
+        # catalogue's order otherwise, and nothing stale from an old right.
+        data["rights"] = instance.effective_rights()
+        return data
+
+
+class RightsField(serializers.ListField):
+    """The access rights an administrator ticks for a user, as Right values."""
+
+    child = serializers.ChoiceField(choices=Right.choices)
+
+    def to_internal_value(self, data):
+        rights = set(super().to_internal_value(data))
+        return [r.value for r in Right if r.value in rights]
 
 
 class LoginSerializer(serializers.Serializer):
@@ -139,11 +163,13 @@ class PasswordPolicyMixin:
 
 class UserCreateSerializer(PasswordPolicyMixin, serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
-    role = serializers.ChoiceField(choices=Role.choices, default=Role.LOAN_OFFICER)
+    role = serializers.ChoiceField(choices=Role.choices, default=Role.USER)
+    rights = RightsField(required=False, default=list)
 
     class Meta:
         model = User
-        fields = ["username", "full_name", "password", "role", "branch", "phone", "email"]
+        fields = ["username", "full_name", "password", "role", "rights", "approval_limit",
+                  "branch", "phone", "email"]
 
     def validate_username(self, value):
         if User.objects.filter(username=value).exists():
@@ -165,6 +191,9 @@ class UserCreateSerializer(PasswordPolicyMixin, serializers.ModelSerializer):
 class UserUpdateSerializer(PasswordPolicyMixin, serializers.Serializer):
     full_name = serializers.CharField(required=False)
     role = serializers.ChoiceField(choices=Role.choices, required=False)
+    rights = RightsField(required=False)
+    approval_limit = serializers.DecimalField(max_digits=14, decimal_places=2, required=False,
+                                              allow_null=True, min_value=0)
     is_active = serializers.BooleanField(required=False)
     password = serializers.CharField(required=False, allow_null=True)
     branch_id = serializers.IntegerField(required=False, allow_null=True)
@@ -196,10 +225,19 @@ class GuarantorSerializer(serializers.ModelSerializer):
                   "employer", "address"]
 
 
+# Who the borrower is when they live off a business, and its cash-flow worksheet.
+BUSINESS_FIELDS = [
+    "income_source", "business_name", "business_sector", "business_registration_no",
+    "trading_since", "business_address", "monthly_sales", "monthly_cost_of_sales",
+    "monthly_expenses", "monthly_other_repayments",
+]
+
 BORROWER_FIELDS = [
     "first_name", "last_name", "national_id", "date_of_birth", "gender", "phone", "email",
     "address", "employer", "employee_no", "job_title", "net_salary", "payday",
-    "kyc_verified", "is_blacklisted", "notes", "branch",
+    "kyc_verified", "preferred_channel", "is_blacklisted", "is_pep", "notes", "branch",
+    "bank_name", "bank_branch", "bank_account_no", "bank_account_name", "mobile_wallet",
+    *BUSINESS_FIELDS,
 ]
 
 
@@ -223,11 +261,18 @@ class BorrowerSerializer(serializers.ModelSerializer):
     active_loans = serializers.IntegerField(read_only=True, default=0)
     total_outstanding = money(read_only=True, default=Decimal("0"))
     branch_name = serializers.CharField(source="branch.name", read_only=True, default=None)
+    years_trading = serializers.SerializerMethodField()
+    business_net_income = money(read_only=True)
 
     class Meta:
         model = Borrower
         fields = ["id", "borrower_no", "created_at", *BORROWER_FIELDS, "branch_name",
+                  "years_trading", "business_net_income",
                   "guarantors", "documents", "active_loans", "total_outstanding"]
+
+    def get_years_trading(self, obj):
+        years = obj.years_trading()
+        return None if years is None else str(years)
 
 
 class BureauEnquirySerializer(serializers.ModelSerializer):
@@ -243,7 +288,51 @@ class BureauEnquirySerializer(serializers.ModelSerializer):
                   "enquired_at"]
 
 
-class BorrowerCreateSerializer(serializers.ModelSerializer):
+# Text fields a borrower may leave empty, which the forms send as null.
+BLANKABLE = ("bank_name", "bank_branch", "bank_account_no", "bank_account_name", "mobile_wallet",
+             "business_name", "business_sector", "business_registration_no", "business_address")
+WORKSHEET = ("monthly_sales", "monthly_cost_of_sales", "monthly_expenses",
+             "monthly_other_repayments", "net_salary")
+
+
+class _BlankNotNull:
+    """Treats null as "" for the BLANKABLE fields, which are stored as empty text."""
+
+    def to_internal_value(self, data):
+        if hasattr(data, "copy"):
+            data = data.copy()
+            for key in BLANKABLE:
+                if key in data and data[key] is None:
+                    data[key] = ""
+        return super().to_internal_value(data)
+
+
+class _IncomeChecks:
+    """A business owner names the business and is never on an employer's payroll
+    deduction schedule; nobody's income or costs are negative."""
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        current = getattr(self, "instance", None)
+
+        def value(key, default=None):
+            return attrs[key] if key in attrs else getattr(current, key, default)
+
+        for key in WORKSHEET:
+            if key in attrs and attrs[key] is not None and attrs[key] < 0:
+                raise serializers.ValidationError({key: "Cannot be negative"})
+        source = value("income_source") or IncomeSource.EMPLOYED
+        if source != IncomeSource.EMPLOYED:
+            if not (value("business_name") or "").strip():
+                raise serializers.ValidationError(
+                    {"business_name": "Name the business or trade the borrower lives off"})
+            # Their repayments do not come off a payslip.
+            attrs["employer"] = None
+            attrs["employee_no"] = None
+        return attrs
+
+
+class BorrowerCreateSerializer(_IncomeChecks, _BlankNotNull, serializers.ModelSerializer):
     guarantors = GuarantorSerializer(many=True, required=False, default=list)
 
     class Meta:
@@ -256,13 +345,15 @@ class BorrowerCreateSerializer(serializers.ModelSerializer):
         return value
 
 
-class BorrowerUpdateSerializer(serializers.ModelSerializer):
+class BorrowerUpdateSerializer(_IncomeChecks, _BlankNotNull, serializers.ModelSerializer):
     class Meta:
         model = Borrower
         # national_id is the borrower's identity in the register and is not editable
         fields = ["first_name", "last_name", "phone", "email", "address", "employer",
                   "employee_no", "job_title", "net_salary", "payday", "kyc_verified",
-                  "is_blacklisted", "notes", "branch"]
+                  "preferred_channel", "is_blacklisted", "is_pep", "notes", "branch",
+                  "bank_name", "bank_branch", "bank_account_no", "bank_account_name", "mobile_wallet",
+                  *BUSINESS_FIELDS]
         extra_kwargs = {f: {"required": False} for f in fields}
 
 
@@ -416,6 +507,8 @@ class LoanQuoteSerializer(serializers.Serializer):
     apr_pct = serializers.DecimalField(max_digits=10, decimal_places=2, allow_null=True)
     affordability_pct = money(allow_null=True, required=False)
     affordable = serializers.BooleanField(allow_null=True, required=False)
+    affordability_limit_pct = money(required=False)
+    income_basis = serializers.CharField(required=False)
     schedule = ScheduleRowSerializer(many=True)
     scorecard = ScorecardSerializer(allow_null=True, required=False)
 
@@ -460,6 +553,8 @@ class LoanSerializer(serializers.ModelSerializer):
     borrower_name = serializers.CharField(source="borrower.full_name", read_only=True)
     product_name = serializers.CharField(source="product.name", read_only=True)
     officer_name = serializers.CharField(source="officer.full_name", read_only=True, default=None)
+    collector_name = serializers.CharField(source="collector.full_name", read_only=True,
+                                           default=None)
     branch_name = serializers.CharField(source="branch.name", read_only=True, default=None)
     total_outstanding = money(read_only=True)
     total_cost_of_credit = money(read_only=True)
@@ -469,7 +564,8 @@ class LoanSerializer(serializers.ModelSerializer):
     class Meta:
         model = Loan
         fields = ["id", "loan_no", "external_ref", "borrower_id", "borrower_name", "product_id",
-                  "product_name", "officer_id", "officer_name", "branch_id", "branch_name",
+                  "product_name", "officer_id", "officer_name", "collector_id",
+                  "collector_name", "branch_id", "branch_name",
                   "group_id", "refinanced_from_id",
                   "principal", "currency", "fx_rate", "interest_rate_pct", "rate_method",
                   "repayment_frequency",
@@ -601,7 +697,8 @@ class DashboardSerializer(serializers.Serializer):
     disbursed_this_month = money()
     collected_this_month = money()
     due_this_month = money()
-    collection_rate_pct = money()
+    due_to_date = money()
+    collection_rate_pct = money(allow_null=True)
     par_30_loans = serializers.IntegerField()
     arrears_total = money()
     loans_in_arrears = serializers.IntegerField()
@@ -619,13 +716,15 @@ class DashboardSerializer(serializers.Serializer):
 class NotificationSerializer(serializers.ModelSerializer):
     borrower_name = serializers.CharField(source="borrower.full_name", read_only=True)
     loan_no = serializers.CharField(source="loan.loan_no", read_only=True, default=None)
+    body = serializers.CharField(source="shown_body", read_only=True)
 
     class Meta:
         model = Notification
         fields = ["id", "borrower_id", "borrower_name", "loan_id", "loan_no", "kind", "channel",
                   "to_address", "subject", "body", "status", "scheduled_for", "sent_at", "error",
                   "attempts", "last_attempt_at", "provider", "provider_message_id",
-                  "created_at"]
+                  "delivery_status", "delivery_checked_at", "fallback_of_id", "test_redirect",
+                  "campaign_id", "created_at"]
 
 
 class NotificationActionSerializer(serializers.Serializer):
@@ -643,7 +742,8 @@ class OrganisationSettingSerializer(serializers.ModelSerializer):
                   # The Settings page has always shown these; the API silently dropped
                   # them, so an edited approval limit was never saved.
                   "officer_approval_limit", "min_credit_score", "group_arrears_block_days",
-                  "require_open_till", "closed_weekdays", "interest_method", "updated_at"]
+                  "require_open_till", "require_signature", "portal_enabled", "closed_weekdays",
+                  "interest_method", "updated_at"]
         read_only_fields = ["updated_at"]
 
     def validate_interest_method(self, value):
@@ -743,7 +843,26 @@ class SavingsProductSerializer(serializers.ModelSerializer):
     class Meta:
         model = SavingsProduct
         fields = ["id", "code", "name", "description", "interest_rate_pct_pa", "min_balance",
-                  "monthly_fee", "allow_withdrawals", "is_active"]
+                  "monthly_fee", "allow_withdrawals", "currency", "is_active"]
+
+    def validate_currency(self, value):
+        """Blank for the base, any other code only with a rate; and fixed once an
+        account is open under the product, whose balance is in the old one."""
+        from .exceptions import BusinessRuleError
+        from .services import fx
+
+        try:
+            code = fx.validate_code(value)
+        except BusinessRuleError as exc:
+            raise serializers.ValidationError(str(exc))
+        product = self.instance
+        if (product is not None and code != fx.stored_code(product.currency)
+                and product.accounts.exists()):
+            raise serializers.ValidationError(
+                f"{product.name} already has accounts in "
+                f"{fx.normalise(product.currency) or fx.base_currency()}; its currency cannot "
+                f"change. Open a new product for the other currency.")
+        return code
 
 
 class SavingsAccountSerializer(serializers.ModelSerializer):
@@ -759,8 +878,8 @@ class SavingsAccountSerializer(serializers.ModelSerializer):
     class Meta:
         model = SavingsAccount
         fields = ["id", "account_no", "borrower_id", "borrower_no", "borrower_name",
-                  "product_id", "product_name", "branch_name", "status", "balance",
-                  "available_balance", "min_balance", "allow_withdrawals", "opened_on",
+                  "product_id", "product_name", "branch_name", "status", "currency", "fx_rate",
+                  "balance", "available_balance", "min_balance", "allow_withdrawals", "opened_on",
                   "closed_on", "last_interest_date", "created_at"]
 
 
@@ -771,7 +890,7 @@ class SavingsTransactionSerializer(serializers.ModelSerializer):
     class Meta:
         model = SavingsTransaction
         fields = ["id", "account_id", "txn_type", "txn_date", "amount", "balance_after",
-                  "method", "reference", "narration", "reversed", "reversal_of_id",
+                  "fx_rate", "method", "reference", "narration", "reversed", "reversal_of_id",
                   "posted_by_name", "created_at"]
 
 
@@ -936,13 +1055,22 @@ class TillSessionSerializer(serializers.ModelSerializer):
                                              default=None)
     variance_entry_no = serializers.CharField(source="variance_entry.entry_no", read_only=True,
                                               default=None)
+    # the drawer's currency by name, the organisation's when `currency` is blank
+    currency_label = serializers.SerializerMethodField()
 
     class Meta:
         model = TillSession
         fields = ["id", "session_no", "teller_id", "teller_name", "branch_name", "business_date",
+                  "currency", "currency_label", "fx_rate",
                   "opened_at", "opening_float", "status", "status_label", "closed_at", "cash_in",
                   "cash_out", "expected_cash", "counted_cash", "variance", "close_note",
                   "verified_by_name", "verified_at", "verify_note", "variance_entry_no"]
+
+
+    def get_currency_label(self, obj) -> str:
+        from .services.tills import currency_label
+
+        return currency_label(obj)
 
 
 class TillDetailSerializer(TillSessionSerializer):
@@ -965,6 +1093,9 @@ class TillDetailSerializer(TillSessionSerializer):
 
 class TillOpenSerializer(serializers.Serializer):
     opening_float = money(min_value=Decimal("0"))
+    # blank for the organisation's currency; checked by tills.open_till
+    currency = serializers.CharField(required=False, allow_null=True, allow_blank=True,
+                                     max_length=8)
 
 
 class TillCountSerializer(serializers.Serializer):
@@ -1065,23 +1196,64 @@ class ExchangeRateSerializer(serializers.ModelSerializer):
         read_only_fields = ["created_at"]
 
 
+_REVALUATION_LIABILITY_FIELDS = [
+    "savings_account_id", "facility_id", "savings_balance", "savings_movement", "borrowings",
+    "borrowings_movement", "borrowing_interest", "borrowing_interest_movement"]
+
+
 class RevaluationLineSerializer(serializers.ModelSerializer):
-    loan_no = serializers.CharField(source="loan.loan_no", read_only=True)
-    borrower = serializers.CharField(source="loan.borrower.full_name", read_only=True)
+    """A loan, a savings account or a facility, read alike: `kind`, `reference`
+    (its number) and `holder` (the borrower, the member or the funder)."""
+    loan_no = serializers.CharField(source="loan.loan_no", read_only=True, default=None)
+    borrower = serializers.CharField(source="loan.borrower.full_name", read_only=True,
+                                     default=None)
+    kind = serializers.SerializerMethodField()
+    reference = serializers.SerializerMethodField()
+    holder = serializers.SerializerMethodField()
 
     class Meta:
         model = RevaluationLine
-        fields = ["id", "loan_id", "loan_no", "borrower", "currency", "old_rate", "new_rate",
+        fields = ["id", "kind", "reference", "holder", "loan_id", "loan_no", "borrower",
+                  "currency", "old_rate", "new_rate",
                   "principal_outstanding", "penalties_outstanding", "charges_outstanding",
                   "interest_receivable", "fees_deferred",
                   "principal_movement", "penalties_movement", "charges_movement",
-                  "interest_movement", "fees_movement", "movement"]
+                  "interest_movement", "fees_movement", *_REVALUATION_LIABILITY_FIELDS,
+                  "movement"]
+
+    def get_kind(self, obj) -> str:
+        return "loan" if obj.loan_id else "savings" if obj.savings_account_id else "facility"
+
+    def get_reference(self, obj) -> str:
+        if obj.loan_id:
+            return obj.loan.loan_no
+        if obj.savings_account_id:
+            return obj.savings_account.account_no
+        return obj.facility.facility_no
+
+    def get_holder(self, obj) -> str:
+        if obj.loan_id:
+            return obj.loan.borrower.full_name
+        if obj.savings_account_id:
+            return obj.savings_account.borrower.full_name
+        return obj.facility.funder_name
 
 
 class RevaluationPreviewLineSerializer(serializers.Serializer):
-    loan_id = serializers.IntegerField()
-    loan_no = serializers.CharField()
-    borrower = serializers.CharField()
+    kind = serializers.CharField()
+    reference = serializers.CharField()
+    holder = serializers.CharField()
+    loan_id = serializers.IntegerField(allow_null=True)
+    loan_no = serializers.CharField(allow_null=True)
+    borrower = serializers.CharField(allow_null=True)
+    savings_account_id = serializers.IntegerField(allow_null=True)
+    facility_id = serializers.IntegerField(allow_null=True)
+    savings_balance = money()
+    savings_movement = money()
+    borrowings = money()
+    borrowings_movement = money()
+    borrowing_interest = money()
+    borrowing_interest_movement = money()
     currency = serializers.CharField()
     principal_outstanding = money()
     penalties_outstanding = money()
@@ -1104,6 +1276,8 @@ class RevaluationPreviewSerializer(serializers.Serializer):
     as_of = serializers.DateField()
     base_currency = serializers.CharField()
     loans = serializers.IntegerField()
+    savings_accounts = serializers.IntegerField()
+    facilities = serializers.IntegerField()
     movement = money()
     missing_rates = serializers.ListField(child=serializers.CharField())
     lines = RevaluationPreviewLineSerializer(many=True)
@@ -1117,7 +1291,8 @@ class RevaluationRunSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = RevaluationRun
-        fields = ["id", "run_no", "as_of", "base_currency", "loans_revalued", "movement",
+        fields = ["id", "run_no", "as_of", "base_currency", "loans_revalued", "savings_revalued",
+                  "facilities_revalued", "movement",
                   "narration", "entry_no", "run_by_name", "created_at", "lines"]
 
 
@@ -1178,8 +1353,8 @@ class FundingFacilitySerializer(serializers.ModelSerializer):
         model = FundingFacility
         fields = ["id", "facility_no", "funder_name", "name", "facility_limit",
                   "interest_rate_pct_pa", "is_revolving", "start_date", "maturity_date",
-                  "repayment_terms", "principal_outstanding", "interest_accrued",
-                  "last_accrual_date", "closed_on", "is_open", "available",
+                  "repayment_terms", "currency", "fx_rate", "principal_outstanding",
+                  "interest_accrued", "last_accrual_date", "closed_on", "is_open", "available",
                   "total_outstanding", "branch", "branch_name", "notes", "created_by_name",
                   "created_at"]
 
@@ -1193,7 +1368,7 @@ class FacilityTransactionSerializer(serializers.ModelSerializer):
     class Meta:
         model = FacilityTransaction
         fields = ["id", "txn_type", "txn_type_label", "txn_date", "amount", "principal_after",
-                  "accrued_after", "method", "reference", "narration", "reversed",
+                  "accrued_after", "fx_rate", "method", "reference", "narration", "reversed",
                   "reversal_of", "posted_by_name", "entry_no", "created_at"]
 
 
@@ -1222,6 +1397,9 @@ class OpenFacilitySerializer(serializers.Serializer):
     repayment_terms = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     branch = serializers.IntegerField(required=False, allow_null=True)
     notes = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    # blank for the organisation's currency; checked by funding.open_facility
+    currency = serializers.CharField(required=False, allow_null=True, allow_blank=True,
+                                     max_length=8)
 
 
 class FacilityUpdateSerializer(serializers.ModelSerializer):
@@ -1230,7 +1408,34 @@ class FacilityUpdateSerializer(serializers.ModelSerializer):
         # status is absent on purpose: a facility closes through the close action,
         # and its balances move only through a posting.
         fields = ["funder_name", "name", "facility_limit", "interest_rate_pct_pa",
-                  "is_revolving", "maturity_date", "repayment_terms", "branch", "notes"]
+                  "is_revolving", "maturity_date", "repayment_terms", "branch", "notes",
+                  "currency"]
+
+    def validate_currency(self, value):
+        """Only while nothing has moved: every balance and movement on a facility is
+        in its currency, and the booked rate is taken again from the start date."""
+        from .exceptions import BusinessRuleError
+        from .services import fx
+
+        try:
+            code = fx.validate_code(value)
+        except BusinessRuleError as exc:
+            raise serializers.ValidationError(str(exc))
+        facility = self.instance
+        if facility is not None and code != fx.stored_code(facility.currency):
+            if facility.transactions.exists():
+                raise serializers.ValidationError(
+                    f"{facility.facility_no} already has movements in "
+                    f"{fx.normalise(facility.currency) or fx.base_currency()}; its currency "
+                    f"cannot change.")
+        return code
+
+    def update(self, instance, validated_data):
+        if "currency" in validated_data:
+            from .services import fx
+
+            instance.fx_rate = fx.rate_on(validated_data["currency"], instance.start_date)
+        return super().update(instance, validated_data)
 
 
 class FacilityMovementSerializer(serializers.Serializer):
@@ -1267,6 +1472,7 @@ class MaturingFacilitySerializer(serializers.Serializer):
     facility_no = serializers.CharField()
     funder_name = serializers.CharField()
     maturity_date = serializers.DateField()
+    currency = serializers.CharField()
     principal_outstanding = money()
     days = serializers.IntegerField()
 
@@ -1335,8 +1541,10 @@ class ReconciliationSerializer(serializers.Serializer):
 
 class SavingsPortfolioProductSerializer(serializers.Serializer):
     product = serializers.CharField()
+    currency = serializers.CharField()
     accounts = serializers.IntegerField()
     balance = money()
+    balance_base = money()
 
 
 class SavingsPortfolioSerializer(serializers.Serializer):
@@ -1478,3 +1686,76 @@ STATUS_CHOICES = [s.value for s in LoanStatus]
 TXN_TYPE_CHOICES = [t.value for t in TxnType]
 RATE_METHOD_CHOICES = [m.value for m in RateMethod]
 NOTIFICATION_STATUS_CHOICES = [s.value for s in NotificationStatus]
+
+
+class InboundPaymentSerializer(serializers.ModelSerializer):
+    status_label = serializers.CharField(source="get_status_display", read_only=True)
+    method_label = serializers.CharField(source="get_method_display", read_only=True)
+    loan_no = serializers.CharField(source="loan.loan_no", read_only=True, default=None)
+    borrower_name = serializers.CharField(source="loan.borrower.full_name", read_only=True,
+                                          default=None)
+    resolved_by_name = serializers.CharField(source="resolved_by.full_name", read_only=True,
+                                             default=None)
+
+    class Meta:
+        model = InboundPayment
+        fields = ["id", "provider", "external_id", "method", "method_label", "amount",
+                  "currency", "paid_on", "payer_phone", "payer_name", "account_ref",
+                  "status", "status_label", "reason", "loan_id", "loan_no", "borrower_name",
+                  "transaction_id", "matched_by", "resolved_by_name", "resolved_at",
+                  "received_at"]
+
+
+class PayrollRunLineSerializer(serializers.ModelSerializer):
+    status_label = serializers.CharField(source="get_status_display", read_only=True)
+    loan_no = serializers.CharField(source="loan.loan_no", read_only=True, default=None)
+    shortfall = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
+
+    class Meta:
+        model = PayrollRunLine
+        fields = ["id", "loan_id", "loan_no", "employee_no", "name", "file_line", "expected",
+                  "deducted", "shortfall", "status", "status_label", "note", "transaction_id"]
+
+
+class PayrollRunSerializer(serializers.ModelSerializer):
+    status_label = serializers.CharField(source="get_status_display", read_only=True)
+    created_by_name = serializers.CharField(source="created_by.full_name", read_only=True,
+                                            default=None)
+    posted_by_name = serializers.CharField(source="posted_by.full_name", read_only=True,
+                                           default=None)
+
+    class Meta:
+        model = PayrollRun
+        fields = ["id", "employer", "period_start", "period_end", "received_on", "reference",
+                  "status", "status_label", "expected_total", "deducted_total", "posted_total",
+                  "file_name", "created_by_name", "created_at", "posted_by_name", "posted_at"]
+
+
+class PortalRequestSerializer(serializers.ModelSerializer):
+    kind_label = serializers.CharField(source="get_kind_display", read_only=True)
+    status_label = serializers.CharField(source="get_status_display", read_only=True)
+    borrower_name = serializers.CharField(source="borrower.full_name", read_only=True)
+    borrower_phone = serializers.CharField(source="borrower.phone", read_only=True)
+    loan_no = serializers.CharField(source="loan.loan_no", read_only=True, default=None)
+    handled_by_name = serializers.CharField(source="handled_by.full_name", read_only=True,
+                                            default=None)
+    amount = serializers.DecimalField(max_digits=14, decimal_places=2, required=False,
+                                      allow_null=True, min_value=1)
+
+    class Meta:
+        model = PortalRequest
+        fields = ["id", "borrower_id", "borrower_name", "borrower_phone", "loan", "loan_no",
+                  "kind", "kind_label", "amount", "message", "status", "status_label",
+                  "outcome", "created_at", "handled_by_name", "handled_at"]
+        read_only_fields = ["status", "outcome", "created_at", "handled_at"]
+
+
+class JobRunSerializer(serializers.ModelSerializer):
+    status_label = serializers.CharField(source="get_status_display", read_only=True)
+    triggered_by_name = serializers.CharField(source="triggered_by.full_name", read_only=True,
+                                              default=None)
+
+    class Meta:
+        model = JobRun
+        fields = ["id", "job", "as_of", "status", "status_label", "started_at", "finished_at",
+                  "output", "error", "triggered_by_name"]

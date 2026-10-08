@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 
 import DataTable from '../components/DataTable.jsx'
 import { FormModal } from '../components/Modal.jsx'
@@ -12,9 +13,10 @@ import { useApi } from '../lib/useApi.js'
 const FIELDS = [
   'name', 'currency', 'address', 'phone', 'email', 'registration', 'statement_declarations',
   'ecl_stage1_pct', 'ecl_stage2_pct', 'ecl_stage3_pct',
-  'ecl_stage2_days', 'ecl_stage3_days', 'reminder_days_before',
+  'ecl_stage2_days', 'ecl_stage3_days',
   'officer_approval_limit', 'min_credit_score', 'group_arrears_block_days',
-  'require_open_till', 'closed_weekdays', 'interest_method',
+  'require_open_till', 'require_signature', 'portal_enabled', 'closed_weekdays',
+  'interest_method',
 ]
 
 const WEEKDAYS = [
@@ -173,13 +175,13 @@ export default function Settings() {
         <h3 style={{ marginTop: 20 }}>Credit approval</h3>
         <div className="grid cols-3">
           <Field
-            label={`Officer approval limit (${getCurrency()})`}
+            label={`Default approval limit (${getCurrency()})`}
             type="number"
             step="0.01"
             min="0"
             value={values.officer_approval_limit}
             onChange={set('officer_approval_limit')}
-            hint="Above this, an application needs an administrator"
+            hint="For a user without a limit of their own (Users). Above it, an application needs an administrator"
           />
           <Field
             label="Minimum credit score"
@@ -257,14 +259,6 @@ export default function Settings() {
             onChange={set('ecl_stage3_days')}
           />
           <Field
-            label="Reminder window (days before due)"
-            type="number"
-            min="0"
-            value={values.reminder_days_before}
-            onChange={set('reminder_days_before')}
-            hint="How far ahead instalment reminders are queued"
-          />
-          <Field
             label="Group borrowing blocked after (days in arrears)"
             type="number"
             min="0"
@@ -273,6 +267,30 @@ export default function Settings() {
             hint="While any member is this far behind, the group takes on no new debt. 0 turns it off."
           />
         </div>
+
+        <h3>Signing</h3>
+        <Check
+          label="A loan must be signed electronically before it is disbursed"
+          checked={Boolean(values.require_signature)}
+          onChange={(e) => setValues((v) => ({ ...v, require_signature: e.target.checked }))}
+        />
+        <p className="muted" style={{ fontSize: 12, marginTop: -4 }}>
+          The borrower signs with a code texted to their phone, at the counter or in the portal.
+          The signature pins the terms: if the amount, rate, fees, guarantors or security change
+          afterwards, they sign again.
+        </p>
+
+        <h3>Borrower portal</h3>
+        <Check
+          label="Borrowers can sign in to the portal"
+          checked={Boolean(values.portal_enabled)}
+          onChange={(e) => setValues((v) => ({ ...v, portal_enabled: e.target.checked }))}
+        />
+        <p className="muted" style={{ fontSize: 12, marginTop: -4 }}>
+          At <code>/portal</code>, with their national ID, the phone number on their file and a
+          texted code: their own loans, statements and agreement, signing, and asking for a top-up
+          (Portal requests). Turning it off ends every portal session at once.
+        </p>
 
         <h3>Cash</h3>
         <Check
@@ -309,6 +327,11 @@ export default function Settings() {
           </button>
         </div>
       </form>
+
+      <div className="hint">
+        Message wording, reminder timing and which messages go out automatically are under{' '}
+        <Link to="/communications">Communications</Link>.
+      </div>
 
       <div className="card">
         <div className="row between" style={{ marginBottom: 12 }}>

@@ -180,6 +180,20 @@ export default function Login() {
   const [mfaToken, setMfaToken] = useState(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  // The seed data's demo logins are listed only when the server says so
+  // (SHOW_DEMO_LOGINS): a live system must never print them.
+  const [demoLogins, setDemoLogins] = useState(false)
+
+  useEffect(() => {
+    let live = true
+    fetch(`${import.meta.env.VITE_API_BASE || ''}/api/health`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body) => live && setDemoLogins(Boolean(body?.demo_logins)))
+      .catch(() => {})
+    return () => {
+      live = false
+    }
+  }, [])
 
   async function onSubmit(event) {
     event.preventDefault()
@@ -299,10 +313,12 @@ export default function Login() {
               </button>
               <div className="signin-hint">
                 Forgot your password? Ask your administrator to reset it.
-                <span className="demo">
-                  Demo logins after <code>manage.py seed</code>: admin / admin123 · officer /
-                  officer123 · teller / teller123 · viewer / viewer123
-                </span>
+                {demoLogins ? (
+                  <span className="demo">
+                    Demo logins after <code>manage.py seed</code>: admin / admin123 · officer /
+                    officer123 · teller / teller123 · viewer / viewer123
+                  </span>
+                ) : null}
               </div>
             </>
           )}

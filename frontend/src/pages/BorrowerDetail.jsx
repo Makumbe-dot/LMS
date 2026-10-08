@@ -8,7 +8,7 @@ import { useToast } from '../components/Toast.jsx'
 import { ErrorBanner, Field, KeyValues, Loading, PageHeader } from '../components/ui.jsx'
 import { del, post, postForm } from '../lib/api.js'
 import { useAuth } from '../lib/auth.jsx'
-import { bytes, dateOnly, dateTime, humanise, money } from '../lib/format.js'
+import { INCOME_SOURCES, bytes, dateOnly, dateTime, humanise, money } from '../lib/format.js'
 import { useApi } from '../lib/useApi.js'
 
 /**
@@ -136,7 +136,8 @@ export default function BorrowerDetail() {
   const [busy, setBusy] = useState(false)
 
   const b = borrower.data
-  const mayEdit = can('admin', 'loan_officer')
+  const employed = !b?.income_source || b.income_source === 'employed'
+  const mayEdit = can('borrowers')
 
   async function addGuarantor(values) {
     setBusy(true)
@@ -223,6 +224,9 @@ export default function BorrowerDetail() {
             items={[
               ['National ID', b.national_id],
               ['Phone', b.phone],
+              ['Messages by', { whatsapp: 'WhatsApp', email: 'Email' }[b.preferred_channel] || 'SMS'],
+              ['Politically exposed', b.is_pep ? 'Yes: enhanced due diligence' : 'No'],
+              ['Paid out to', [b.bank_name, b.bank_account_no].filter(Boolean).join(' · ') || `Mobile money ${b.mobile_wallet || b.phone}`],
               ['Email', b.email || '-'],
               ['Date of birth', b.date_of_birth || '-'],
               ['Gender', b.gender || '-'],
@@ -249,15 +253,37 @@ export default function BorrowerDetail() {
           />
         </div>
         <div className="card">
-          <h3>Employment and exposure</h3>
+          <h3>{employed ? 'Employment and exposure' : 'Business and exposure'}</h3>
           <KeyValues
             items={[
-              ['Employer', b.employer || '-'],
-              ['Employee no.', b.employee_no || '-'],
-              ['Job title', b.job_title || '-'],
+              ...(employed
+                ? [
+                    ['Employer', b.employer || '-'],
+                    ['Employee no.', b.employee_no || '-'],
+                    ['Job title', b.job_title || '-'],
+                  ]
+                : [
+                    ['Earns a living from', INCOME_SOURCES[b.income_source] || b.income_source],
+                    ['Business', b.business_name || '-'],
+                    ['Sector', b.business_sector || '-'],
+                    ['Registration no.', b.business_registration_no || '-'],
+                    ['Trading', b.trading_since ? `${b.years_trading} years, since ${dateOnly(b.trading_since)}` : '-'],
+                    ['Operates at', b.business_address || '-'],
+                  ]),
               ['Branch', b.branch_name || 'Not assigned'],
-              ['Net salary', money(b.net_salary)],
-              ['Payday', `Day ${b.payday} of the month`],
+              ...(employed || !(Number(b.monthly_sales) > 0)
+                ? []
+                : [
+                    [
+                      'Cash flow a month',
+                      <span key="cf">
+                        Sales {money(b.monthly_sales)} − stock {money(b.monthly_cost_of_sales)} − costs{' '}
+                        {money(b.monthly_expenses)} − other lenders {money(b.monthly_other_repayments)}
+                      </span>,
+                    ],
+                  ]),
+              [employed ? 'Net salary' : 'Net monthly income', money(b.net_salary)],
+              [employed ? 'Payday' : 'Pays on', `Day ${b.payday} of the month`],
               ['Active loans', b.active_loans],
               ['Total outstanding', <strong key="o">{money(b.total_outstanding)}</strong>],
             ]}
@@ -320,7 +346,7 @@ export default function BorrowerDetail() {
         </div>
         {(b.documents || []).length === 0 ? (
           <p className="muted" style={{ marginBottom: 0 }}>
-            No KYC paperwork on file. Identity documents and payslips belong here.
+            No KYC paperwork on file. Identity documents and {employed ? 'payslips' : 'proof of the business (bank or mobile-money statements, licence, records)'} belong here.
           </p>
         ) : (
           (b.documents || []).map((document) => (

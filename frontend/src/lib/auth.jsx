@@ -108,13 +108,36 @@ export function AuthProvider({ children }) {
       signOutEverywhere,
       /** Replace the signed-in user's details, e.g. after turning two-factor on. */
       updateUser: setUser,
-      /** can('admin', 'loan_officer') - true when the signed-in role is one of these. */
-      can: (...roles) => Boolean(user && roles.includes(user.role)),
+      /** can('approve', 'disburse') - true when the signed-in user holds any of these
+          access rights. An administrator holds them all; can('admin') is true for an
+          administrator alone. */
+      can: (...rights) => userCan(user, rights),
     }),
     [user, status, signIn, completeSignIn, signOut, signOutEverywhere],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
+}
+
+/** Whether a user holds any of the named access rights ('admin' meaning an
+    administrator). Exported so tests answer can() exactly as the app does. */
+export function userCan(user, rights) {
+  if (!user) return false
+  if (user.role === 'admin') return true
+  return rights.some((right) => right !== 'admin' && (user.rights || []).includes(right))
+}
+
+/** "Administrator" or "User", for the account menu and My account. */
+export function roleLabel(user) {
+  if (!user) return ''
+  return user.role === 'admin' ? 'Administrator' : 'User'
+}
+
+/** A user's access rights by name, from the /api/users/rights catalogue. */
+export function rightsLabel(user, catalogue) {
+  if (!user?.rights?.length) return 'Read only'
+  const names = Object.fromEntries((catalogue?.rights || []).map((r) => [r.code, r.label]))
+  return user.rights.map((code) => names[code] || code).join(', ')
 }
 
 export function useAuth() {

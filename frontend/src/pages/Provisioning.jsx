@@ -50,7 +50,7 @@ export default function Provisioning() {
   const runs = useApi('/api/provisions?page_size=12')
 
   const wholeBook = !branchId
-  const isAdmin = can('admin')
+  const canAccount = can('accounting')
 
   async function run(promise, message) {
     setBusy(true)
@@ -165,7 +165,7 @@ export default function Provisioning() {
                     : 'Nothing has been booked yet.'}{' '}
                   Only the movement is posted, so running a period twice posts nothing.
                 </p>
-                {isAdmin ? (
+                {canAccount ? (
                   <button type="button" className="btn primary" onClick={openBook} disabled={busy}>
                     Book the movement
                   </button>
@@ -317,7 +317,7 @@ export default function Provisioning() {
                   key: 'actions',
                   header: '',
                   render: (r) =>
-                    isAdmin && r.status === 'posted' ? (
+                    canAccount && r.status === 'posted' ? (
                       <button
                         type="button"
                         className="btn small"

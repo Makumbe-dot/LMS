@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 
 import DataTable from '../components/DataTable.jsx'
 import { useToast } from '../components/Toast.jsx'
@@ -63,19 +64,51 @@ export function previewColumns(rows, moneyColumns = []) {
     })
 }
 
-/** The keepable listings, each downloadable as Excel or CSV, or all of them in one workbook. */
+/** Where a row leads: the loan it is about, else the member. */
+function recordPath(row) {
+  if (row.loan_id) return `/loans/${row.loan_id}`
+  if (row.borrower_id) return `/borrowers/${row.borrower_id}`
+  return null
+}
+
+/** The keepable listings: opened here to read, search and click through, or
+ *  downloaded as Excel or CSV, or all of them in one workbook. */
 export default function Spreadsheets() {
   const { toastError } = useToast()
   const { activeBranches } = useOrg()
+  const navigate = useNavigate()
+  const viewer = useRef(null)
   const [branchId, setBranchId] = useState('')
   const [kind, setKind] = useState('members')
   const [page, setPage] = useState(1)
   const [busy, setBusy] = useState(false)
+  const [typed, setTyped] = useState('')
+  const [search, setSearch] = useState('')
+
+  // Search a moment after typing stops, from the first page.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setSearch(typed.trim())
+      setPage(1)
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [typed])
 
   const sheet = SHEETS.find((s) => s.kind === kind)
   const filter = qs({ branch_id: branchId })
-  const preview = useApi(`/api/reports/spreadsheets/${kind}${qs({ branch_id: branchId, page })}`)
+  const preview = useApi(`/api/reports/spreadsheets/${kind}${qs({ branch_id: branchId, page, search })}`)
   const rows = preview.data?.results || []
+  const opens = rows.some((row) => row.loan_id) ? 'loan' : 'member'
+
+  function open(next) {
+    if (next !== kind) {
+      setKind(next)
+      setPage(1)
+      setTyped('')
+      setSearch('')
+    }
+    requestAnimationFrame(() => viewer.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }))
+  }
 
   async function downloadAll() {
     setBusy(true)
@@ -123,46 +156,86 @@ export default function Spreadsheets() {
 
       <div className="grid cols-3">
         {SHEETS.map((s) => (
-          <div key={s.kind} className={`card sheet-card${s.kind === kind ? ' selected' : ''}`}>
+          // The whole card opens the listing; the download buttons keep their own clicks.
+          <div
+            key={s.kind}
+            className={`card sheet-card clickable${s.kind === kind ? ' selected' : ''}`}
+            role="button"
+            tabIndex={0}
+            aria-pressed={s.kind === kind}
+            aria-label={`View the ${s.title.toLowerCase()}`}
+            onClick={() => open(s.kind)}
+            onKeyDown={(e) => {
+              if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
+                e.preventDefault()
+                open(s.kind)
+              }
+            }}
+          >
             <h3>{s.title}</h3>
             <p className="muted" style={{ fontSize: 13 }}>
               {s.about}
             </p>
-            <div className="row">
+            <div className="row" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+              <button
+                type="button"
+                className={`btn small${s.kind === kind ? ' primary' : ''}`}
+                onClick={() => open(s.kind)}
+              >
+                View
+              </button>
               <ExportButtons
                 small
                 path={`/api/reports/spreadsheets/${s.kind}${filter}`}
                 name={s.file}
               />
-              <button
-                type="button"
-                className="btn small"
-                aria-pressed={s.kind === kind}
-                onClick={() => {
-                  setKind(s.kind)
-                  setPage(1)
-                }}
-              >
-                Preview
-              </button>
             </div>
           </div>
         ))}
       </div>
 
-      <div className="card">
-        <h3>{sheet.title}</h3>
+      <div className="card sheet-viewer" ref={viewer}>
+        <div className="sheet-viewer-head">
+          <div>
+            <h3 style={{ margin: 0 }}>{sheet.title}</h3>
+            <p className="muted" style={{ margin: '2px 0 0', fontSize: 12.5 }}>
+              {preview.data
+                ? search
+                  ? `${preview.data.count} of ${preview.data.total_rows} rows match “${search}”`
+                  : `${preview.data.count} row${preview.data.count === 1 ? '' : 's'}`
+                : ' '}
+              {rows.length ? ` · click a row to open the ${opens}` : ''}
+            </p>
+          </div>
+          <div className="row" style={{ gap: 8 }}>
+            <input
+              type="search"
+              className="sheet-search"
+              placeholder="Search names, numbers, phones…"
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              aria-label={`Search the ${sheet.title.toLowerCase()}`}
+            />
+            <ExportButtons small path={`/api/reports/spreadsheets/${kind}${filter}`} name={sheet.file} />
+          </div>
+        </div>
         <ErrorBanner error={preview.error} onRetry={preview.reload} />
         {preview.loading && !preview.data ? (
           <Loading what={`Loading the ${sheet.title.toLowerCase()}`} />
         ) : (
-          <DataTable
-            caption={sheet.title}
-            rows={rows}
-            rowKey={(r, index) => `${page}-${index}`}
-            empty="Nothing to show"
-            columns={previewColumns(rows, preview.data?.money_columns)}
-          />
+          <div className={preview.loading ? 'refreshing' : undefined}>
+            <DataTable
+              caption={sheet.title}
+              rows={rows}
+              rowKey={(r, index) => `${page}-${index}`}
+              empty={search ? 'Nothing matches that search' : 'Nothing to show'}
+              columns={previewColumns(rows, preview.data?.money_columns)}
+              onRowClick={(row) => {
+                const to = recordPath(row)
+                if (to) navigate(to)
+              }}
+            />
+          </div>
         )}
         <Pager meta={preview.data} onPage={setPage} noun="rows" />
       </div>

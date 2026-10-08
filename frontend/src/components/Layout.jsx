@@ -2,8 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 
 import { get } from '../lib/api.js'
-import { useAuth } from '../lib/auth.jsx'
-import { humanise } from '../lib/format.js'
+import { roleLabel, useAuth } from '../lib/auth.jsx'
 import { ACCOUNT, HOME, findPage, visibleNav } from '../lib/nav.js'
 import { useOrg } from '../lib/org.jsx'
 import { useTheme } from '../lib/theme.jsx'
@@ -131,7 +130,7 @@ function UserMenu({ user, onSignOut }) {
         <span className="avatar">{initials(user?.full_name)}</span>
         <span className="avatar-text">
           <strong>{user?.full_name}</strong>
-          <small>{humanise(user?.role)}</small>
+          {roleLabel(user) !== user?.full_name ? <small>{roleLabel(user)}</small> : null}
         </span>
         <Icon name="chevron" size={14} className="avatar-caret" />
       </button>
@@ -140,7 +139,7 @@ function UserMenu({ user, onSignOut }) {
           <div className="menu-head">
             <strong>{user?.full_name}</strong>
             <small>
-              {humanise(user?.role)}
+              {roleLabel(user)}
               {user?.branch_name ? ` · ${user.branch_name}` : ''}
             </small>
           </div>
@@ -202,7 +201,7 @@ export default function Layout() {
 
   const current = useMemo(() => findPage(pathname), [pathname])
   const sections = visibleNav(can)
-  // The entry as this role sees it: its tabs are only the pages they may open.
+  // The entry as this user sees it: its tabs are only the pages they may open.
   const entry =
     sections.flatMap((s) => s.entries).find((e) => e.key === current?.entry?.key) || null
   const tabs = entry && entry.pages.length > 1 ? entry.pages : null

@@ -33,16 +33,18 @@ def grade_for(score: int) -> str:
     return CreditGrade.E
 
 
-def _affordability_points(instalment: Decimal, salary: Decimal, cap: Decimal) -> tuple[int, str]:
-    """25 points. How much of the borrower's salary the repayments take.
+def _affordability_points(instalment: Decimal, salary: Decimal, cap: Decimal,
+                          basis: str = "net salary") -> tuple[int, str]:
+    """25 points. How much of the borrower's monthly income the repayments take.
 
     `instalment` is the MONTHLY equivalent (amortisation.monthly_equivalent), so a
-    weekly loan is measured against a month's salary like any other.
+    weekly loan is measured against a month's income like any other. `basis` names
+    the income: a salary, or what a business leaves.
     """
     if not salary or salary <= 0:
-        return 0, "No net salary on file, so affordability cannot be assessed"
+        return 0, f"No {basis} on file, so affordability cannot be assessed"
     ratio = instalment / salary * 100
-    share = f"Repayments come to {ratio:.1f}% of net salary a month"
+    share = f"Repayments come to {ratio:.1f}% of {basis} a month"
     if ratio <= cap / 3:
         return 25, f"{share}, well inside the {cap}% limit"
     if ratio <= cap / 2:
@@ -135,6 +137,36 @@ def _employment_points(borrower) -> tuple[int, str]:
     return points, "Employment: " + ", ".join(reasons)
 
 
+def _business_points(borrower, as_of: date) -> tuple[int, str]:
+    """15 points, for a borrower who lives off a business: how established and how
+    well evidenced it is, in place of the employment points a payslip earns."""
+    points = 0
+    reasons = [borrower.business_name or "business not named"]
+    years = borrower.years_trading(as_of)
+    if years is None:
+        reasons.append("trading since unknown")
+    elif years >= 2:
+        points += 6
+        reasons.append(f"trading {years} years")
+    elif years >= 1:
+        points += 3
+        reasons.append(f"trading {years} years")
+    else:
+        reasons.append("trading under a year")
+    if borrower.business_registration_no:
+        points += 3
+        reasons.append("registered")
+    if (borrower.monthly_sales or ZERO) > 0:
+        points += 3
+        reasons.append("cash flow assessed")
+    else:
+        reasons.append("no cash-flow worksheet")
+    if borrower.guarantors.exists():
+        points += 3
+        reasons.append("guarantor on file")
+    return points, "Business: " + ", ".join(reasons)
+
+
 def _kyc_points(borrower) -> tuple[int, str]:
     """10 points. Identity and paperwork."""
     points = 6 if borrower.kyc_verified else 0
@@ -151,6 +183,7 @@ def score_application(borrower, product, principal: Decimal, term: int,
                       instalment: Decimal, as_of: date | None = None) -> dict:
     """Score one proposed loan. Returns the score, the grade and the breakdown."""
     from .bureau import latest as latest_bureau_report
+    from .loans import income_cap
 
     as_of = as_of or date.today()
     factors = []
@@ -169,9 +202,11 @@ def score_application(borrower, product, principal: Decimal, term: int,
     for name, weight, (points, reason) in [
         *history,
         ("Affordability", 25, _affordability_points(
-            instalment, borrower.net_salary, product.max_instalment_to_salary_pct)),
+            instalment, borrower.net_salary, income_cap(product, borrower),
+            "net salary" if borrower.is_employed else "net business income")),
         ("Current arrears", 20, _arrears_points(borrower, as_of)),
-        ("Employment", 15, _employment_points(borrower)),
+        (("Employment", 15, _employment_points(borrower)) if borrower.is_employed
+         else ("Business", 15, _business_points(borrower, as_of))),
         ("KYC and documents", 10, _kyc_points(borrower)),
     ]:
         factors.append({"factor": name, "points": points, "max": weight, "reason": reason})

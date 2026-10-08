@@ -1,0 +1,11 @@
+# The images build from backend/ and frontend/, which have their own
+# .dockerignore; this one only matters if a build is ever pointed at the root.
+.git
+.github
+.venv
+.env
+logs
+**/node_modules
+**/dist
+**/__pycache__
+*.bak

@@ -47,12 +47,31 @@ maximum instalment-to-salary ratio, plus a **charges catalogue** of additional f
 and attached to whichever products carry them.
 
 **Loan lifecycle** — quote with indicative schedule and affordability check, application, approval
-(maker-checker: the originating officer cannot approve their own loan), rejection, disbursement
+(maker-checker: whoever originated a loan cannot approve it), rejection, disbursement
 (generates the amortisation schedule, first instalment lands on the borrower's next payday),
 closure on full settlement, **early settlement with an interest rebate**, **top-up / refinance**
 (a new loan that settles the old one out of its own proceeds), reschedule (capitalises arrears into
 a new schedule), write-off, and a **printable loan agreement** with the terms, the total cost of
 credit and the APR, the schedule, the guarantors, the security and signature blocks.
+
+**Borrower portal** — at `/portal`, off until an administrator opens it in Settings. A borrower
+signs in with their national ID, the phone number on their file and a code texted to that phone;
+asking for a code answers the same whether or not the two match, codes allow five guesses and three
+an hour, and a session ends after thirty idle minutes, twelve hours at most, or on signing out. They
+see their own loans only (what is left, the next payment, anything overdue, the schedule and what
+they have paid), download their statement, read and sign their agreement, and ask for a top-up or a
+call-back, which lands on **Customers → Portal requests** for staff to answer. The portal carries
+its own token: no staff page or API accepts it, and the portal accepts no staff token.
+
+**Electronic signature** — the borrower signs the agreement with a one-time code texted to the
+phone on their file: staff press **Text a signing code** on the loan and type in the code the
+borrower reads out, or the borrower enters it in the portal. A code is six digits, lasts ten
+minutes, allows five wrong guesses, works once, and only its keyed hash is stored; staff never see
+it on the Messages page, in a download or in a search, and its text is blanked once delivered. The
+signature records when, how and a fingerprint of the terms (amount, rate, fees, charges,
+guarantors, security), and the printed agreement carries it in place of the signature line. Change
+any of those terms and the signature stands on the record but no longer counts. With **Settings →
+A loan must be signed electronically** on, a loan is not disbursed without a current signature.
 
 **Guarantors per loan** — a guarantor is held on the borrower's file but stands behind a
 *particular* loan: the officer ticks which ones at application (all of them by default), can change
@@ -63,6 +82,16 @@ old loan's guarantors over. A guarantor behind a running loan cannot be deleted 
 oldest instalment first), cash / bank / mobile money / salary deduction, reversals, penalty
 waivers, and **bulk CSV import** with a line-by-line dry run before anything is posted.
 Overpayment is refused.
+
+**Incoming payments** — mobile money and bank transfers as the provider reports them, on the
+**Incoming payments** page. A provider posts each payment to `/api/payments/inbound/<provider>`,
+signed with its own secret; a statement CSV can be uploaded instead. Every payment is kept once per
+provider reference, so a notification sent twice, or a statement uploaded twice, posts once. What
+the payer typed is tried as a loan number (`LN-000123`, `ln 123`), a borrower number and a
+national ID, then the paying phone against borrowers' phones; one active loan, in the payment's
+currency, owed at least that much, in an open period, and it is posted on arrival with a receipt.
+Anything else waits with the reason, and the loan it nearly matched, until someone with the cash
+right assigns it to a loan or rejects it. "Match again" retries the waiting ones.
 
 **Loan book migration** — going live with loans already running elsewhere: one CSV row per loan
 (borrower, product, principal, term, disbursement date, amount paid so far, optional penalties and
@@ -91,11 +120,42 @@ is compared with what the system recorded. A short or over count needs a reason 
 closes, the teller cannot verify their own, and on verification the difference is posted —
 Dr 6800 Cash shortages / Cr 1000 for a shortage, Dr 1000 / Cr 4900 for an overage — because until it
 is, the ledger claims cash the building does not hold. A setting makes every cash posting need an
-open till; it is off by default so a book that has never used tills keeps posting.
+open till; it is off by default so a book that has never used tills keeps posting. A drawer holds
+one currency: a teller taking cash in two opens two drawers, one each, and cash on a loan or
+savings account in another currency is counted in the drawer of that currency, in that currency,
+never converted. With the setting on, a cash posting needs an open drawer in its own currency. A
+foreign drawer's difference goes to the ledger at the day's rate, stamped on the till so a Rebuild
+posts the same figure.
 
 **Collections** — collections-due listing, arrears / PAR, **payroll deduction schedules per
 employer**, **follow-up notes** on a loan (what was tried, what was promised, what is next), and a
 **message outbox** of instalment reminders, arrears notices and repayment receipts.
+The wording of every message is the institution's own: **Settings → Borrower messages** holds a box
+per kind with the placeholders it may use (`{first_name}`, `{loan_no}`, `{amount}`…) and a preview.
+A placeholder a kind does not have is refused when saved, and a blank box sends the standard wording.
+
+**Collections work** — overdue loans are handed to collectors (anyone holding the Work
+collections right) by someone with the supervise right, a handful at a time from the **Work queue**
+page. A collector's queue puts the follow-ups that have come due first, then the longest overdue,
+with the last contact and any open promise. A **promise to pay** is a follow-up note with an
+amount and a date, and it is judged from the repayments themselves: kept if that much came in
+between the promise and the day promised, broken if the day passed short, pending until then — so a
+reversed payment turns a kept promise back into a broken one by itself. The borrower is texted the
+day before (the **Promise-to-pay reminder** wording in Settings). The **Results** tab gives each
+collector's loans, what is overdue on them now, what came in over a period and the share of promises
+kept.
+
+**Payroll returns** — the other half of the deduction schedule. The employer's file of what it
+actually deducted (an amount, and a loan number, employee number or national ID per line) is
+checked against the schedule for that period: each loan comes back **deducted in full, short, not
+deducted, or more than it owes**, and a line that matches no loan is listed rather than dropped.
+Nothing is posted until the return is posted; then each deduction becomes a salary-deduction
+repayment dated the day the money arrived, all or nothing, and a deduction above what a loan owes
+posts what it owes and shows the rest for refund. The shortfall list downloads as Excel or CSV.
+
+**Saved filters** — the Loans and Borrowers lists keep named sets of filters (status, branch, in
+arrears, KYC, a search) per user, on the server, so they follow the user from one computer to the
+next. Saving under a name already used replaces it.
 
 **Reporting** — dashboard (portfolio outstanding, PAR>30, collection rate, 12-month disbursement vs
 collection chart, arrears ageing buckets) filterable by date and branch, **IFRS 9 staging and
@@ -150,19 +210,28 @@ join the reconciliation, and the period-close checks say when a month has not be
 basis **cannot change while loans are running**: half a book on each would reconcile to nothing,
 so the change is made on an empty active book, or at a cut-over agreed with the auditor.
 
-**Multi-currency** — the ledger, savings, funding and the tills are kept in the organisation's
-currency; a **product may lend in another**, and a loan sold under it is kept in that currency
-instalment by instalment. A **rate table** (base units per one unit of the currency, the latest
-rate on or before a date applies) converts every posting: the receivables are carried at the
-loan's **booked rate** (the spot rate on the day it was disbursed) as the change in their
-base-currency value, so the ledger equals outstanding-times-rate to the cent; cash and income go
-in at the day's spot rate; whatever lies between is a **realised exchange difference** on 4800. A
+**Multi-currency** — the ledger is kept in the organisation's currency; a **product may lend in
+another**, and a loan sold under it is kept in that currency instalment by instalment. A **rate
+table** (base units per one unit of the currency, the latest rate on or before a date applies)
+converts every posting: the receivables are carried at the loan's **booked rate** (the spot rate
+on the day it was disbursed) as the change in their base-currency value, so the ledger equals
+outstanding-times-rate to the cent; cash and income go in at the day's spot rate; whatever lies
+between is a **realised exchange difference** on 4800. A **savings product** may take deposits in
+another currency, and a **funding facility** may be drawn in one, by the same rules from the
+other side of the balance sheet: an account's balance (2000) and a facility's principal and
+accrued interest (2100, 2110) are carried at the account's or the facility's own booked rate (the
+spot rate on the day it was opened), cash, savings interest, fees and borrowing costs at the
+day's, and the difference is realised on 4800. A reversal puts the cash back at the rate it came
+in at. A product's or a facility's currency is fixed once it has an account or a movement. A
 **month-end revaluation** (the Currencies page, or `manage.py revalue_fx`) restates every open
-foreign loan at the closing rate, posts the unrealised difference, and moves the booked rate on;
-the period-close checks say when a loan is still at an earlier rate. Dashboards, PAR, provisions,
-exposure and the registers add foreign loans in at their booked rates; a loan's own pages and
-statement show its own currency. Affordability and the officer approval limit measure a foreign
-instalment or principal at today's rate.
+foreign loan, savings account and facility at the closing rate, posts the unrealised difference,
+and moves the booked rates on; a receivable that rises in value is a gain, a liability that rises
+is a loss. The period-close checks say when any of them is still at an earlier rate. Dashboards,
+PAR, provisions, exposure, the savings and funding totals and the registers add foreign balances
+in at their booked rates; a loan's or an account's own pages and statement show its own currency,
+and a facility's amounts are in its own. Affordability and the approval limit measure a foreign
+instalment or principal at today's rate, and the cash guard on a facility payment measures it at
+today's rate too. Cash is counted in a till drawer of its own currency (above).
 
 **Bank reconciliation** — a bank or mobile-money statement, exported as CSV (one signed amount
 column or money-in / money-out columns, ISO or day-first dates), is matched line by line against
@@ -211,8 +280,36 @@ stored, never the whole response, because a bureau report carries other lenders'
 **Security register** — collateral pledged against a loan: type, description, valuation, reference,
 and release or realisation.
 
-**Security and control** — JWT login with **renewable sessions and real revocation**, four roles
-(admin, loan officer, teller, viewer) enforced per endpoint, **account lockout after repeated bad
+**Access rights** — there are no fixed roles below administrator. An administrator can do
+everything; every other user can do what an administrator has ticked for them on the **Users**
+page, and with nothing ticked can only read. The rights are:
+
+| Right | Lets the user |
+|-------|---------------|
+| Borrowers and groups | add and edit borrowers, groups, guarantors and documents |
+| Loan applications | quote and apply for loans, top-ups, guarantors, security and charges |
+| Approve and reject loans | approve or reject applications, up to their approval limit |
+| Disburse loans | pay out an approved loan |
+| Cash and repayments | repayments, settlements, recoveries, savings deposits and withdrawals, bulk repayments, incoming payments, payroll returns, expenses, and a till |
+| Reverse repayments | reverse a repayment posted in error |
+| Supervise tills and penalties | verify another user's till count, run penalties, check a period before close, give loans to collectors |
+| Borrower messages | generate, send and cancel reminders and arrears notices |
+| Work collections | follow-up notes and promises to pay on loans |
+| Waive, reschedule and write off | waive penalties, reschedule and write off loans |
+| Accounting | post, reject and reverse journals, the chart of accounts, bank reconciliation, provisioning, funding, revaluation, savings interest, closing periods |
+| Products and setup | loan and savings products, charges and exchange rates |
+
+Users, branches, holidays, the organisation's settings, the audit log and the loan book migration
+are never granted: they stay the administrator's. Each user with the approve right may have an
+**approval limit** of their own; left blank, the organisation's default applies. The Users form
+offers the old loan officer, teller and viewer sets as starting points, and migration `0028` gives
+every existing user exactly the rights their old role carried. A change takes effect on the user's
+next request, and the audit log records what was granted and removed. The four-eyes rules hold for
+anyone short of an administrator whatever they hold: nobody approves a loan they originated, posts
+a journal they prepared, or verifies their own till.
+
+**Security and control** — JWT login with **renewable sessions and real revocation**, access
+rights enforced per endpoint, **account lockout after repeated bad
 passwords**, self-service password change, sign out on one device or on all of them, full audit log
 of every posting and decision, searchable and filterable.
 
@@ -272,12 +369,12 @@ python manage.py runserver
 
 The API is now on <http://localhost:8000>.
 
-| Username | Password   | Role         |
-|----------|------------|--------------|
-| admin    | admin123   | admin        |
-| officer  | officer123 | loan officer |
-| teller   | teller123  | teller       |
-| viewer   | viewer123  | viewer       |
+| Username | Password   | Access                                     |
+|----------|------------|--------------------------------------------|
+| admin    | admin123   | administrator                              |
+| officer  | officer123 | the old loan officer's rights              |
+| teller   | teller123  | cash and repayments                        |
+| viewer   | viewer123  | none: read only                            |
 
 ### 3. Reporting views (SSMS, optional)
 
@@ -319,6 +416,9 @@ is on <http://localhost:8000> with no CORS and no second server.
    `X-Forwarded-Proto`.
 3. **`ALLOWED_HOSTS`** — every hostname the app answers on, and nothing else.
 4. **A real certificate on SQL Server**, so `DB_ENCRYPT=1` and `DB_TRUST_SERVER_CERT=0`.
+5. **`NUM_PROXIES`** — the number of reverse proxies in front (1 behind IIS or nginx). The sign-in
+   limits count per client address; with it wrong, either every user shares the proxy's address
+   and one limit, or a client can forge `X-Forwarded-For` to dodge it.
 
 Then check your work and collect the static files:
 
@@ -331,6 +431,49 @@ cd backend
 Run it behind a real server (IIS with HttpPlatformHandler, or nginx in front of gunicorn/waitress)
 rather than `runserver`, put the media directory somewhere backed up, and schedule the nightly job
 and the backups.
+
+## Running with Docker
+
+The scripts above assume Windows. On Linux, macOS or Windows with Docker installed, the whole
+system (SQL Server, the API and the React app) runs from `docker-compose.yml` instead:
+
+```sh
+cp .env.example .env              # then set MSSQL_SA_PASSWORD, DB_PASSWORD and SECRET_KEY
+docker compose up -d --build
+docker compose exec backend python manage.py seed      # optional demo data
+```
+
+The app is then on <http://localhost:8080>. Four containers do the work:
+
+- **sqlserver** — SQL Server 2022 (Developer edition unless `MSSQL_PID` says otherwise), with the
+  `SQL_Latin1_General_CP1_CI_AS` collation. Its data lives in the `sqldata` volume, so it survives
+  `docker compose down`; only `down -v` deletes it. It listens on `127.0.0.1:1433` for SSMS; set
+  `SQLSERVER_PORT` if a local instance already has that port.
+- **db-init** — runs once and exits: creates the database with read-committed snapshot on (what
+  `sql/01_create_database.sql` does) and the app's `lms_app` login (what `sql/02_app_login.sql`
+  does). It is safe to run every time.
+- **backend** — applies migrations, then serves the API with gunicorn. Uploaded borrower documents
+  go in the `media` volume.
+- **frontend** — nginx serving the built app, forwarding `/api` and `/admin` to the backend, so the
+  browser sees one origin and CORS never comes into it.
+
+Settings come from `.env` beside `docker-compose.yml`, not from `backend/.env`; anything listed in
+`backend/.env.example` can be added to it. The defaults are `DEBUG=0` with the SSL redirect off,
+which suits a workstation. On a server, put a TLS-terminating proxy in front, then set
+`SECURE_SSL_REDIRECT=1` and add the server's name to `ALLOWED_HOSTS` and `CORS_ALLOWED_ORIGINS`.
+
+The nightly batch is the `jobs` service. It runs the same steps as `run_nightly_jobs.ps1`, then
+takes a checksummed, verified backup and archives the borrower documents into the `backups`
+volume, keeping `BACKUP_RETENTION_DAYS` (14) days of them. `up` does not start it; schedule it
+instead, for example from cron:
+
+```sh
+docker compose run --rm jobs                                 # what cron runs at 22:00
+docker compose run --rm jobs --as-of 2026-09-30 --skip-backup
+```
+
+To take the backups off the machine, copy them out of the volume:
+`docker compose cp sqlserver:/backups ./lms-backups`.
 
 ## Configuration
 
@@ -366,18 +509,21 @@ One script runs everything that has to pass:
 ```powershell
 .\scripts\verify.ps1                      # checks, migrations, both suites, a production build
 .\scripts\verify.ps1 -SkipBackendTests    # the slow one, for a quick loop
+.\scripts\verify.ps1 -Parallel 1          # backend tests in one process
 ```
 
 Or each piece on its own:
 
 ```powershell
 cd backend
-..\.venv\Scripts\python.exe manage.py test                                  # the backend suite
+..\.venv\Scripts\python.exe manage.py test --parallel 8                      # the backend suite
+..\.venv\Scripts\python.exe manage.py test core.tests.test_fx                # one module
 ..\.venv\Scripts\python.exe manage.py makemigrations --check --dry-run core  # nothing unmigrated
 
 cd ..\frontend
 npm test              # the frontend suite
 npm run test:coverage
+npm run e2e           # the browser tests; see below for their database
 ```
 
 `.github/workflows/ci.yml` runs the same set on every push and pull request, against SQL Server
@@ -386,16 +532,34 @@ npm run test:coverage
 **The backend suite** runs against a real SQL Server database (`LMS_test`, created and dropped
 automatically) rather than SQLite, because three of the behaviours this code works around are the
 engine's: `bulk_create` returning no primary keys, `select_for_update` compiling to `UPDLOCK`, and a
-case-insensitive default collation. It covers:
+case-insensitive default collation.
+
+It runs in parallel. Each worker gets its own copy of the test database, `LMS_test_1`, `LMS_test_2`
+and so on, restored from a backup of `LMS_test` taken once the migrations have run; that is the
+`lms_backend.sqlserver` engine, which is mssql-django with the cloning it lacks. Twice as many
+workers as cores is about right, since each spends much of its time waiting on SQL Server: on four
+cores the suite takes about three minutes at `--parallel 8`, against seven in one process.
+`--keepdb` keeps the clones as well, and replaces any that a new migration has left behind. The
+SQL login needs rights to back up and restore, which `sa` and any member of `sysadmin` have.
+
+Under test the password hasher is MD5 rather than PBKDF2 (`lms_backend/test_runner.py`). PBKDF2
+costs about a second a hash, and before the change it was most of the suite's run time. The
+password rules, lockout, change and reset tests run as before; only the stored hash differs.
+
+It covers:
 
 - the amortisation engine, both methods — annuity maths, flat-rate levelling, month-end clamping,
   schedules closing to zero and totals landing exactly on the advance;
-- the full loan lifecycle through the HTTP API — roles, affordability, maker-checker approval,
+- access rights — reading with none, each right opening only its own actions, the personal
+  approval limit, four-eyes for every non-administrator, and the migration from the old roles;
+- the full loan lifecycle through the HTTP API — rights, affordability, maker-checker approval,
   disbursement, waterfall allocation, penalty accrual and its idempotency, waiver, settlement,
   reversal, reschedule, write-off, reports and audit;
 - early settlement — the rebate, the refusal of a stale confirmation amount, and closure;
 - bulk import — dry run, commit, bad rows, two rows that would jointly overpay one loan;
 - the message outbox — generation, idempotency, receipts, sending and cancelling;
+- message wording — the institution's own in every kind, unknown placeholders refused, blank
+  restoring the default;
 - IFRS 9 staging, the provision run, its reversal and the repost path;
 - capital, funder facilities, borrowing interest and the cash guard;
 - period close — the guard, the pre-close checks, reopening, and the commands;
@@ -412,13 +576,29 @@ case-insensitive default collation. It covers:
 - the credit bureau — the register, the three backends (the http one against a fake bureau),
   what is kept from a report, and how the scorecard reads it;
 - multi-currency — a foreign loan reconciling to the cent through disbursement, repayment at a new
-  rate, reversal, nine rounded repayments, the revaluation run and a rebuild;
+  rate, reversal, nine rounded repayments, the revaluation run and a rebuild; a foreign savings
+  account through deposit, withdrawal and interest at a new rate, a reversal, the revaluation (a
+  liability, so the sign turns over) and a rebuild; a foreign facility through drawdown, accrual,
+  interest payment, repayment, reversal, fee, the cash guard and the revaluation; one run
+  restating a loan, an account and a facility together; and that a product's or a facility's
+  currency cannot change once it has accounts or movements;
 - the effective interest method — the schedule's totals, the deferral at disbursement, the accrual,
   repayments before and after it, settlement, write-off, reschedule, rebuild, and that the basis
   cannot change on a running book;
 - sessions — renewal, rotation, sign-out, and revocation when an account is disabled or a role
   changes;
 - performance and payroll reports;
+- scheduled jobs — what is due on an ordinary day and on the 1st, once a day, failures kept, retried,
+  emailed and flagged, silence flagged, run-now for administrators, and the command's exit code;
+- the borrower portal — sign-in that gives nothing away, guesses and code limits, sessions ending,
+  only their own loans, the statement, signing, requests, and tokens that cross neither way;
+- e-signatures — the code's life, five guesses that cannot be rolled back, codes never shown to
+  staff, terms changing before and after signing, and disbursement when a signature is required;
+- collections — assignment and who may be given loans, the queue's order, promises kept, broken
+  and pending, the day-before reminder, and the results by collector;
+- payroll returns — full, short, missed, over and unknown lines, posting all or nothing on the
+  day the money arrived, never twice;
+- incoming payments — signatures, duplicates, every matching rule, the waiting queue and statements;
 - the holiday calendar — weekends and holidays moving a due date, a run of closed days, annual
   holidays, the amounts unchanged and the rest of the schedule unmoved, a late-declared holiday
   reaching unpaid future instalments but not past ones, and the maturity date following;
@@ -428,7 +608,8 @@ case-insensitive default collation. It covers:
 - the cost of credit — the APR against a textbook case, fees raising it, and the agreement stating it;
 - guarantors per loan, the loan-book migration (arrears, the opening posting, no double penalties,
   re-running a file), teller tills (expected cash, the count, verification posting the difference,
-  the open-till setting), bank reconciliation (exact matches only, one entry per line, cash never on
+  the open-till setting, a drawer per currency counted in its own and its difference booked at the
+  day's rate), bank reconciliation (exact matches only, one entry per line, cash never on
   a bank statement, ambiguity left alone), and two-factor sign-in against the RFC 6238 vectors;
 - branches, settings, search, documents, pagination, password change and account lockout.
 
@@ -445,18 +626,71 @@ until someone clicks:
   screen;
 - the period notice telling the truth about which dates are closed, including the boundary day;
 - the auth provider — that signing out tells the server to retire the token, and that it still
-  signs out locally when the server cannot be reached.
+  signs out locally when the server cannot be reached;
+- currencies on savings, facilities and tills — blank read as the organisation's, only currencies
+  with a rate offered, a teller's open drawers shown each in its own currency, and a new drawer
+  offered only in a currency not already open.
 
 Both suites are in the repository's own idiom: a test asserts the rule, and its name says what
 breaks if the rule does.
 
-## Scheduled jobs
+**The end-to-end tests** (Playwright, in `frontend/e2e/`) drive the real application in Chromium:
+the React app on the Vite dev server, its `/api` proxied to Django, Django on SQL Server. They
+follow the journeys that matter most when they break:
 
-One script runs the lot, and everything in it is idempotent, so a repeated or retried run changes
-nothing extra:
+- signing in, and a wrong password refused;
+- an officer registering a borrower, previewing a quote and applying;
+- maker-checker — the officer who applied is refused at Approve, a second officer approves and
+  disburses, and the schedule appears;
+- a teller opening a till, posting a cash repayment, and the first instalment, the balances, the
+  transactions and the till all showing it;
+- the loan statement downloading as a real PDF;
+- access rights — a read-only viewer seeing no button that changes anything, and a right ticked on
+  the Users page reaching that user on their next page load.
+
+They need a database of their own, because every run empties it: create `LMS_e2e` as in step 1 of
+the quick start (any name works if it contains `e2e`; set `E2E_DB_NAME`). The connection settings
+come from `backend/.env` as usual; only the database name is overridden. Then:
 
 ```powershell
-.\scripts\run_nightly_jobs.ps1                    # penalties, reminders, savings interest, backup
+cd frontend
+npx playwright install chromium   # once
+npm run e2e
+```
+
+Playwright starts Django on port 8765 and Vite on 5174 (`E2E_API_PORT`, `E2E_WEB_PORT`), so a
+development server already running on 8000 and 5173 is left alone. Before the first test it
+migrates, flushes and seeds the database, so every run starts from the same book; the steps take
+about two minutes, most of it the seed. Python is taken from `E2E_PYTHON`, else the repository's
+`.venv`, else the `python` on the PATH. `E2E_CHROMIUM_PATH` points at a Chromium installed some
+other way, and `E2E_SERVER_LOG=1` shows Django's request log. CI runs them as a separate job.
+
+## Scheduled jobs
+
+The jobs live in the application (`core/services/jobs.py`) and one command runs whichever are due:
+
+```powershell
+cd backend
+..\.venv\Scripts\python.exe manage.py run_jobs              # everything due today
+..\.venv\Scripts\python.exe manage.py run_jobs --list       # what is due, what needs attention
+..\.venv\Scripts\python.exe manage.py run_jobs --only penalties [--as-of 2026-09-30]
+```
+
+Nightly: penalty accrual, matching waiting incoming payments, borrower reminders (with promise
+reminders) and pruning old sessions. On the 1st also: savings interest, interest on borrowings, and
+the provision run for the month just ended. A job that already succeeded for the day is not run
+again, so the command can be called as often as you like; a failed one is tried again on the next
+call, and one failure never stops the others. Every run is kept on **System → Scheduled jobs** with
+its output or error, where an administrator can also run a job at once. The System menu shows a
+warning badge while a job's latest run failed or a nightly job has not succeeded for more than a
+day — which is how a scheduled task that quietly stopped running gets noticed. Set
+`JOB_ALERT_EMAILS` to have failures emailed too. `run_jobs` exits 1 when anything failed.
+
+The nightly script calls `run_jobs` and then backs up the database, which stays outside the
+application because it is SQL Server's own BACKUP:
+
+```powershell
+.\scripts\run_nightly_jobs.ps1                    # the jobs due today, then the backup
 .\scripts\run_nightly_jobs.ps1 -AsOf 2026-09-30 -SkipBackup
 ```
 
@@ -472,7 +706,7 @@ Start-ScheduledTask -TaskName 'LMS nightly batch'   # run it now rather than wai
 For a server, register it instead under a service account with "run whether the user is logged on
 or not", which does need elevation. Output is appended to `logs/nightly-YYYYMMDD.log`.
 
-The individual commands, if you would rather schedule them separately:
+The individual commands, which the jobs call and which still work on their own:
 
 ```powershell
 cd backend
@@ -485,13 +719,9 @@ cd backend
 ..\.venv\Scripts\python.exe manage.py accrue_interest [--as-of 2026-09-30]
 ```
 
-The three monthly steps — savings interest, borrowing interest and the provision — run on the 1st
-only; the nightly script skips them on every other night rather than calling a command that would
-be a no-op.
-
 The same work is available over the API: `POST /api/reports/run-penalties`,
-`POST /api/notifications/generate` and `POST /api/savings/run-interest`. Savings interest is
-idempotent within a calendar month, so the nightly script only attempts it on the 1st.
+`POST /api/notifications/generate` and `POST /api/savings/run-interest`, and any job through
+`POST /api/jobs/<job>/run`.
 
 ## Backups
 
@@ -523,6 +753,23 @@ ALTER DATABASE LMS SET RECOVERY FULL;
 BACKUP LOG LMS TO DISK = N'...\LMS-log.trn';   -- then schedule this every 15 minutes
 ```
 
+## Receiving payments
+
+Each provider gets a name, a secret and, if its JSON differs from the default, the paths to each
+field. In `backend/.env`:
+
+```
+INBOUND_PAYMENT_SECRETS=ecocash=long-random-secret|cbz=another-secret
+INBOUND_PAYMENT_SIGNATURE_HEADER=X-Signature
+# Defaults: id, amount, currency, date, phone, name, reference at the top level.
+INBOUND_PAYMENT_PATHS_ECOCASH=id=transaction.id|amount=transaction.amount|phone=payer.msisdn|reference=transaction.account
+```
+
+The provider then posts each payment to `https://<your server>/api/payments/inbound/ecocash`, with
+the hex HMAC-SHA256 of the raw body under that secret in the signature header (a `sha256=` prefix is
+accepted). A provider with no secret, or a body whose signature does not match, is answered 401
+and nothing is kept. A repeat answers 200 with `"duplicate": true`; a new payment 201.
+
 ## Sending messages for real
 
 Reminders, arrears notices and receipts are generated into an outbox and delivered by
@@ -530,7 +777,7 @@ Reminders, arrears notices and receipts are generated into an outbox and deliver
 in one UPDATE that contacted nobody, so the system reported arrears notices as delivered that no
 borrower had received, which is worse than admitting it cannot send.
 
-Four backends, picked per channel by setting. None is a vendor SDK:
+Five backends, picked per channel by setting. None is a vendor SDK:
 
 | Backend | What it does |
 |---|---|
@@ -538,6 +785,7 @@ Four backends, picked per channel by setting. None is a vendor SDK:
 | `file` | Appends JSON lines to a file — for a demo, or to hand an aggregator a batch by hand. |
 | `smtp` | Real email through Django's mail backend. No third-party account needed. |
 | `http` | A form or JSON POST, configured entirely by `.env`. |
+| `twilio` | Twilio's REST API, for SMS and for WhatsApp (see below). |
 
 The HTTP backend is configuration rather than code: the URL, the method, the format, which field
 carries the recipient, which carries the text, any fixed fields and headers, and where the provider's
@@ -561,6 +809,45 @@ malformed address or a 4xx is marked failed at once, because retrying it twice m
 someone noticing. A *misconfigured* gateway raises instead of failing the queue, so a missing URL
 cannot mark two hundred messages failed.
 
+### WhatsApp through Meta, and the WhatsApp button
+
+**The WhatsApp button** needs no account. On an active loan, *WhatsApp* opens WhatsApp on the staff
+member's phone or computer (a `wa.me` link) with today's arrears notice, or the next instalment
+reminder, already typed in; they press send. It is recorded on the Messages page as sent *by hand*.
+
+**Automatic WhatsApp through Meta's Cloud API** (`MESSAGE_WHATSAPP_BACKEND=meta`) sends with no
+provider in between. You need a Meta Business account, a WhatsApp Business number (not one already on
+ordinary WhatsApp), business verification, and the templates approved, as for any WhatsApp sender. The
+settings are in `backend/.env.example`. Meta reports *delivered*, *read* and *failed* only by calling
+a webhook, `/api/whatsapp/meta/webhook`, which must be reachable over HTTPS from the internet; the
+calls are checked against the app secret. Without the webhook, a message Meta refuses outright is
+still resent by SMS at once, but one that fails later is not noticed.
+
+### SMS and WhatsApp through Twilio
+
+`twilio` (and `meta`, above, for WhatsApp only) is a further backend, for SMS (`MESSAGE_SMS_BACKEND=twilio`) and for WhatsApp
+(`MESSAGE_WHATSAPP_BACKEND=twilio`). Each borrower has a **Send messages by** choice, SMS or WhatsApp,
+on their record. Phone numbers stay as staff type them; `MESSAGE_DEFAULT_COUNTRY_CODE` (263) turns
+`0771 234 567` into `+263771234567` for sending.
+
+WhatsApp has one rule that shapes everything: a business may only send free text to someone who has
+written to it in the last 24 hours. Anything else must be a **template approved by Meta**. So:
+
+1. In Twilio, create one template per message (Content Template Builder, category *Utility*) with the
+   wording shown on the Messages page under *WhatsApp templates*. The numbered variables are filled in
+   that order: `{{1}}` is always the first name.
+2. Once approved, put the Content SIDs in `TWILIO_WHATSAPP_TEMPLATES`
+   (`reminder=HX...|arrears=HX...|receipt=HX...|promise=HX...`).
+3. A message without a template is sent as plain text. When WhatsApp cannot deliver it - outside the
+   24-hour window, or to a number not on WhatsApp - Twilio reports it undelivered, and the next send run
+   asks Twilio, marks it failed with the reason, and **resends it by SMS**. A WhatsApp message Twilio
+   refuses outright is resent by SMS in the same run.
+
+Every send run first asks Twilio what became of the last three days' messages, so the Messages page
+shows *delivered*, *read* or *undelivered* beside each one rather than only "accepted". One-time codes
+(portal sign-in, agreement signing) always go by SMS. Wrong Twilio credentials stop the run rather than
+failing the whole queue.
+
 The Messages page says in a banner whether anything is actually being delivered, because that is the
 first question anyone asks about an outbox. `POST /api/notifications/mark-sent` still exists for the
 operator who exported the queue and sent it through an aggregator's own console — it records
@@ -568,6 +855,33 @@ operator who exported the queue and sent it through an aggregator's own console 
 claim otherwise.
 
 ---
+
+## Going live, applications, screening and payouts
+
+**Go-live checklist** (System > Go-live checklist, or `manage.py go_live_check`, which exits 1 while
+anything fails) checks development mode, the secret key, demo logins still on their demo passwords,
+HTTPS and the server address, the institution's details, demo data, messaging channels, sanctions
+lists, payouts, the nightly batch, backups and job alerts, and says where to fix each. The sign-in page
+lists the seed data's demo logins only when `SHOW_DEMO_LOGINS=1`.
+
+**Online applications.** `/apply` is a public page where a new client asks for a loan (with consent to
+be checked; throttled per address, with a hidden trap field for robots). A borrower signed in to the
+portal can apply for another loan there. Both land in Loans > Online applications; *Accept* creates the
+borrower (or matches them by national ID) and opens the New loan form with the figures, so the loan is
+scored and approved as any other; *Decline* records why.
+
+**AML screening.** Customers > Screening loads the UN Security Council consolidated list (its XML) and
+any other list as CSV. Every borrower is screened when added or renamed and the whole book whenever a
+list is loaded; matching ignores case, accents, punctuation and word order, an ID-number match counts
+on its own, and a different year of birth lowers the score. A possible match holds that borrower's
+loans - no approval, no payout - until a supervisor clears it or confirms it (which blacklists the
+borrower). Borrowers carry a politically-exposed-person flag.
+
+**Payouts.** A loan disbursed by bank transfer or mobile money gets a payout for the net amount. Loans >
+Payouts sends wallet payouts through the provider configured in `PAYOUT_HTTP_*` (logged only until set)
+and makes a bulk-payment CSV of bank payouts for internet banking, marking them sent; each is then marked
+paid or failed, and a failed one can be retried with corrected details. Borrowers carry bank and wallet
+details.
 
 ## Project layout
 
@@ -583,7 +897,7 @@ backend/                        Django project
                                 notifications, manual journals, tills, bank statements,
                                 audit_log, sequences
     serializers.py              request validation and response shaping
-    permissions.py              the four-role guard
+    permissions.py              the access-right guards
     exceptions.py               BusinessRuleError + a handler that always returns {"detail": ...}
     audit.py                    audit-trail helper
     admin.py                    Django admin, with postings deliberately read-only
@@ -613,7 +927,7 @@ backend/                        Django project
       periods.py                period close, and the guard that refuses a closed date
       journals.py               manual journals: four eyes, control accounts refused
       loanbook.py               bringing a running loan book over from another system
-      tills.py                  teller tills: expected cash, the count, the difference booked
+      tills.py                  teller tills: a drawer per currency, the count, the difference booked
       bankrec.py                bank and mobile-money statements matched against the ledger
       totp.py                   RFC 6238 codes for two-factor sign-in
       reports.py                dashboard, PAR, collections due, loan book, statement,
@@ -745,9 +1059,9 @@ claims that can genuinely break — nine accounts against the sub-ledgers they a
 | 1300 Penalties receivable | penalties outstanding on active loans, each at its booked rate |
 | 1400 Charges receivable | charges outstanding on active loans, each at its booked rate |
 | 1900 Provision for credit losses | provision held across every loan |
-| 2000 Client funds payable | savings balances |
-| 2100 Funder borrowings | principal outstanding on funding facilities |
-| 2110 Accrued interest on borrowings | interest accrued and unpaid on facilities |
+| 2000 Client funds payable | savings balances, each account at its booked rate |
+| 2100 Funder borrowings | principal outstanding on funding facilities, each at its booked rate |
+| 2110 Accrued interest on borrowings | interest accrued and unpaid on facilities, each at its booked rate |
 | 3100 Share capital | capital injected less capital returned |
 | 3200 Distributions | dividends paid |
 | 1200 Interest receivable | interest accrued and not collected (effective interest method only) |
@@ -789,6 +1103,15 @@ or the **Funding and capital** page. Two asymmetries with the loan book are deli
 capital, a dividend — is refused if it would take account 1000 below zero. A dividend also needs the
 equity for it. A slice that exists to stop cash going negative must not be the thing that puts it
 there.
+
+**A facility may be in another currency.** Its limit and every movement are then in that
+currency. A drawdown is Dr 1000 at the day's rate / Cr 2100 at the facility's booked rate; a
+repayment and an interest payment relieve 2100 or 2110 at the booked rate and take cash out at the
+day's; an accrual is Dr 5300 at the day's rate / Cr 2110 at the booked one; a fee is Dr 5310 /
+Cr 1000, both at the day's. Whatever an entry leaves between its legs is a realised exchange
+difference on 4800, and the month-end revaluation restates 2100 and 2110 at the closing rate. The
+cash guard measures a foreign payment at the day's rate, which is what it takes out of the bank.
+Capital stays in the organisation's currency.
 
 Retained earnings (3000) is **derived**, never posted: nothing writes a year-end closing entry, so
 the balance sheet computes income less expense since inception and folds in any manual posting to
@@ -998,9 +1321,6 @@ What is deliberately not here, and why:
 - **A bureau or mobile-money contract.** The credit bureau check and the message gateway are
   configuration (`BUREAU_BACKEND`, `MESSAGE_SMS_BACKEND`): the code speaks to any JSON API, but a
   real bureau or aggregator needs a contract, credentials and the paths to its fields in `.env`.
-- **Savings, funding and tills in a foreign currency.** Loans may be in another currency; the
-  deposit book, the facilities and the drawers stay in the organisation's. A foreign-currency
-  repayment taken in cash is counted in the drawer at the day's rate.
 - **Changing the interest method on a running book.** The effective interest method is chosen on
   an empty active book. Moving a book already carrying loans across needs a cut-over agreed with
   the auditor, and a migration written for that cut-over.

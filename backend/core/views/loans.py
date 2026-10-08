@@ -24,7 +24,16 @@ from ..models import (
     OrganisationSetting,
     Transaction,
 )
-from ..permissions import IsAdmin, IsOfficer, IsTeller
+from ..permissions import (
+    CanApprove,
+    CanCash,
+    CanCollections,
+    CanDisburse,
+    CanLoans,
+    CanRestructure,
+    CanReverse,
+    CanSupervise,
+)
 from ..serializers import (
     RATE_METHOD_CHOICES,
     STATUS_CHOICES,
@@ -51,11 +60,12 @@ from ..serializers import (
     WaiverSerializer,
 )
 from ..services import arrears as arrears_svc
+from ..services import payouts
 from ..services import charges as chg
 from ..services import loans as svc
 from ..services import repayments as rep
-from ..services import workdays
-from ..services.notifications import queue_receipt
+from ..services import signatures, workdays
+from ..services.notifications import queue_receipt, queue_welcome
 from ..services.penalties import accrue_penalties
 from ..services.reports import loan_statement
 from .helpers import (
@@ -92,7 +102,7 @@ def loans(request):
         # list serializer renders no schedule. officer and branch ARE selected —
         # LoanSerializer renders both names, so without them the list ran two extra
         # queries per row.
-        qs = Loan.objects.select_related("borrower", "product", "officer", "branch")
+        qs = Loan.objects.select_related("borrower", "product", "officer", "collector", "branch")
         status_filter = request.query_params.get("status")
         if status_filter:
             if status_filter not in STATUS_CHOICES:
@@ -127,8 +137,8 @@ def loans(request):
                                  LoanSerializer, transform=arrears_from_annotation))
 
     # POST - capture an application
-    if not IsOfficer().has_permission(request, None):
-        return Response({"detail": IsOfficer.message}, status=status.HTTP_403_FORBIDDEN)
+    if not CanLoans().has_permission(request, None):
+        return Response({"detail": CanLoans.message}, status=status.HTTP_403_FORBIDDEN)
     data = _validated(LoanApplySerializer, request)
     borrower = Borrower.objects.filter(pk=data["borrower_id"]).first()
     product = LoanProduct.objects.filter(pk=data["product_id"]).first()
@@ -183,7 +193,7 @@ def statement(request, loan_id: int):
 
 # ---------------------------------------------------------------- decisions
 @api_view(["POST"])
-@permission_classes([IsOfficer])
+@permission_classes([CanApprove])
 def approve(request, loan_id: int):
     with transaction.atomic():
         loan = get_loan_or_404(loan_id)
@@ -193,7 +203,7 @@ def approve(request, loan_id: int):
 
 
 @api_view(["POST"])
-@permission_classes([IsOfficer])
+@permission_classes([CanApprove])
 def reject(request, loan_id: int):
     data = _validated(LoanDecisionSerializer, request)
     with transaction.atomic():
@@ -204,7 +214,7 @@ def reject(request, loan_id: int):
 
 
 @api_view(["POST"])
-@permission_classes([IsOfficer])
+@permission_classes([CanDisburse])
 def disburse(request, loan_id: int):
     data = _validated(LoanDisburseSerializer, request)
     with transaction.atomic():
@@ -213,12 +223,14 @@ def disburse(request, loan_id: int):
                      data.get("first_instalment_date"), data["method"], data.get("reference"))
         audit(request.user, "disburse", "loan", loan.id,
               f"{loan.loan_no} {loan.principal} on {loan.disbursement_date}")
+        queue_welcome(loan)
+        payouts.create_for(loan, data["method"], request.user)
     return detail_response(loan_id)
 
 
 # ---------------------------------------------------------------- money
 @api_view(["POST"])
-@permission_classes([IsTeller])
+@permission_classes([CanCash])
 def repayments(request, loan_id: int):
     data = _validated(RepaymentSerializer, request)
     with transaction.atomic():
@@ -240,7 +252,7 @@ def settlement_quote(request, loan_id: int):
 
 
 @api_view(["POST"])
-@permission_classes([IsTeller])
+@permission_classes([CanCash])
 def settle(request, loan_id: int):
     data = _validated(SettleSerializer, request)
     with transaction.atomic():
@@ -256,7 +268,7 @@ def settle(request, loan_id: int):
 
 
 @api_view(["POST"])
-@permission_classes([IsTeller])
+@permission_classes([CanCash])
 def recovery(request, loan_id: int):
     """Money collected on a loan that was already written off."""
     data = _validated(RecoverySerializer, request)
@@ -282,7 +294,7 @@ def top_up_quote(request, loan_id: int):
 
 
 @api_view(["POST"])
-@permission_classes([IsOfficer])
+@permission_classes([CanLoans])
 def top_up(request, loan_id: int):
     """Capture a top-up application. The old loan is settled on disbursement."""
     data = _validated(TopUpRequestSerializer, request)
@@ -302,7 +314,7 @@ def top_up(request, loan_id: int):
 
 # ---------------------------------------------------------------- charges
 @api_view(["POST"])
-@permission_classes([IsOfficer])
+@permission_classes([CanLoans])
 def raise_charge(request, loan_id: int):
     """Raise a one-off charge against a loan, settled at the counter."""
     data = _validated(ManualChargeSerializer, request)
@@ -334,7 +346,11 @@ def raise_charge(request, loan_id: int):
 @renderer_classes([StaticHTMLRenderer])
 def agreement(request, loan_id: int):
     """The printable loan agreement. The client fetches it and opens it for printing."""
-    loan = get_loan_or_404(loan_id)
+    return Response(agreement_html(get_loan_or_404(loan_id)))
+
+
+def agreement_html(loan) -> str:
+    """The agreement as HTML: for staff here, and for the borrower in the portal."""
     config = OrganisationSetting.load()
     rows = svc.sched(loan)
     apr = loan.apr_pct
@@ -360,7 +376,7 @@ def agreement(request, loan_id: int):
     suffix = ("th" if 11 <= payday % 100 <= 13
               else {1: "st", 2: "nd", 3: "rd"}.get(payday % 10, "th"))
 
-    html = render_to_string("core/loan_agreement.html", {
+    return render_to_string("core/loan_agreement.html", {
         "loan": loan,
         "borrower": loan.borrower,
         "org": config,
@@ -382,13 +398,40 @@ def agreement(request, loan_id: int):
         "term_unit": svc.TERM_UNITS.get(loan.repayment_frequency, "instalments"),
         "first_due": first_due,
         "closed_days": bool(workdays.load()),
+        "signature": signatures.current(loan),
     })
-    return Response(html)
+
+
+@api_view(["GET"])
+def signature(request, loan_id: int):
+    """Whether the borrower has signed this loan's current terms."""
+    return Response(signatures.state(get_loan_or_404(loan_id)))
+
+
+@api_view(["POST"])
+@permission_classes([CanLoans])
+def signature_code(request, loan_id: int):
+    """Text the borrower a code to sign with."""
+    loan = get_loan_or_404(loan_id)
+    sent = signatures.send_code(loan, request.user, "counter")
+    return Response({**signatures.state(loan), "sent_to": sent.phone},
+                    status=status.HTTP_201_CREATED)
+
+
+@api_view(["POST"])
+@permission_classes([CanLoans])
+def signature_verify(request, loan_id: int):
+    """The borrower, at the counter, enters the code they were sent."""
+    loan = get_loan_or_404(loan_id)
+    signatures.verify(loan, request.data.get("code"), channel="counter",
+                      witnessed_by=request.user, ip=request.META.get("REMOTE_ADDR"),
+                      user_agent=request.headers.get("User-Agent"))
+    return Response(signatures.state(loan))
 
 
 # ---------------------------------------------------------------- guarantors
 @api_view(["PUT"])
-@permission_classes([IsOfficer])
+@permission_classes([CanLoans])
 def guarantors(request, loan_id: int):
     """Set which of the borrower's guarantors stand behind this loan."""
     data = _validated(LoanGuarantorsSerializer, request)
@@ -407,8 +450,8 @@ def collateral(request, loan_id: int):
     if request.method == "GET":
         return Response(CollateralSerializer(loan.collateral.all(), many=True).data)
 
-    if not IsOfficer().has_permission(request, None):
-        return Response({"detail": IsOfficer.message}, status=status.HTTP_403_FORBIDDEN)
+    if not CanLoans().has_permission(request, None):
+        return Response({"detail": CanLoans.message}, status=status.HTTP_403_FORBIDDEN)
     body = CollateralSerializer(data=request.data)
     body.is_valid(raise_exception=True)
     with transaction.atomic():
@@ -420,7 +463,7 @@ def collateral(request, loan_id: int):
 
 
 @api_view(["PATCH", "DELETE"])
-@permission_classes([IsOfficer])
+@permission_classes([CanLoans])
 def collateral_detail(request, loan_id: int, collateral_id: int):
     item = Collateral.objects.filter(pk=collateral_id, loan_id=loan_id).first()
     if item is None:
@@ -448,8 +491,8 @@ def notes(request, loan_id: int):
     if request.method == "GET":
         return Response(LoanNoteSerializer(loan.notes.all(), many=True).data)
 
-    if not IsTeller().has_permission(request, None):
-        return Response({"detail": IsTeller.message}, status=status.HTTP_403_FORBIDDEN)
+    if not CanCollections().has_permission(request, None):
+        return Response({"detail": CanCollections.message}, status=status.HTTP_403_FORBIDDEN)
     body = LoanNoteSerializer(data=request.data)
     body.is_valid(raise_exception=True)
     with transaction.atomic():
@@ -459,7 +502,7 @@ def notes(request, loan_id: int):
 
 
 @api_view(["PATCH", "DELETE"])
-@permission_classes([IsTeller])
+@permission_classes([CanCollections])
 def note_detail(request, loan_id: int, note_id: int):
     note = LoanNote.objects.filter(pk=note_id, loan_id=loan_id).first()
     if note is None:
@@ -479,7 +522,7 @@ def note_detail(request, loan_id: int, note_id: int):
 
 
 @api_view(["POST"])
-@permission_classes([IsOfficer])
+@permission_classes([CanReverse])
 def reverse(request, loan_id: int, txn_id: int):
     data = _validated(NarrationSerializer, request)
     with transaction.atomic():
@@ -494,7 +537,7 @@ def reverse(request, loan_id: int, txn_id: int):
 
 
 @api_view(["POST"])
-@permission_classes([IsAdmin])
+@permission_classes([CanRestructure])
 def waive_penalties(request, loan_id: int):
     data = _validated(WaiverSerializer, request)
     with transaction.atomic():
@@ -506,7 +549,7 @@ def waive_penalties(request, loan_id: int):
 
 
 @api_view(["POST"])
-@permission_classes([IsAdmin])
+@permission_classes([CanRestructure])
 def write_off(request, loan_id: int):
     data = _validated(NarrationSerializer, request)
     with transaction.atomic():
@@ -518,7 +561,7 @@ def write_off(request, loan_id: int):
 
 
 @api_view(["POST"])
-@permission_classes([IsAdmin])
+@permission_classes([CanRestructure])
 def reschedule(request, loan_id: int):
     data = _validated(RescheduleSerializer, request)
     with transaction.atomic():
@@ -532,7 +575,7 @@ def reschedule(request, loan_id: int):
 
 
 @api_view(["POST"])
-@permission_classes([IsOfficer])
+@permission_classes([CanSupervise])
 def accrue_one(request, loan_id: int):
     as_of = parse_date(request, "as_of")
     with transaction.atomic():

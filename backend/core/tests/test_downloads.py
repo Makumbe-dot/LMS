@@ -275,6 +275,21 @@ class MemberRegisterTests(DownloadBase):
         self.assertNotIn("days_overdue", data["money_columns"])
         self.assertNotIn("member_no", data["money_columns"])
 
+    def test_the_screen_gets_the_ids_to_open_each_row_and_the_files_do_not(self):
+        rows = self.admin.get("/api/reports/spreadsheets/members").json()["results"]
+        self.assertTrue(all(row["borrower_id"] for row in rows))
+        loans = self.admin.get("/api/reports/spreadsheets/loans-outstanding").json()["results"]
+        self.assertTrue(all(row["loan_id"] and row["borrower_id"] for row in loans))
+        csv = self.admin.get("/api/reports/spreadsheets/members?fmt=csv").content.decode()
+        self.assertNotIn("borrower_id", csv.splitlines()[0])
+
+    def test_a_search_narrows_the_rows_across_every_page(self):
+        rows = self.admin.get("/api/reports/spreadsheets/members").json()["results"]
+        wanted = rows[0]["member_no"]
+        found = self.admin.get(f"/api/reports/spreadsheets/members?search={wanted.lower()}").json()
+        self.assertEqual([r["member_no"] for r in found["results"]], [wanted])
+        self.assertEqual(found["total_rows"], 2)
+
     def test_an_unknown_spreadsheet_is_refused(self):
         self.assertEqual(self.admin.get("/api/reports/spreadsheets/nonsense").status_code, 400)
 
@@ -282,7 +297,7 @@ class MemberRegisterTests(DownloadBase):
         from core.models import Role
 
         if not User.objects.filter(username="viewer").exists():
-            User.objects.create_user("viewer", "viewer123", full_name="Viewer", role=Role.VIEWER)
+            User.objects.create_user("viewer", "viewer123", full_name="Viewer", role=Role.USER)
         return self.client_for("viewer", "viewer123")
 
 

@@ -15,7 +15,9 @@ from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, Spec
 
 
 def health(_request):
-    return JsonResponse({"status": "ok", "app": settings.APP_NAME, "currency": settings.CURRENCY})
+    return JsonResponse({"status": "ok", "app": settings.APP_NAME, "currency": settings.CURRENCY,
+                         # Whether the sign-in page may list the demo logins (seed data only).
+                         "demo_logins": bool(getattr(settings, "SHOW_DEMO_LOGINS", False))})
 
 
 def spa(_request, *_args, **_kwargs):

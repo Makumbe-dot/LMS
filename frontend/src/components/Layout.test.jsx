@@ -33,7 +33,7 @@ describe('the sidebar', () => {
     expect(within(nav).getByRole('link', { name: /customers/i })).not.toHaveAttribute('aria-current')
     // The ledger is a tab of Accounting now, not a row of its own.
     expect(within(nav).queryByRole('link', { name: /general ledger/i })).toBeNull()
-    expect(within(nav).getAllByRole('link')).toHaveLength(11)
+    expect(within(nav).getAllByRole('link')).toHaveLength(12)
   })
 
   it('groups the entries under captions', () => {
@@ -94,11 +94,11 @@ describe('the tabs of a section', () => {
   })
 
   it('are not shown for an entry with a single page', () => {
-    renderShell('/loans')
+    renderShell('/savings')
     expect(screen.queryByRole('navigation', { name: /pages$/ })).toBeNull()
   })
 
-  it('leave out a page the role cannot open', () => {
+  it('leave out a page the user has no right to open', () => {
     renderShell('/collections', VIEWER)
     const tabs = screen.getByRole('navigation', { name: 'Collections pages' })
     expect(within(tabs).getByRole('link', { name: /arrears/i })).toBeInTheDocument()
