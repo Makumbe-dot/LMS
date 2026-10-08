@@ -28,10 +28,10 @@ export default function LoanNew() {
 
   const [form, setForm] = useState({
     borrower_id: params.get('borrower') || '',
-    product_id: '',
-    principal: '',
-    term_months: '',
-    purpose: '',
+    product_id: params.get('product') || '',
+    principal: params.get('principal') || '',
+    term_months: params.get('term') || '',
+    purpose: params.get('purpose') || '',
   })
   const [quote, setQuote] = useState(null)
   const [quoteError, setQuoteError] = useState('')

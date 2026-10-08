@@ -7,7 +7,7 @@ from rest_framework.response import Response
 from ..audit import audit
 from ..exceptions import BusinessRuleError, NotFound
 from ..models import LoanProduct
-from ..permissions import IsAdmin
+from ..permissions import CanSetup
 from ..serializers import ProductSerializer, ProductUpdateSerializer
 
 
@@ -21,8 +21,8 @@ def products(request):
             qs = qs.filter(is_active=True)
         return Response(ProductSerializer(qs, many=True).data)
 
-    if not IsAdmin().has_permission(request, None):
-        return Response({"detail": IsAdmin.message}, status=status.HTTP_403_FORBIDDEN)
+    if not CanSetup().has_permission(request, None):
+        return Response({"detail": CanSetup.message}, status=status.HTTP_403_FORBIDDEN)
 
     if LoanProduct.objects.filter(code=request.data.get("code")).exists():
         raise BusinessRuleError("Product code already exists")
@@ -35,7 +35,7 @@ def products(request):
 
 
 @api_view(["PATCH"])
-@permission_classes([IsAdmin])
+@permission_classes([CanSetup])
 def product_detail(request, product_id: int):
     product = LoanProduct.objects.filter(pk=product_id).first()
     if product is None:

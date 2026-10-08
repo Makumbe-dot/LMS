@@ -7,7 +7,7 @@ from rest_framework.response import Response
 from ..audit import audit
 from ..exceptions import BusinessRuleError, NotFound
 from ..models import TillSession, TillStatus
-from ..permissions import IsOfficer, IsTeller
+from ..permissions import CanCash, CanSupervise
 from ..serializers import (
     NoteSerializer,
     TillCountSerializer,
@@ -32,14 +32,16 @@ def _till_or_404(till_id: int, *, for_update: bool = False) -> TillSession:
 @api_view(["GET", "POST"])
 def tills(request):
     if request.method == "POST":
-        if not IsTeller().has_permission(request, None):
-            return Response({"detail": IsTeller.message}, status=status.HTTP_403_FORBIDDEN)
+        if not CanCash().has_permission(request, None):
+            return Response({"detail": CanCash.message}, status=status.HTTP_403_FORBIDDEN)
         body = TillOpenSerializer(data=request.data)
         body.is_valid(raise_exception=True)
         with transaction.atomic():
-            till = svc.open_till(request.user, body.validated_data["opening_float"])
+            till = svc.open_till(request.user, body.validated_data["opening_float"],
+                                 body.validated_data.get("currency"))
             audit(request.user, "open_till", "till", till.id,
-                  f"{till.session_no} with a float of {till.opening_float}")
+                  f"{till.session_no} with a float of {till.opening_float} "
+                  f"{svc.currency_label(till)}")
         return Response(TillDetailSerializer(_till_or_404(till.id)).data,
                         status=status.HTTP_201_CREATED)
 
@@ -63,7 +65,8 @@ def tills(request):
     if wants_table(request):
         rows = [{
             "session_no": t.session_no, "teller": t.teller.full_name,
-            "business_date": t.business_date, "status": t.status,
+            "business_date": t.business_date, "currency": svc.currency_label(t),
+            "status": t.status,
             "opening_float": t.opening_float, "cash_in": t.cash_in or "",
             "cash_out": t.cash_out or "", "expected_cash": t.expected_cash or "",
             "counted_cash": t.counted_cash or "", "variance": t.variance or "",
@@ -80,13 +83,19 @@ def tills(request):
 
 @api_view(["GET"])
 def current(request):
-    """The signed-in user's open till with its live position, under "till"; null if none.
+    """The signed-in user's open till in the organisation's currency (or in
+    ?currency=) with its live position, under "till", null if none; and every
+    drawer they have open, one per currency, under "tills".
 
     Wrapped rather than a bare null: DRF renders None as an empty body, which a
     client parsing JSON cannot read.
     """
-    till = svc.current(request.user)
-    return Response({"till": TillDetailSerializer(_till_or_404(till.id)).data if till else None})
+    till = svc.current(request.user, request.query_params.get("currency"))
+    drawers = svc.open_drawers(request.user)
+    return Response({
+        "till": TillDetailSerializer(_till_or_404(till.id)).data if till else None,
+        "tills": [TillDetailSerializer(_till_or_404(t.id)).data for t in drawers],
+    })
 
 
 @api_view(["GET"])
@@ -95,7 +104,7 @@ def till_detail(request, till_id: int):
 
 
 @api_view(["POST"])
-@permission_classes([IsTeller])
+@permission_classes([CanCash])
 def count(request, till_id: int):
     body = TillCountSerializer(data=request.data)
     body.is_valid(raise_exception=True)
@@ -110,7 +119,7 @@ def count(request, till_id: int):
 
 
 @api_view(["POST"])
-@permission_classes([IsOfficer])
+@permission_classes([CanSupervise])
 def verify(request, till_id: int):
     body = NoteSerializer(data=request.data)
     body.is_valid(raise_exception=True)

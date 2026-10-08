@@ -17,7 +17,7 @@ from collections import defaultdict
 from datetime import date, datetime
 from decimal import Decimal
 
-from django.db.models import Count, Max, Q, Sum
+from django.db.models import Count, Max, Q
 
 from ..exports import Sheet
 from ..models import (
@@ -33,7 +33,7 @@ from ..models import (
 )
 from . import arrears as arrears_svc
 from .amortisation import q
-from .fx import to_base
+from .fx import base_currency, to_base
 from .loans import TERM_UNITS
 from .reports import portfolio_at_risk
 
@@ -65,6 +65,18 @@ def _member_loans(as_of: date, branch_id=None) -> dict[int, dict]:
     return totals
 
 
+def _member_savings() -> dict[int, dict]:
+    """Open savings per member: how many accounts, and the balance in the
+    organisation's currency, each account at its booked rate."""
+    out = {}
+    for borrower_id, balance, rate in (SavingsAccount.objects.exclude(status=SavingsStatus.CLOSED)
+                                       .values_list("borrower_id", "balance", "fx_rate")):
+        row = out.setdefault(borrower_id, {"accounts": 0, "balance": ZERO})
+        row["accounts"] += 1
+        row["balance"] += to_base(balance, rate)
+    return out
+
+
 def _memberships() -> dict[int, GroupMember]:
     return {m.borrower_id: m for m in
             GroupMember.objects.filter(is_active=True).select_related("group")}
@@ -77,9 +89,7 @@ def member_register(branch_id=None, as_of: date | None = None) -> list[dict]:
     if branch_id:
         borrowers = borrowers.filter(branch_id=branch_id)
 
-    savings = {r["borrower_id"]: r for r in (
-        SavingsAccount.objects.exclude(status=SavingsStatus.CLOSED)
-        .values("borrower_id").annotate(accounts=Count("id"), balance=Sum("balance")))}
+    savings = _member_savings()
     loans = _member_loans(as_of, branch_id)
     taken = {r["borrower_id"]: r for r in (
         Loan.objects.exclude(status__in=[LoanStatus.PENDING, LoanStatus.REJECTED])
@@ -142,9 +152,7 @@ def group_membership(branch_id=None, as_of: date | None = None) -> list[dict]:
     if branch_id:
         members = members.filter(group__branch_id=branch_id)
     loans = _member_loans(as_of)
-    savings = {r["borrower_id"]: r["balance"] for r in (
-        SavingsAccount.objects.exclude(status=SavingsStatus.CLOSED)
-        .values("borrower_id").annotate(balance=Sum("balance")))}
+    savings = {k: v["balance"] for k, v in _member_savings().items()}
     out = []
     for m in members:
         l = loans.get(m.borrower_id)
@@ -170,11 +178,12 @@ def savings_balances(branch_id=None) -> list[dict]:
           .order_by("account_no"))
     if branch_id:
         qs = qs.filter(branch_id=branch_id)
+    base = base_currency()   # each account's balance is in its own currency
     return [{
         "account_no": a.account_no, "member_no": a.borrower.borrower_no,
         "member": a.borrower.full_name, "product": a.product.name,
         "branch": a.branch.name if a.branch_id else "", "status": a.get_status_display(),
-        "opened_on": a.opened_on, "balance": a.balance,
+        "opened_on": a.opened_on, "currency": a.currency or base, "balance": a.balance,
         "minimum_balance": a.product.min_balance, "available_balance": a.available_balance,
         "last_interest_date": a.last_interest_date,
     } for a in qs]
@@ -224,7 +233,9 @@ def summary(branch_id=None, as_of: date | None = None) -> list[dict]:
     if branch_id:
         members = members.filter(branch_id=branch_id)
         accounts = accounts.filter(branch_id=branch_id)
-    savings_total = accounts.aggregate(v=Sum("balance"))["v"] or ZERO
+    # in the organisation's currency, each account at its booked rate
+    savings_total = sum((to_base(b, r) for b, r in accounts.values_list("balance", "fx_rate")),
+                        ZERO)
     rows = [
         ("Members", members.count(), "count"),
         ("Members in a group", GroupMember.objects.filter(

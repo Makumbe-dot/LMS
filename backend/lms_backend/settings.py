@@ -48,6 +48,9 @@ DEBUG = env_bool("DEBUG", True)
 ALLOWED_HOSTS = env_list("ALLOWED_HOSTS", "localhost,127.0.0.1,[::1]")
 
 APP_NAME = env("APP_NAME", "Loan Management System")
+# The sign-in page lists the seed data's demo usernames and passwords only when
+# this is on. Off by default: a live system must never print them.
+SHOW_DEMO_LOGINS = env_bool("SHOW_DEMO_LOGINS", False)
 CURRENCY = env("CURRENCY", "USD")
 # A PNG or JPEG for the top of PDF statements and the loan agreement. The default
 # is the Zinmad Capital monogram that ships with the code; a relative path is
@@ -77,6 +80,9 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    # Serves STATIC_ROOT (the admin's and the browsable API's files) after
+    # collectstatic, so gunicorn needs no web server beside it for them.
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -125,9 +131,11 @@ _db_options: dict = {
 if env_bool("DB_TRUSTED_CONNECTION", True):
     _db_options["trusted_connection"] = "yes"
 
+# The engine is mssql-django with test-database cloning added, so that
+# `manage.py test --parallel` works; see lms_backend/sqlserver/creation.py.
 DATABASES = {
     "default": {
-        "ENGINE": "mssql",
+        "ENGINE": "lms_backend.sqlserver",
         "NAME": env("DB_NAME", "LMS"),
         "HOST": env("DB_HOST", r"localhost\SQLEXPRESS"),
         "PORT": env("DB_PORT", ""),
@@ -140,6 +148,9 @@ DATABASES = {
 }
 
 DEFAULT_AUTO_FIELD = "django.db.models.AutoField"
+
+# Django's runner with a cheap password hasher under test; see the module.
+TEST_RUNNER = "lms_backend.test_runner.TestRunner"
 
 # ---------------------------------------------------------------- auth
 AUTH_USER_MODEL = "core.User"
@@ -178,8 +189,18 @@ REST_FRAMEWORK = {
     "UNAUTHENTICATED_USER": None,
     # Rate limits. The login endpoint is the one worth throttling hard.
     "DEFAULT_THROTTLE_CLASSES": ["rest_framework.throttling.ScopedRateThrottle"],
+    # How many reverse proxies stand in front (IIS, nginx): the rate limits count
+    # per client address, read from X-Forwarded-For past exactly this many. 0, the
+    # default, uses the connecting address and ignores the header, which a client
+    # could otherwise write to dodge the limits. Behind one proxy, set 1.
+    "NUM_PROXIES": int(env("NUM_PROXIES", "0")),
     "DEFAULT_THROTTLE_RATES": {
         "login": env("THROTTLE_LOGIN", "20/min"),
+        "inbound_payments": env("THROTTLE_INBOUND_PAYMENTS", "600/min"),
+        "portal": env("THROTTLE_PORTAL", "120/min"),
+        "portal_login": env("THROTTLE_PORTAL_LOGIN", "10/min"),
+        # The public Apply page, per calling address.
+        "applications": env("THROTTLE_APPLICATIONS", "10/hour"),
     },
 }
 
@@ -281,6 +302,17 @@ SPECTACULAR_SETTINGS = {
 # fill in MESSAGE_HTTP_URL to deliver for real.
 MESSAGE_SMS_BACKEND = env("MESSAGE_SMS_BACKEND", "console")
 MESSAGE_EMAIL_BACKEND = env("MESSAGE_EMAIL_BACKEND", "console")
+# WhatsApp: "console" (log only, the default), "meta", "twilio", or "off" to send every
+# WhatsApp-preferring borrower's messages by SMS instead.
+MESSAGE_WHATSAPP_BACKEND = env("MESSAGE_WHATSAPP_BACKEND", "console")
+# Test mode: when set, every SMS and WhatsApp goes to this number (and every email
+# to MESSAGE_TEST_EMAIL) instead of the borrower, marked with whom it was for.
+# For testing against real-looking data without texting real people.
+MESSAGE_TEST_RECIPIENT = env("MESSAGE_TEST_RECIPIENT", "")
+MESSAGE_TEST_EMAIL = env("MESSAGE_TEST_EMAIL", "")
+# Numbers are kept as people write them (0771 234 567). Providers want them in
+# international form, so a number with no country code is given this one.
+MESSAGE_DEFAULT_COUNTRY_CODE = env("MESSAGE_DEFAULT_COUNTRY_CODE", "263").lstrip("+")
 MESSAGE_MAX_ATTEMPTS = int(env("MESSAGE_MAX_ATTEMPTS", "3"))
 MESSAGE_FILE_PATH = env("MESSAGE_FILE_PATH", "")
 
@@ -293,11 +325,73 @@ MESSAGE_HTTP = {
     "to_field": env("MESSAGE_HTTP_TO_FIELD", "to"),
     "body_field": env("MESSAGE_HTTP_BODY_FIELD", "message"),
     "id_path": env("MESSAGE_HTTP_ID_PATH", ""),          # e.g. SMSMessageData.Recipients.0.messageId
+    # How the recipient's number is sent: as_typed (0771 234 567), plus (+263771234567)
+    # or plain (263771234567). Most APIs want plus or plain.
+    "number_format": env("MESSAGE_HTTP_NUMBER_FORMAT", "as_typed"),
     "timeout": int(env("MESSAGE_HTTP_TIMEOUT", "20")),
     # Fixed fields and headers, as "key=value" pairs separated by "|". Kept out of
     # the URL so an API key never lands in an access log.
     "extra": _pairs(env("MESSAGE_HTTP_FIELDS", "")),
     "headers": _pairs(env("MESSAGE_HTTP_HEADERS", "")),
+}
+
+# Twilio, for MESSAGE_SMS_BACKEND=twilio and/or MESSAGE_WHATSAPP_BACKEND=twilio.
+# The account SID and auth token are on the Twilio console's front page. An API
+# key (SK...) and its secret may be used instead of the auth token.
+TWILIO = {
+    "account_sid": env("TWILIO_ACCOUNT_SID", ""),
+    "auth_token": env("TWILIO_AUTH_TOKEN", ""),
+    "api_key_sid": env("TWILIO_API_KEY_SID", ""),
+    "api_key_secret": env("TWILIO_API_KEY_SECRET", ""),
+    # SMS: a Twilio number (+1...), an approved alphanumeric sender ("ZINMAD"), or a
+    # Messaging Service SID (MG...), which picks the sender per country for you.
+    "sms_from": env("TWILIO_SMS_FROM", ""),
+    "messaging_service_sid": env("TWILIO_MESSAGING_SERVICE_SID", ""),
+    # WhatsApp: the WhatsApp-enabled number, e.g. +14155238886 for Twilio's sandbox.
+    "whatsapp_from": env("TWILIO_WHATSAPP_FROM", ""),
+    # Approved WhatsApp templates (Content SIDs, HX...), one per message kind:
+    # "reminder=HX...|arrears=HX...|receipt=HX...|promise=HX...". A kind with no
+    # template is sent as plain text, which WhatsApp only delivers within 24 hours
+    # of the borrower last writing to you; otherwise it falls back to SMS.
+    "whatsapp_templates": _pairs(env("TWILIO_WHATSAPP_TEMPLATES", "")),
+    "timeout": int(env("TWILIO_TIMEOUT", "20")),
+    # Overridable only so tests can point it somewhere harmless.
+    "api_base": env("TWILIO_API_BASE", "https://api.twilio.com"),
+}
+
+# Mobile-money payouts (services/payouts.py): a provider's "send money" call,
+# configured like the SMS gateway. Blank URL: payouts are logged, not sent.
+PAYOUT_HTTP = {
+    "url": env("PAYOUT_HTTP_URL", ""),
+    "format": env("PAYOUT_HTTP_FORMAT", "json"),                 # json | form
+    "to_field": env("PAYOUT_HTTP_TO_FIELD", "msisdn"),
+    "amount_field": env("PAYOUT_HTTP_AMOUNT_FIELD", "amount"),
+    "reference_field": env("PAYOUT_HTTP_REFERENCE_FIELD", "reference"),
+    "number_format": env("PAYOUT_HTTP_NUMBER_FORMAT", "plain"),  # plain 2637... | plus +2637...
+    "id_path": env("PAYOUT_HTTP_ID_PATH", ""),
+    "timeout": int(env("PAYOUT_HTTP_TIMEOUT", "30")),
+    "extra": _pairs(env("PAYOUT_HTTP_FIELDS", "")),
+    "headers": _pairs(env("PAYOUT_HTTP_HEADERS", "")),
+}
+
+# Meta's WhatsApp Cloud API, for MESSAGE_WHATSAPP_BACKEND=meta: WhatsApp with no
+# provider in between. All of it comes from Meta's WhatsApp Manager / the app's
+# WhatsApp "API Setup" page.
+META_WHATSAPP = {
+    # A permanent system-user token (the one on the API Setup page lasts 24 hours).
+    "token": env("META_WHATSAPP_TOKEN", ""),
+    # The id of the business phone number (not the number itself).
+    "phone_number_id": env("META_WHATSAPP_PHONE_NUMBER_ID", ""),
+    # Approved template names, one per kind: "reminder=lms_reminder|arrears=lms_arrears|..."
+    "templates": _pairs(env("META_WHATSAPP_TEMPLATES", "")),
+    "language": env("META_WHATSAPP_LANGUAGE", "en"),
+    "version": env("META_GRAPH_VERSION", "v23.0"),
+    # For the delivery webhook: any string you choose (entered again in Meta's
+    # webhook settings), and the app secret Meta signs each call with.
+    "verify_token": env("META_WHATSAPP_VERIFY_TOKEN", ""),
+    "app_secret": env("META_APP_SECRET", ""),
+    "timeout": int(env("META_WHATSAPP_TIMEOUT", "20")),
+    "api_base": env("META_GRAPH_API_BASE", "https://graph.facebook.com"),
 }
 
 # ---------------------------------------------------------------- credit bureau
@@ -326,7 +420,29 @@ BUREAU_HTTP = {
     },
 }
 
+# ---------------------------------------------------------------- incoming payments
+# Mobile-money and bank notifications arrive at /api/payments/inbound/<provider>,
+# signed with HMAC-SHA256 of the raw body in the header named below. Each provider
+# has its own secret ("provider=secret|provider=secret"); a provider with no secret
+# is refused, so nothing unsigned is ever posted. See core/services/inbound.py.
+INBOUND_PAYMENT_SECRETS = _pairs(env("INBOUND_PAYMENT_SECRETS", ""))
+INBOUND_PAYMENT_SIGNATURE_HEADER = env("INBOUND_PAYMENT_SIGNATURE_HEADER", "X-Signature")
+# Dotted paths to each field in the provider's JSON, the same for every provider
+# unless a provider's own are given as INBOUND_PAYMENT_PATHS_<PROVIDER>.
+INBOUND_PAYMENT_PATHS = {
+    "id": "id", "amount": "amount", "currency": "currency", "date": "date",
+    "phone": "phone", "name": "name", "reference": "reference",
+    **_pairs(env("INBOUND_PAYMENT_PATHS", "")),
+}
+INBOUND_PAYMENT_PROVIDER_PATHS = {
+    key[len("INBOUND_PAYMENT_PATHS_"):].lower(): _pairs(value)
+    for key, value in os.environ.items() if key.startswith("INBOUND_PAYMENT_PATHS_")
+}
+
 # Email, for the email channel when MESSAGE_EMAIL_BACKEND is "smtp".
+# Who is emailed when a scheduled job fails (core/services/jobs.py), comma-separated.
+# Empty: failures show in the app only.
+JOB_ALERT_EMAILS = env_list("JOB_ALERT_EMAILS", "")
 EMAIL_BACKEND = env("EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend")
 EMAIL_HOST = env("EMAIL_HOST", "")
 EMAIL_PORT = int(env("EMAIL_PORT", "587"))

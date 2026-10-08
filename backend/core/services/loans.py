@@ -21,7 +21,6 @@ from ..models import (
     LoanProduct,
     LoanStatus,
     OrganisationSetting,
-    Role,
     Sequence,
     Transaction,
     TxnType,
@@ -336,16 +335,21 @@ def apply(borrower: Borrower, product: LoanProduct, principal: Decimal, term: in
 def approve(loan: Loan, user: User) -> Loan:
     if loan.status != LoanStatus.PENDING:
         raise BusinessRuleError(f"Loan is {loan.status}, cannot approve")
-    if user.id == loan.officer_id and user.role != Role.ADMIN:
-        raise BusinessRuleError("The originating officer cannot approve their own loan")
-    limit = OrganisationSetting.load().officer_approval_limit
+    if user.id == loan.officer_id and not user.is_admin:
+        raise BusinessRuleError("Whoever originated a loan cannot approve it")
+    from .screening import assert_clear  # screening imports models only; kept local like signatures
+
+    assert_clear(loan.borrower, "approve this loan")
+    limit = user.approval_limit
+    if limit is None:
+        limit = OrganisationSetting.load().officer_approval_limit
     # The limit is in the organisation's currency; a foreign loan is measured at
     # today's rate.
     principal_base = fx.to_base(loan.principal, fx.rate_on(loan.currency))
-    if user.role != Role.ADMIN and principal_base > limit:
+    if not user.is_admin and principal_base > limit:
         raise BusinessRuleError(
             f"{loan.principal} {loan.currency or fx.base_currency()} "
-            f"({principal_base} {fx.base_currency()}) is above the {limit} a loan officer "
+            f"({principal_base} {fx.base_currency()}) is above the {limit} you "
             f"may approve; this one needs an administrator")
     loan.status = LoanStatus.APPROVED
     loan.approved_at = datetime.now(timezone.utc)
@@ -368,6 +372,12 @@ def disburse(loan: Loan, user: User, disbursement_date: date | None,
     if loan.status != LoanStatus.APPROVED:
         raise BusinessRuleError(f"Loan is {loan.status}, must be approved before disbursement")
     disb = disbursement_date or date.today()
+    from .signatures import assert_signed_for_disbursement  # signatures imports this module
+
+    assert_signed_for_disbursement(loan)
+    from .screening import assert_clear
+
+    assert_clear(loan.borrower, "pay this loan out")
     # Before the schedule is built and written. An application may sit in a closed
     # month — capturing and approving are not postings — but moving the money is.
     periods.assert_open(disb, "This disbursement")

@@ -37,7 +37,7 @@ from ..models import (
     ManualJournal,
     ManualJournalLine,
     ManualJournalStatus,
-    Role,
+    Right,
     User,
 )
 from . import ledger, periods
@@ -156,10 +156,13 @@ def post(journal: ManualJournal, user: User) -> ManualJournal:
     if journal.status != ManualJournalStatus.DRAFT:
         raise BusinessRuleError(f"{journal.journal_no} is {journal.get_status_display().lower()}; "
                                 f"only a journal awaiting approval can be posted")
-    if not user.has_role(Role.ADMIN):
-        # Which is also the four-eyes rule: a journal prepared by anyone else always
-        # passes through a second pair of hands before it reaches the ledger.
-        raise BusinessRuleError("Only an administrator can post a journal")
+    if not user.has_right(Right.ACCOUNTING):
+        raise BusinessRuleError("Posting a journal needs the access right: "
+                                f"{Right.ACCOUNTING.label}")
+    if journal.prepared_by_id == user.id and not user.is_admin:
+        # The four-eyes rule: a journal passes through a second pair of hands before
+        # it reaches the ledger.
+        raise BusinessRuleError("Whoever prepared a journal cannot post it")
 
     periods.assert_open(journal.entry_date, f"Journal {journal.journal_no}")
     # Re-validated at posting: an account may have been deactivated, or turned into
@@ -199,13 +202,13 @@ def reject(journal: ManualJournal, user: User, reason: str) -> ManualJournal:
 
 
 def withdraw(journal: ManualJournal, user: User) -> None:
-    """Delete a draft. Its preparer or an administrator; never once posted."""
+    """Delete a draft. Its preparer or someone with the accounting right; never once posted."""
     if journal.status != ManualJournalStatus.DRAFT:
         raise BusinessRuleError(f"{journal.journal_no} is {journal.get_status_display().lower()}; "
                                 f"only a draft can be withdrawn. Reverse a posted journal instead.")
-    if journal.prepared_by_id != user.id and not user.has_role(Role.ADMIN):
-        raise BusinessRuleError("Only whoever prepared a journal, or an administrator, can "
-                                "withdraw it")
+    if journal.prepared_by_id != user.id and not user.has_right(Right.ACCOUNTING):
+        raise BusinessRuleError("Only whoever prepared a journal, or someone with the "
+                                f"access right {Right.ACCOUNTING.label}, can withdraw it")
     journal.delete()
 
 

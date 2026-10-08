@@ -1,4 +1,4 @@
-"""Currencies: the exchange-rate table and the revaluation of foreign-currency loans."""
+"""Currencies: the exchange-rate table and the revaluation of foreign-currency balances."""
 from datetime import date
 
 from django.db import transaction
@@ -10,7 +10,7 @@ from rest_framework import serializers as drf
 from ..audit import audit
 from ..exceptions import NotFound
 from ..models import ExchangeRate, RevaluationRun
-from ..permissions import IsAdmin
+from ..permissions import CanAccounting, CanSetup
 from ..serializers import (
     ExchangeRateSerializer,
     RevaluationPreviewSerializer,
@@ -47,8 +47,8 @@ def rates(request):
             qs = qs.filter(code=fx.normalise(code))
         return Response(paginate(request, qs, ExchangeRateSerializer, default_size=50))
 
-    if not IsAdmin().has_permission(request, None):
-        return Response({"detail": IsAdmin.message}, status=status.HTTP_403_FORBIDDEN)
+    if not CanSetup().has_permission(request, None):
+        return Response({"detail": CanSetup.message}, status=status.HTTP_403_FORBIDDEN)
     body = _RateBody(data=request.data)
     body.is_valid(raise_exception=True)
     data = body.validated_data
@@ -61,7 +61,7 @@ def rates(request):
 
 
 @api_view(["DELETE"])
-@permission_classes([IsAdmin])
+@permission_classes([CanSetup])
 def rate_detail(request, rate_id: int):
     row = ExchangeRate.objects.filter(pk=rate_id).first()
     if row is None:
@@ -84,15 +84,16 @@ def revaluation_preview(request):
 def revaluations(request):
     if request.method == "GET":
         qs = RevaluationRun.objects.select_related("journal_entry", "run_by").prefetch_related(
-            "lines__loan__borrower")
+            "lines__loan__borrower", "lines__savings_account__borrower", "lines__facility")
         return Response(paginate(request, qs, RevaluationRunSerializer, default_size=25))
 
-    if not IsAdmin().has_permission(request, None):
-        return Response({"detail": IsAdmin.message}, status=status.HTTP_403_FORBIDDEN)
+    if not CanAccounting().has_permission(request, None):
+        return Response({"detail": CanAccounting.message}, status=status.HTTP_403_FORBIDDEN)
     body = _RevalueBody(data=request.data)
     body.is_valid(raise_exception=True)
     run = fx.revalue(body.validated_data.get("as_of"), request.user,
                      body.validated_data.get("narration"))
     run = (RevaluationRun.objects.select_related("journal_entry", "run_by")
-           .prefetch_related("lines__loan__borrower").get(pk=run.pk))
+           .prefetch_related("lines__loan__borrower", "lines__savings_account__borrower",
+                             "lines__facility").get(pk=run.pk))
     return Response(RevaluationRunSerializer(run).data, status=status.HTTP_201_CREATED)

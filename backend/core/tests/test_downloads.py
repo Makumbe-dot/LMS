@@ -282,7 +282,7 @@ class MemberRegisterTests(DownloadBase):
         from core.models import Role
 
         if not User.objects.filter(username="viewer").exists():
-            User.objects.create_user("viewer", "viewer123", full_name="Viewer", role=Role.VIEWER)
+            User.objects.create_user("viewer", "viewer123", full_name="Viewer", role=Role.USER)
         return self.client_for("viewer", "viewer123")
 
 

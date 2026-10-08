@@ -277,20 +277,26 @@ export default function Dashboard() {
               </select>
             </label>
           ) : null}
-          {can('admin', 'loan_officer') ? (
+          {can('supervise', 'borrowers', 'loans') ? (
             <div className="hero-actions">
-              <button type="button" className="btn" onClick={runPenalties} disabled={running}>
-                <Icon name="play" size={15} />
-                {running ? 'Running…' : 'Run penalties'}
-              </button>
-              <Link className="btn" to="/borrowers/new">
-                <Icon name="plus" size={15} />
-                Borrower
-              </Link>
-              <Link className="btn primary" to="/loans/new">
-                <Icon name="plus" size={15} />
-                New loan
-              </Link>
+              {can('supervise') ? (
+                <button type="button" className="btn" onClick={runPenalties} disabled={running}>
+                  <Icon name="play" size={15} />
+                  {running ? 'Running…' : 'Run penalties'}
+                </button>
+              ) : null}
+              {can('borrowers') ? (
+                <Link className="btn" to="/borrowers/new">
+                  <Icon name="plus" size={15} />
+                  Borrower
+                </Link>
+              ) : null}
+              {can('loans') ? (
+                <Link className="btn primary" to="/loans/new">
+                  <Icon name="plus" size={15} />
+                  New loan
+                </Link>
+              ) : null}
             </div>
           ) : null}
         </div>

@@ -1,0 +1,138 @@
+# The whole system in containers: SQL Server, the Django API and the React app.
+#
+#   cp .env.example .env        # then set the three secrets in it
+#   docker compose up -d --build
+#
+# The app is then on http://localhost:8080. See "Running with Docker" in README.md.
+name: lms
+
+x-backend-build: &backend-build
+  context: ./backend
+
+# What every container built from the backend image needs. Anything else the
+# Django settings read (APP_NAME, CURRENCY, TIME_ZONE, MESSAGE_*, BUREAU_*, ...)
+# is passed straight through from .env by env_file.
+x-backend-env: &backend-env
+  DEBUG: ${DEBUG:-0}
+  SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env}
+  ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1}
+  CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:8080}
+  # Plain HTTP on a workstation. Behind a TLS-terminating proxy, set it to 1.
+  SECURE_SSL_REDIRECT: ${SECURE_SSL_REDIRECT:-0}
+  # nginx always stands in front, so the client's address is one proxy back; add
+  # one for each proxy in front of nginx. The sign-in rate limits count by it.
+  NUM_PROXIES: ${NUM_PROXIES:-1}
+  DB_HOST: sqlserver
+  DB_PORT: "1433"
+  DB_NAME: ${DB_NAME:-LMS}
+  DB_DRIVER: ODBC Driver 18 for SQL Server
+  DB_TRUSTED_CONNECTION: "0"
+  DB_USER: ${DB_USER:-lms_app}
+  DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+  # The container's certificate is self-signed; the traffic never leaves the
+  # compose network.
+  DB_TRUST_SERVER_CERT: "1"
+  MEDIA_ROOT: /app/backend/media
+
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:?set MSSQL_SA_PASSWORD in .env}
+      # Developer is free but not licensed for production; Express is free for
+      # production (10 GB per database). Or a product key, if you have one.
+      MSSQL_PID: ${MSSQL_PID:-Developer}
+      MSSQL_COLLATION: SQL_Latin1_General_CP1_CI_AS
+    volumes:
+      - sqldata:/var/opt/mssql
+      - backups:/backups
+    # Loopback only, for SSMS or Azure Data Studio on this machine.
+    ports:
+      - "127.0.0.1:${SQLSERVER_PORT:-1433}:1433"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -b -Q 'SELECT 1' >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+
+  # Creates the database and the app's login if missing, then exits.
+  db-init:
+    build: *backend-build
+    image: lms-backend
+    user: root
+    entrypoint: ["/app/backend/docker/db-init.sh"]
+    environment:
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD}
+      DB_NAME: ${DB_NAME:-LMS}
+      DB_USER: ${DB_USER:-lms_app}
+      DB_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - backups:/backups
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    restart: "no"
+
+  # Applies migrations on start, then serves the API with gunicorn.
+  backend:
+    build: *backend-build
+    image: lms-backend
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      <<: *backend-env
+      # Only the database set-up and the backups need sa; the app does not.
+      MSSQL_SA_PASSWORD: ""
+    volumes:
+      - media:/app/backend/media
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=5)"]
+      interval: 15s
+      timeout: 6s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+
+  # The built React app on nginx, forwarding /api to the backend.
+  frontend:
+    build: ./frontend
+    image: lms-frontend
+    ports:
+      - "${HTTP_PORT:-8080}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # The nightly batch. Not started by `up`; run it on a schedule with
+  #   docker compose run --rm jobs [--as-of 2026-09-30] [--skip-backup]
+  jobs:
+    build: *backend-build
+    image: lms-backend
+    profiles: ["jobs"]
+    entrypoint: ["/app/backend/docker/nightly.sh"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      <<: *backend-env
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+    volumes:
+      - media:/app/backend/media:ro
+      - backups:/backups
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  sqldata:
+  media:
+  backups:

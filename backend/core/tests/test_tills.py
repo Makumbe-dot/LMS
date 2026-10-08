@@ -209,3 +209,97 @@ class RequireOpenTillTests(TillBase):
 
     def test_the_setting_is_on_the_settings_endpoint(self):
         self.assertTrue(self.admin.get("/api/settings").json()["require_open_till"])
+
+
+class ForeignDrawerTests(TillBase):
+    """ZWG cash is counted in a ZWG drawer, in ZWG; dollars in the dollar drawer."""
+
+    def setUp(self):
+        super().setUp()
+        self.admin.post("/api/currencies/rates", {"code": "ZWG", "rate_date": "2026-01-01",
+                                                  "rate": "0.040000"}, format="json")
+        from core.models import Borrower, User
+
+        self.teller_user = User.objects.get(username="teller")
+        product = SavingsProduct.objects.create(code="ZSAV", name="ZWG savings", currency="ZWG")
+        self.account = savings_svc.open_account(Borrower.objects.get(pk=self.borrower["id"]),
+                                                product, self.teller_user)
+
+    def open_in(self, currency, opening_float="1000.00", client=None):
+        return (client or self.teller).post("/api/tills", {
+            "opening_float": opening_float, "currency": currency}, format="json")
+
+    def drawers(self, client=None):
+        return {t["currency_label"]: t for t in
+                (client or self.teller).get("/api/tills/current").json()["tills"]}
+
+    def test_foreign_cash_counts_in_its_own_drawer_and_currency(self):
+        self.open()
+        response = self.open_in("zwg")
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(response.json()["currency"], "ZWG")
+        savings_svc.deposit(self.account, self.teller_user, dec("300"), method="cash")
+        savings_svc.withdraw(self.account, self.teller_user, dec("120"), method="cash")
+        self.repay("150.00")
+
+        drawers = self.drawers()
+        self.assertEqual(dec(drawers["ZWG"]["position"]["expected_cash"]), dec("1180.00"))
+        self.assertEqual(dec(drawers["USD"]["position"]["expected_cash"]), dec("650.00"))
+        self.assertEqual(dec(self.mine()["position"]["expected_cash"]), dec("650.00"))
+
+    def test_a_foreign_loan_repayment_in_cash_is_counted_in_the_loans_currency(self):
+        self.open_in("ZWG", "0")
+        loan = self.disbursed_loan(self.make_product(code="ZWG-L", currency="ZWG"),
+                                   self.make_borrower(national_id="63-654321B63"),
+                                   principal=10000)
+        response = self.teller.post(f"/api/loans/{loan['id']}/repayments", {
+            "amount": "1970.18", "method": "cash", "txn_date": "2026-03-25"}, format="json")
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(dec(self.drawers()["ZWG"]["position"]["cash_in"]), dec("1970.18"))
+
+    def test_one_open_drawer_per_currency(self):
+        self.open()
+        self.assertEqual(self.open_in("ZWG").status_code, 201)
+        response = self.open_in("ZWG")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("already have", response.json()["detail"])
+        self.assertEqual(self.open_in("USD").status_code, 400)   # the base, by its code
+
+    def test_a_drawer_needs_a_currency_with_a_rate(self):
+        response = self.open_in("ZAR")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("No exchange rate for ZAR", response.json()["detail"])
+
+    def test_the_open_till_setting_wants_a_drawer_in_the_postings_currency(self):
+        settings = OrganisationSetting.load()
+        settings.require_open_till = True
+        settings.save()
+        self.open()
+        response = self.teller.post(f"/api/savings/accounts/{self.account.id}/deposit", {
+            "amount": "50.00", "method": "cash"}, format="json")
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn("ZWG", response.json()["detail"])
+        self.open_in("ZWG")
+        response = self.teller.post(f"/api/savings/accounts/{self.account.id}/deposit", {
+            "amount": "50.00", "method": "cash"}, format="json")
+        self.assertEqual(response.status_code, 201, response.content)
+
+    def test_a_foreign_difference_is_booked_at_the_days_rate(self):
+        till = self.open_in("ZWG").json()
+        self.count(till, "900.00", note="A bundle short")
+        body = self.officer.post(f"/api/tills/{till['id']}/verify", {}, format="json").json()
+        self.assertEqual(body["fx_rate"], "0.040000")
+        entry = JournalEntry.objects.get(entry_no=body["variance_entry_no"])
+        lines = {line.account.code: line for line in entry.lines.all()}
+        self.assertEqual(lines["6800"].debit, dec("4.00"))     # 100 ZWG x 0.04
+        self.assertEqual(lines["1000"].credit, dec("4.00"))
+
+        # A rate set since does not change what a Rebuild re-posts.
+        self.admin.post("/api/currencies/rates", {
+            "code": "ZWG", "rate_date": date.today().isoformat(), "rate": "0.090000"},
+            format="json")
+        JournalEntry.objects.all().delete()
+        gl.backfill()
+        entry = TillSession.objects.get(pk=till["id"]).variance_entry
+        self.assertEqual({l.account.code: l.debit for l in entry.lines.all()}["6800"],
+                         dec("4.00"))

@@ -4,7 +4,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 
 from ..exceptions import BusinessRuleError
-from ..permissions import IsAdmin, IsOfficer
+from ..permissions import CanAccounting, CanSupervise
 from ..serializers import (
     AccountingPeriodSerializer,
     PeriodCloseSerializer,
@@ -59,14 +59,14 @@ def period_detail(request, year, month):
 
 
 @api_view(["GET"])
-@permission_classes([IsOfficer])
+@permission_classes([CanSupervise])
 def preflight(request, year, month):
     """What a close would check and what it would freeze. Changes nothing."""
     return Response(svc.preflight(*_month(year, month)))
 
 
 @api_view(["POST"])
-@permission_classes([IsAdmin])
+@permission_classes([CanAccounting])
 def close(request, year, month):
     body = PeriodCloseSerializer(data=request.data)
     body.is_valid(raise_exception=True)
@@ -80,7 +80,7 @@ def close(request, year, month):
 
 
 @api_view(["POST"])
-@permission_classes([IsAdmin])
+@permission_classes([CanAccounting])
 def reopen(request, year, month):
     body = PeriodReopenSerializer(data=request.data)
     body.is_valid(raise_exception=True)

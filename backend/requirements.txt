@@ -14,3 +14,7 @@ drf-spectacular>=0.28
 openpyxl>=3.1
 # PDF statements.
 reportlab>=4.2
+# The WSGI server in the Docker image (runserver is still fine for development).
+gunicorn>=23.0
+# Serves the collected static files (admin, browsable API) from the app process.
+whitenoise>=6.9

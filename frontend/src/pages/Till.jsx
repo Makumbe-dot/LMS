@@ -1,5 +1,6 @@
 import { useState } from 'react'
 
+import CurrencySelect from '../components/CurrencySelect.jsx'
 import DataTable from '../components/DataTable.jsx'
 import { FormModal } from '../components/Modal.jsx'
 import { useToast } from '../components/Toast.jsx'
@@ -16,7 +17,8 @@ import {
 } from '../components/ui.jsx'
 import { post, qs } from '../lib/api.js'
 import { useAuth } from '../lib/auth.jsx'
-import { dateTime, fmt, getCurrency, money, num } from '../lib/format.js'
+import { closedDrawerOptions, currencyOf, openDrawers } from '../lib/currency.js'
+import { dateTime, fmt, money, num } from '../lib/format.js'
 import { useApi } from '../lib/useApi.js'
 
 /** "-20.00" -> a red "Short 20.00"; "5.00" -> "Over 5.00"; 0 -> a green "Balanced". */
@@ -31,11 +33,15 @@ export function Variance({ value }) {
   )
 }
 
+/** A drawer's currency: every amount on a till is in it. */
+const drawerCurrency = (till) => till.currency_label || currencyOf(till.currency)
+
 /** The count: what the drawer holds, against what the postings say it should. */
 function CountForm({ till, busy, onClose, onSubmit }) {
   const [counted, setCounted] = useState('')
   const expected = num(till.position.expected_cash) ?? 0
   const difference = counted === '' ? null : Math.round((Number(counted) - expected) * 100) / 100
+  const cur = drawerCurrency(till)
 
   return (
     <FormModal
@@ -50,7 +56,7 @@ function CountForm({ till, busy, onClose, onSubmit }) {
         supervisor verifies the count; any difference is posted to the ledger when they do.
       </p>
       <Field
-        label={`Cash counted (${getCurrency()})`}
+        label={`Cash counted (${cur})`}
         type="number"
         step="0.01"
         min="0"
@@ -62,7 +68,7 @@ function CountForm({ till, busy, onClose, onSubmit }) {
       {difference !== null ? (
         <KeyValues
           items={[
-            ['The postings say', money(expected)],
+            ['The postings say', money(expected, cur)],
             ['Difference', <Variance key="v" value={difference} />],
           ]}
         />
@@ -79,7 +85,74 @@ function CountForm({ till, busy, onClose, onSubmit }) {
   )
 }
 
-/** One teller's cash drawer: open with a float, count at close, verified by someone else. */
+/** The open form: a float, and the currency of the drawer it goes in. */
+function OpenForm({ drawers, busy, onClose, onSubmit }) {
+  const [currency, setCurrency] = useState(null)
+  return (
+    <FormModal title="Open a till" submitLabel="Open the till" busy={busy} onClose={onClose} onSubmit={onSubmit}>
+      <CurrencySelect
+        label="Drawer currency"
+        value={currency ?? ''}
+        onChange={setCurrency}
+        only={(options) => closedDrawerOptions(options, drawers)}
+        hint="One drawer per currency. Cash on a loan or savings account is counted in the drawer of its own currency."
+      />
+      <Field
+        label={`Opening float (${currencyOf(currency)})`}
+        type="number"
+        step="0.01"
+        min="0"
+        name="opening_float"
+        required
+        hint="The cash handed to you from the vault"
+      />
+    </FormModal>
+  )
+}
+
+/** One open drawer: its float, what came in and went out, and what it should hold. */
+function Drawer({ till, onCount }) {
+  const cur = drawerCurrency(till)
+  return (
+    <div className="card">
+      <div className="row" style={{ justifyContent: 'space-between' }}>
+        <h3 style={{ margin: 0 }}>
+          {cur} drawer · {till.session_no}
+        </h3>
+        <button type="button" className="btn primary" onClick={onCount}>
+          Count and close
+        </button>
+      </div>
+      <div className="grid cols-4">
+        <Kpi label="Opening float" value={money(till.opening_float, cur)} sub={`opened ${dateTime(till.opened_at)}`} />
+        <Kpi label="Cash in" value={money(till.position.cash_in, cur)} />
+        <Kpi label="Cash out" value={money(till.position.cash_out, cur)} />
+        <Kpi label="Should be in the drawer" value={<strong>{money(till.position.expected_cash, cur)}</strong>} />
+      </div>
+      <DataTable
+        caption={`Cash movements in the ${cur} drawer`}
+        rows={till.position.movements}
+        rowKey={(r, index) => `${r.at}-${index}`}
+        empty="Nothing in cash yet. Bank, mobile-money and payroll postings never touch the drawer."
+        columns={[
+          { key: 'at', header: 'When', render: (r) => dateTime(r.at) },
+          { key: 'kind', header: 'What', render: (r) => r.kind },
+          { key: 'ref', header: 'Loan / account', render: (r) => r.reference },
+          { key: 'detail', header: 'Reference', render: (r) => r.detail || '-' },
+          {
+            key: 'amount',
+            header: `Amount (${cur})`,
+            num: true,
+            render: (r) =>
+              num(r.amount) < 0 ? <span className="tag-warn">{fmt(r.amount)}</span> : fmt(r.amount),
+          },
+        ]}
+      />
+    </div>
+  )
+}
+
+/** One teller's cash drawers: open with a float, count at close, verified by someone else. */
 export default function Till() {
   const { user, can } = useAuth()
   const { toast, toastError } = useToast()
@@ -87,11 +160,11 @@ export default function Till() {
   const [page, setPage] = useState(1)
   const history = useApi(`/api/tills${qs({ page })}`)
   const waiting = useApi('/api/tills?status=counted&page_size=100')
-  const [action, setAction] = useState(null) // 'open' | 'count' | {verify: till}
+  const [action, setAction] = useState(null) // 'open' | {count: till} | {verify: till}
   const [busy, setBusy] = useState(false)
 
-  const canSupervise = can('admin', 'loan_officer')
-  const till = mine.data?.till
+  const canSupervise = can('supervise')
+  const drawers = openDrawers(mine.data)
 
   async function run(promise, message) {
     setBusy(true)
@@ -117,14 +190,9 @@ export default function Till() {
         title="Teller till"
         meta="A float in the morning, a count at close, and someone else to check it"
       >
-        {!mine.loading && !till ? (
+        {!mine.loading || mine.data ? (
           <button type="button" className="btn primary" onClick={() => setAction('open')}>
-            Open my till
-          </button>
-        ) : null}
-        {till ? (
-          <button type="button" className="btn primary" onClick={() => setAction('count')}>
-            Count and close
+            {drawers.length ? 'Open a drawer in another currency' : 'Open my till'}
           </button>
         ) : null}
         <ExportButtons path={'/api/tills'} name={'tills'} />
@@ -133,38 +201,10 @@ export default function Till() {
       <ErrorBanner error={mine.error || history.error} onRetry={mine.reload} />
       {mine.loading && !mine.data ? <Loading what="Loading your till" /> : null}
 
-      {till ? (
-        <>
-          <div className="grid cols-4">
-            <Kpi label="Opening float" value={money(till.opening_float)} sub={`${till.session_no}, opened ${dateTime(till.opened_at)}`} />
-            <Kpi label="Cash in" value={money(till.position.cash_in)} />
-            <Kpi label="Cash out" value={money(till.position.cash_out)} />
-            <Kpi label="Should be in the drawer" value={<strong>{money(till.position.expected_cash)}</strong>} />
-          </div>
-          <div className="card">
-            <h3>Cash through this till</h3>
-            <DataTable
-              caption="Cash movements in this till"
-              rows={till.position.movements}
-              rowKey={(r, index) => `${r.at}-${index}`}
-              empty="Nothing in cash yet. Bank, mobile-money and payroll postings never touch the drawer."
-              columns={[
-                { key: 'at', header: 'When', render: (r) => dateTime(r.at) },
-                { key: 'kind', header: 'What', render: (r) => r.kind },
-                { key: 'ref', header: 'Loan / account', render: (r) => r.reference },
-                { key: 'detail', header: 'Reference', render: (r) => r.detail || '-' },
-                {
-                  key: 'amount',
-                  header: 'Amount',
-                  num: true,
-                  render: (r) =>
-                    num(r.amount) < 0 ? <span className="tag-warn">{fmt(r.amount)}</span> : fmt(r.amount),
-                },
-              ]}
-            />
-          </div>
-        </>
-      ) : !mine.loading ? (
+      {drawers.map((till) => (
+        <Drawer key={till.id} till={till} onCount={() => setAction({ count: till })} />
+      ))}
+      {!drawers.length && !mine.loading ? (
         <div className="card">
           <p className="muted" style={{ margin: 0 }}>
             You have no till open. Open one with the float you were given before taking or paying
@@ -184,6 +224,7 @@ export default function Till() {
               { key: 'no', header: 'Till', render: (t) => t.session_no },
               { key: 'teller', header: 'Teller', render: (t) => t.teller_name },
               { key: 'date', header: 'Date', render: (t) => t.business_date },
+              { key: 'currency', header: 'Currency', render: (t) => drawerCurrency(t) },
               { key: 'expected', header: 'Expected', num: true, render: (t) => fmt(t.expected_cash) },
               { key: 'counted', header: 'Counted', num: true, render: (t) => fmt(t.counted_cash) },
               { key: 'variance', header: 'Difference', render: (t) => <Variance value={t.variance} /> },
@@ -212,6 +253,7 @@ export default function Till() {
             { key: 'no', header: 'Till', render: (t) => t.session_no },
             { key: 'teller', header: 'Teller', render: (t) => t.teller_name },
             { key: 'date', header: 'Date', render: (t) => t.business_date },
+            { key: 'currency', header: 'Currency', render: (t) => drawerCurrency(t) },
             { key: 'float', header: 'Float', num: true, render: (t) => fmt(t.opening_float) },
             { key: 'expected', header: 'Expected', num: true, render: (t) => fmt(t.expected_cash) },
             { key: 'counted', header: 'Counted', num: true, render: (t) => fmt(t.counted_cash) },
@@ -225,31 +267,22 @@ export default function Till() {
       </div>
 
       {action === 'open' ? (
-        <FormModal
-          title="Open my till"
-          submitLabel="Open the till"
+        <OpenForm
+          drawers={drawers}
           busy={busy}
           onClose={() => setAction(null)}
           onSubmit={(v) => run(post('/api/tills', v), 'Till open')}
-        >
-          <Field
-            label={`Opening float (${getCurrency()})`}
-            type="number"
-            step="0.01"
-            min="0"
-            name="opening_float"
-            required
-            hint="The cash handed to you from the vault"
-          />
-        </FormModal>
+        />
       ) : null}
 
-      {action === 'count' && till ? (
+      {action?.count ? (
         <CountForm
-          till={till}
+          till={action.count}
           busy={busy}
           onClose={() => setAction(null)}
-          onSubmit={(body) => run(post(`/api/tills/${till.id}/count`, body), 'Till counted and closed')}
+          onSubmit={(body) =>
+            run(post(`/api/tills/${action.count.id}/count`, body), 'Till counted and closed')
+          }
         />
       ) : null}
 
@@ -266,15 +299,16 @@ export default function Till() {
           <KeyValues
             items={[
               ['Teller', action.verify.teller_name],
-              ['Expected', money(action.verify.expected_cash)],
-              ['Counted', money(action.verify.counted_cash)],
+              ['Expected', money(action.verify.expected_cash, drawerCurrency(action.verify))],
+              ['Counted', money(action.verify.counted_cash, drawerCurrency(action.verify))],
               ['Difference', <Variance key="v" value={action.verify.variance} />],
               ["Teller's note", action.verify.close_note || '-'],
             ]}
           />
           {num(action.verify.variance) ? (
             <p className="muted">
-              Verifying posts the difference to the ledger:{' '}
+              Verifying posts the difference to the ledger
+              {action.verify.currency ? ", at today's rate" : ''}:{' '}
               {num(action.verify.variance) < 0
                 ? 'Dr 6800 Cash shortages, Cr 1000 Cash and bank.'
                 : 'Dr 1000 Cash and bank, Cr 4900 Other income.'}

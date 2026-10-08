@@ -22,10 +22,60 @@ RATE = {"max_digits": 6, "decimal_places": 3}
 
 
 class Role(models.TextChoices):
+    """An administrator holds every right. Anyone else holds the rights an
+    administrator has ticked for them, and with none ticked can only read."""
     ADMIN = "admin", "Administrator"
-    LOAN_OFFICER = "loan_officer", "Loan officer"
-    TELLER = "teller", "Teller"
-    VIEWER = "viewer", "Viewer"
+    USER = "user", "User"
+
+
+class Right(models.TextChoices):
+    """What an administrator can grant a user, one tick each. Reading is never a
+    right: every signed-in user can look at what the system holds."""
+    BORROWERS = "borrowers", "Borrowers and groups"
+    LOANS = "loans", "Loan applications"
+    APPROVE = "approve", "Approve and reject loans"
+    DISBURSE = "disburse", "Disburse loans"
+    CASH = "cash", "Cash and repayments"
+    REVERSE = "reverse", "Reverse repayments"
+    SUPERVISE = "supervise", "Supervise tills and penalties"
+    MESSAGES = "messages", "Borrower messages"
+    COLLECTIONS = "collections", "Work collections"
+    RESTRUCTURE = "restructure", "Waive, reschedule and write off"
+    ACCOUNTING = "accounting", "Accounting"
+    SETUP = "setup", "Products and setup"
+
+
+RIGHT_DESCRIPTIONS = {
+    Right.BORROWERS: "Add and edit borrowers, groups, guarantors and documents.",
+    Right.LOANS: "Quote and apply for loans, top-ups, guarantors, security and charges.",
+    Right.APPROVE: "Approve or reject applications, up to the user's approval limit, "
+                   "never one they originated.",
+    Right.DISBURSE: "Pay out an approved loan.",
+    Right.CASH: "Take repayments, settlements and recoveries, savings deposits and "
+                "withdrawals, bulk repayments, incoming payments, payroll returns, expenses, "
+                "and run a till.",
+    Right.REVERSE: "Reverse a repayment posted in error.",
+    Right.SUPERVISE: "Verify another user's till count, run penalties, check a period "
+                     "before it is closed, and assign loans to collectors.",
+    Right.MESSAGES: "Generate, send and cancel reminders and arrears notices.",
+    Right.COLLECTIONS: "Work the arrears queue: follow-up notes and promises to pay on loans.",
+    Right.RESTRUCTURE: "Waive penalties, reschedule and write off loans.",
+    Right.ACCOUNTING: "Post, reject and reverse journals, the chart of accounts, bank "
+                      "reconciliation, provisioning, funding, revaluation, savings interest "
+                      "and closing periods.",
+    Right.SETUP: "Loan and savings products, charges and exchange rates.",
+}
+
+# The rights each of the old fixed roles carried, so a user migrated from one keeps
+# exactly the access they had. Also offered as a starting point on the Users page.
+RIGHT_PRESETS = {
+    "loan_officer": [Right.BORROWERS, Right.LOANS, Right.APPROVE, Right.DISBURSE,
+                     Right.CASH, Right.REVERSE, Right.SUPERVISE, Right.MESSAGES,
+                     Right.COLLECTIONS],
+    "teller": [Right.CASH, Right.COLLECTIONS],
+    "collector": [Right.COLLECTIONS],
+    "viewer": [],
+}
 
 
 class RateMethod(models.TextChoices):
@@ -44,6 +94,15 @@ class RepaymentFrequency(models.TextChoices):
 class NotificationChannel(models.TextChoices):
     SMS = "sms", "SMS"
     EMAIL = "email", "Email"
+    WHATSAPP = "whatsapp", "WhatsApp"
+
+
+class MessageChannel(models.TextChoices):
+    """How a borrower prefers to be messaged. Email and WhatsApp fall back to SMS
+    when a message cannot be delivered (or there is no email address on file)."""
+    SMS = "sms", "SMS"
+    WHATSAPP = "whatsapp", "WhatsApp"
+    EMAIL = "email", "Email"
 
 
 class NotificationStatus(models.TextChoices):
@@ -58,6 +117,14 @@ class NotificationKind(models.TextChoices):
     ARREARS = "arrears", "Arrears notice"
     RECEIPT = "receipt", "Repayment receipt"
     WELCOME = "welcome", "Disbursement confirmation"
+    SIGNING_CODE = "signing_code", "Agreement signing code"
+    PORTAL_CODE = "portal_code", "Portal sign-in code"
+    BULK = "bulk", "Bulk message"
+
+
+# Messages carrying a one-time code. Staff never see their text: whoever could read
+# a borrower's code could sign or sign in as the borrower.
+SECRET_KINDS = ("signing_code", "portal_code")
 
 
 class DocumentType(models.TextChoices):
@@ -287,6 +354,12 @@ class OrganisationSetting(models.Model):
     # The declarations at the foot of every statement, one per line. Blank prints
     # the standard set in documents.py; anything written here replaces them.
     statement_declarations = models.TextField(blank=True, default="")
+    # The institution's own wording for borrower messages, by kind (services/templates.py).
+    # A kind left out uses the built-in wording.
+    message_templates = models.JSONField(default=dict, blank=True)
+    # Which messages go out by themselves, and how often; see services/communications.py
+    # for the defaults a blank row means.
+    communication_rules = models.JSONField(default=dict, blank=True)
 
     # IFRS 9 expected-credit-loss provision rates, percent of exposure per stage
     ecl_stage1_pct = models.DecimalField(default=Decimal("1"), max_digits=6, decimal_places=2)
@@ -299,7 +372,8 @@ class OrganisationSetting(models.Model):
     # How far ahead instalment reminders are generated
     reminder_days_before = models.IntegerField(default=3)
 
-    # A loan officer may approve up to this amount; anything larger needs an admin.
+    # A user with the approve right may approve up to this amount unless they have a
+    # limit of their own; anything larger needs an administrator.
     officer_approval_limit = models.DecimalField(default=Decimal("2000"), **MONEY)
     # Applications scoring below this are flagged to the approver (advisory, never blocking).
     min_credit_score = models.IntegerField(default=40)
@@ -312,6 +386,11 @@ class OrganisationSetting(models.Model):
     # taken or paid out at a counter lands in a count. Off by default, so a book that
     # has never used tills keeps posting until someone decides to start.
     require_open_till = models.BooleanField(default=False)
+    # Refuse to disburse a loan the borrower has not signed electronically, on its
+    # current terms (services/signatures.py). Off: the paper agreement is enough.
+    require_signature = models.BooleanField(default=False)
+    # The borrower portal (services/portal.py). Off until an administrator opens it.
+    portal_enabled = models.BooleanField(default=False)
 
     # Weekdays the offices are shut every week, as three-letter names ("sat,sun").
     # An instalment never falls due on one of these, or on a public holiday; it moves
@@ -387,7 +466,13 @@ class UserManager(BaseUserManager):
 class User(AbstractBaseUser, PermissionsMixin):
     username = models.CharField(max_length=50, unique=True, db_index=True)
     full_name = models.CharField(max_length=120)
-    role = models.CharField(max_length=20, choices=Role.choices, default=Role.LOAN_OFFICER)
+    role = models.CharField(max_length=20, choices=Role.choices, default=Role.USER)
+    # The rights an administrator has granted (Right values). Ignored for an
+    # administrator, who holds them all.
+    rights = models.JSONField(default=list, blank=True)
+    # The most this user may approve, in the organisation's currency. Blank: the
+    # organisation's default limit.
+    approval_limit = models.DecimalField(null=True, blank=True, **MONEY)
     branch = models.ForeignKey("Branch", on_delete=models.SET_NULL, null=True, blank=True,
                                related_name="staff")
     phone = models.CharField(max_length=30, null=True, blank=True)
@@ -433,8 +518,18 @@ class User(AbstractBaseUser, PermissionsMixin):
     def get_short_name(self):
         return self.full_name.split(" ")[0] if self.full_name else self.username
 
-    def has_role(self, *roles) -> bool:
-        return self.role in {r.value if hasattr(r, "value") else r for r in roles}
+    @property
+    def is_admin(self) -> bool:
+        return self.role == Role.ADMIN
+
+    def has_right(self, right) -> bool:
+        """An administrator holds every right; anyone else what they were granted."""
+        if self.is_admin:
+            return True
+        return (right.value if hasattr(right, "value") else right) in (self.rights or [])
+
+    def effective_rights(self) -> list[str]:
+        return [r.value for r in Right if self.has_right(r)]
 
     @property
     def is_locked(self) -> bool:
@@ -487,7 +582,22 @@ class Borrower(models.Model):
         help_text="Day of the month the salary is paid",
     )
     kyc_verified = models.BooleanField(default=False)
+    # Reminders, notices and receipts go by this channel. WhatsApp falls back to
+    # SMS by itself when a message cannot be delivered there.
+    preferred_channel = models.CharField(max_length=10, choices=MessageChannel.choices,
+                                         default=MessageChannel.SMS)
     is_blacklisted = models.BooleanField(default=False)
+    # Where a loan is paid out to. The wallet defaults to the phone number when blank.
+    bank_name = models.CharField(max_length=80, blank=True, default="")
+    bank_branch = models.CharField(max_length=80, blank=True, default="")
+    bank_account_no = models.CharField(max_length=40, blank=True, default="")
+    bank_account_name = models.CharField(max_length=120, blank=True, default="")
+    mobile_wallet = models.CharField(max_length=30, blank=True, default="")
+    # A politically exposed person (or a close relative or associate of one): their
+    # applications get enhanced due diligence. Flagged by staff, not by a list.
+    is_pep = models.BooleanField(default=False)
+    # When the borrower was last checked against the watch lists.
+    screened_at = models.DateTimeField(null=True, blank=True)
     notes = models.TextField(null=True, blank=True)
     branch = models.ForeignKey("Branch", on_delete=models.SET_NULL, null=True, blank=True,
                                related_name="borrowers")
@@ -691,6 +801,10 @@ class SavingsProduct(models.Model):
     min_balance = models.DecimalField(default=ZERO, **MONEY)
     monthly_fee = models.DecimalField(default=ZERO, **MONEY)
     allow_withdrawals = models.BooleanField(default=True)
+    # The currency the product takes deposits in, as on LoanProduct. Blank means
+    # the organisation's own. Fixed once an account is open under it.
+    currency = models.CharField(max_length=8, blank=True, default="",
+                                help_text="Blank for the organisation's currency")
     is_active = models.BooleanField(default=True)
 
     class Meta:
@@ -711,6 +825,12 @@ class SavingsAccount(models.Model):
     status = models.CharField(max_length=10, choices=SavingsStatus.choices,
                               default=SavingsStatus.ACTIVE, db_index=True)
     balance = models.DecimalField(default=ZERO, **MONEY)
+    # Snapshot of the product's currency at opening, and the rate the ledger
+    # carries this account's balance at on 2000: base units per one unit of
+    # `currency`, 1 in the base currency. Set at opening, moved by each
+    # revaluation run, as Loan.fx_rate is. See services/fx.py.
+    currency = models.CharField(max_length=8, blank=True, default="")
+    fx_rate = models.DecimalField(max_digits=18, decimal_places=6, default=Decimal("1"))
     opened_on = models.DateField(default=date.today)
     closed_on = models.DateField(null=True, blank=True)
     last_interest_date = models.DateField(null=True, blank=True)
@@ -736,6 +856,11 @@ class SavingsTransaction(models.Model):
     txn_date = models.DateField(db_index=True)
     amount = models.DecimalField(**MONEY)
     balance_after = models.DecimalField(**MONEY)
+    # As on Transaction: the spot rate on the date (the cash, interest and fee
+    # legs) and the account's booked rate at the time (the 2000 leg). Filled by a
+    # pre_save hook when left blank; blank on rows from before, read as 1.
+    fx_rate = models.DecimalField(max_digits=18, decimal_places=6, null=True, blank=True)
+    book_rate = models.DecimalField(max_digits=18, decimal_places=6, null=True, blank=True)
     method = models.CharField(max_length=20, choices=PaymentMethod.choices, null=True, blank=True)
     reference = models.CharField(max_length=80, null=True, blank=True)
     narration = models.TextField(null=True, blank=True)
@@ -765,6 +890,10 @@ class Loan(models.Model):
     product = models.ForeignKey(LoanProduct, on_delete=models.PROTECT, related_name="loans")
     officer = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
                                 related_name="originated_loans")
+    # Who is working this loan's arrears (services/collections.py). Blank: nobody yet.
+    collector = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                                  related_name="collected_loans")
+    collector_since = models.DateField(null=True, blank=True)
 
     principal = models.DecimalField(**MONEY)
     interest_rate_pct = models.DecimalField(help_text="Monthly, snapshot from the product", **RATE)
@@ -1194,6 +1323,10 @@ class TillSession(models.Model):
     business_date = models.DateField(default=date.today, db_index=True)
     opened_at = models.DateTimeField(default=timezone.now)
     opening_float = models.DecimalField(default=ZERO, **MONEY)
+    # The currency the drawer holds, blank for the organisation's. A teller with
+    # cash in two currencies has two drawers, one per currency, each counted in
+    # its own; every amount on the session is in this currency.
+    currency = models.CharField(max_length=8, blank=True, default="")
     status = models.CharField(max_length=10, choices=TillStatus.choices, default=TillStatus.OPEN,
                               db_index=True)
 
@@ -1214,15 +1347,20 @@ class TillSession(models.Model):
     verify_note = models.TextField(null=True, blank=True)
     variance_entry = models.OneToOneField("JournalEntry", on_delete=models.SET_NULL, null=True,
                                           blank=True, related_name="till_session")
+    # The spot rate the difference was booked at, stamped on verification so a
+    # Rebuild re-posts the same figure. Blank for a base-currency drawer.
+    fx_rate = models.DecimalField(max_digits=18, decimal_places=6, null=True, blank=True)
     created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
         db_table = "till_sessions"
         ordering = ["-opened_at", "-id"]
         constraints = [
-            # A teller has one drawer open at a time, or no count means anything.
-            models.UniqueConstraint(fields=["teller"], condition=models.Q(status="open"),
-                                    name="uq_till_one_open_per_teller"),
+            # A teller has one drawer open at a time in each currency, or no count
+            # means anything.
+            models.UniqueConstraint(fields=["teller", "currency"],
+                                    condition=models.Q(status="open"),
+                                    name="uq_till_one_open_per_teller_currency"),
         ]
 
     def __str__(self):
@@ -1315,7 +1453,8 @@ class ExchangeRate(models.Model):
 
 
 class RevaluationRun(models.Model):
-    """One restatement of every open foreign-currency loan at a closing rate.
+    """One restatement of every open foreign-currency loan, savings account and
+    funding facility at a closing rate.
 
     Hangs its own journal entry, like a provision run, so a Rebuild can re-post it.
     """
@@ -1323,8 +1462,10 @@ class RevaluationRun(models.Model):
     as_of = models.DateField(db_index=True)
     base_currency = models.CharField(max_length=8)
     loans_revalued = models.IntegerField(default=0)
+    savings_revalued = models.IntegerField(default=0)
+    facilities_revalued = models.IntegerField(default=0)
     movement = models.DecimalField(default=ZERO, **MONEY,
-                                   help_text="Net change in the receivables, base currency")
+                                   help_text="Net unrealised gain, a loss negative; base currency")
     narration = models.TextField(null=True, blank=True)
     journal_entry = models.OneToOneField("JournalEntry", on_delete=models.SET_NULL, null=True,
                                          blank=True, related_name="revaluation_run")
@@ -1341,8 +1482,17 @@ class RevaluationRun(models.Model):
 
 
 class RevaluationLine(models.Model):
+    """One loan, savings account or facility restated by a run; exactly one of
+    the three is set. Each *_movement is the change in a balance's base-currency
+    carrying value; `movement` is the line's net gain, so on a liability it is
+    the change with its sign turned over."""
     run = models.ForeignKey(RevaluationRun, on_delete=models.CASCADE, related_name="lines")
-    loan = models.ForeignKey("Loan", on_delete=models.CASCADE, related_name="revaluation_lines")
+    loan = models.ForeignKey("Loan", on_delete=models.CASCADE, null=True, blank=True,
+                             related_name="revaluation_lines")
+    savings_account = models.ForeignKey("SavingsAccount", on_delete=models.CASCADE, null=True,
+                                        blank=True, related_name="revaluation_lines")
+    facility = models.ForeignKey("FundingFacility", on_delete=models.CASCADE, null=True,
+                                 blank=True, related_name="revaluation_lines")
     currency = models.CharField(max_length=8)
     old_rate = models.DecimalField(max_digits=18, decimal_places=6)
     new_rate = models.DecimalField(max_digits=18, decimal_places=6)
@@ -1358,6 +1508,14 @@ class RevaluationLine(models.Model):
     fees_deferred = models.DecimalField(default=ZERO, **MONEY)
     interest_movement = models.DecimalField(default=ZERO, **MONEY)
     fees_movement = models.DecimalField(default=ZERO, **MONEY)
+    # A savings balance (2000), and a facility's principal (2100) and accrued
+    # interest (2110): liabilities, so a rise in their base value is a loss.
+    savings_balance = models.DecimalField(default=ZERO, **MONEY)
+    savings_movement = models.DecimalField(default=ZERO, **MONEY)
+    borrowings = models.DecimalField(default=ZERO, **MONEY)
+    borrowings_movement = models.DecimalField(default=ZERO, **MONEY)
+    borrowing_interest = models.DecimalField(default=ZERO, **MONEY)
+    borrowing_interest_movement = models.DecimalField(default=ZERO, **MONEY)
     movement = models.DecimalField(default=ZERO, **MONEY)
 
     class Meta:
@@ -1486,6 +1644,14 @@ class FundingFacility(models.Model):
     interest_accrued = models.DecimalField(default=ZERO, **MONEY)
     last_accrual_date = models.DateField(null=True, blank=True)
 
+    # The currency the facility is drawn and repaid in, blank for the
+    # organisation's; every amount on it is in this currency, the limit too.
+    # `fx_rate` is the rate 2100 and 2110 carry it at: set when it is opened,
+    # moved by each revaluation run, as Loan.fx_rate is. The currency is fixed
+    # once the facility has a movement.
+    currency = models.CharField(max_length=8, blank=True, default="")
+    fx_rate = models.DecimalField(max_digits=18, decimal_places=6, default=Decimal("1"))
+
     # A date rather than a status enum. Four states plus a cancel action is a state
     # machine for something with two interesting conditions, and it is where a
     # "fully repaid revolving facility can never be drawn again" bug lives.
@@ -1543,6 +1709,11 @@ class FacilityTransaction(models.Model):
     # nothing about what changed.
     principal_after = models.DecimalField(default=ZERO, **MONEY)
     accrued_after = models.DecimalField(default=ZERO, **MONEY)
+    # The spot rate on the date (the cash and expense legs) and the facility's
+    # booked rate at the time (2100 and 2110), as on Transaction. Blank on rows
+    # from before, read as 1.
+    fx_rate = models.DecimalField(max_digits=18, decimal_places=6, null=True, blank=True)
+    book_rate = models.DecimalField(max_digits=18, decimal_places=6, null=True, blank=True)
     method = models.CharField(max_length=20, choices=PaymentMethod.choices, null=True, blank=True)
     reference = models.CharField(max_length=80, null=True, blank=True)
     narration = models.TextField(null=True, blank=True)
@@ -1747,10 +1918,34 @@ class Notification(models.Model):
     # back to the borrower it was about.
     provider = models.CharField(max_length=20, null=True, blank=True)
     provider_message_id = models.CharField(max_length=120, null=True, blank=True)
+    # "Sent" means the provider accepted it. What happened next - delivered, read,
+    # undelivered - is asked of the provider afterwards (gateways.refresh_deliveries),
+    # because WhatsApp in particular accepts a message and fails it minutes later.
+    delivery_status = models.CharField(max_length=20, null=True, blank=True)
+    delivery_checked_at = models.DateTimeField(null=True, blank=True)
+    # The placeholder values the body was made from, so a WhatsApp template (which
+    # takes variables, not text) can be filled in at send time.
+    template_vars = models.JSONField(null=True, blank=True)
+    # A WhatsApp message that could not be delivered is sent again by SMS; the SMS
+    # points back at the message it replaces.
+    fallback_of = models.ForeignKey("self", on_delete=models.SET_NULL, null=True, blank=True,
+                                    related_name="fallbacks")
+    # A bulk message is one of a campaign's.
+    campaign = models.ForeignKey("Campaign", on_delete=models.SET_NULL, null=True, blank=True,
+                                 related_name="messages")
+    # In test mode (MESSAGE_TEST_RECIPIENT) the number or address it actually went to.
+    test_redirect = models.CharField(max_length=160, blank=True, default="")
 
     # Stops the reminder job queueing the same message twice
     dedupe_key = models.CharField(max_length=120, unique=True)
     created_at = models.DateTimeField(default=timezone.now)
+
+    @property
+    def shown_body(self) -> str:
+        """The text as staff may see it: a one-time code is never shown."""
+        if self.kind in SECRET_KINDS:
+            return "One-time code (not shown)"
+        return self.body
 
     class Meta:
         db_table = "notifications"
@@ -1848,3 +2043,443 @@ class Sequence(models.Model):
 
     def __str__(self):
         return f"{self.prefix}={self.value}"
+
+
+# ---------------------------------------------------------------- inbound payments
+class InboundStatus(models.TextChoices):
+    UNMATCHED = "unmatched", "Waiting to be matched"
+    POSTED = "posted", "Posted to a loan"
+    REJECTED = "rejected", "Rejected"
+
+
+class InboundPayment(models.Model):
+    """A payment a provider says it received: a mobile-money notification or a line
+    of a bank or mobile-money statement. Kept as received, once per provider
+    reference, so a notification sent twice is never posted twice."""
+    provider = models.CharField(max_length=40)
+    external_id = models.CharField(max_length=100, help_text="The provider's reference")
+    method = models.CharField(max_length=20, choices=PaymentMethod.choices,
+                              default=PaymentMethod.MOBILE_MONEY)
+    amount = models.DecimalField(**MONEY)
+    currency = models.CharField(max_length=8, null=True, blank=True)
+    paid_on = models.DateField()
+    payer_phone = models.CharField(max_length=30, null=True, blank=True)
+    payer_name = models.CharField(max_length=120, null=True, blank=True)
+    account_ref = models.CharField(max_length=100, null=True, blank=True,
+                                   help_text="What the payer entered as the account")
+    raw = models.TextField(null=True, blank=True, help_text="The notification as received")
+    status = models.CharField(max_length=12, choices=InboundStatus.choices,
+                              default=InboundStatus.UNMATCHED, db_index=True)
+    reason = models.CharField(max_length=255, null=True, blank=True,
+                              help_text="Why it is waiting, or why it was rejected")
+    loan = models.ForeignKey("Loan", on_delete=models.PROTECT, null=True, blank=True,
+                             related_name="inbound_payments")
+    transaction = models.OneToOneField("Transaction", on_delete=models.PROTECT, null=True,
+                                       blank=True, related_name="inbound_payment")
+    matched_by = models.CharField(max_length=20, null=True, blank=True,
+                                  help_text="loan_no, borrower_no, national_id, phone or staff")
+    resolved_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                                    related_name="+")
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    received_at = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        db_table = "inbound_payments"
+        ordering = ["-received_at", "-id"]
+        constraints = [
+            models.UniqueConstraint(fields=["provider", "external_id"],
+                                    name="uq_inbound_provider_reference"),
+        ]
+
+    def __str__(self):
+        return f"{self.provider} {self.external_id} {self.amount}"
+
+
+# ---------------------------------------------------------------- payroll returns
+class PayrollRunStatus(models.TextChoices):
+    DRAFT = "draft", "Checked, not posted"
+    POSTED = "posted", "Posted"
+
+
+class PayrollLineStatus(models.TextChoices):
+    FULL = "full", "Deducted in full"
+    SHORT = "short", "Deducted short"
+    MISSED = "missed", "Not deducted"
+    OVER = "over", "Deducted more than owed"
+    UNKNOWN = "unknown", "Not on the schedule"
+
+
+class PayrollRun(models.Model):
+    """One employer's return for one pay period: what the deduction schedule asked
+    for against what the payroll office says it deducted. Checked first, then
+    posted as salary-deduction repayments in one go."""
+    employer = models.CharField(max_length=120)
+    period_start = models.DateField()
+    period_end = models.DateField()
+    received_on = models.DateField(help_text="The day the employer's money arrived")
+    reference = models.CharField(max_length=100, null=True, blank=True)
+    status = models.CharField(max_length=10, choices=PayrollRunStatus.choices,
+                              default=PayrollRunStatus.DRAFT)
+    expected_total = models.DecimalField(default=ZERO, **MONEY)
+    deducted_total = models.DecimalField(default=ZERO, **MONEY)
+    posted_total = models.DecimalField(default=ZERO, **MONEY)
+    file_name = models.CharField(max_length=200, null=True, blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="+")
+    created_at = models.DateTimeField(default=timezone.now)
+    posted_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                                  related_name="+")
+    posted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "payroll_runs"
+        ordering = ["-period_start", "-id"]
+
+    def __str__(self):
+        return f"{self.employer} {self.period_start:%Y-%m}"
+
+
+class PayrollRunLine(models.Model):
+    run = models.ForeignKey(PayrollRun, on_delete=models.CASCADE, related_name="lines")
+    loan = models.ForeignKey("Loan", on_delete=models.PROTECT, null=True, blank=True,
+                             related_name="payroll_lines")
+    employee_no = models.CharField(max_length=40, null=True, blank=True)
+    name = models.CharField(max_length=160, null=True, blank=True)
+    file_line = models.IntegerField(null=True, blank=True)
+    expected = models.DecimalField(default=ZERO, **MONEY)
+    deducted = models.DecimalField(default=ZERO, **MONEY)
+    status = models.CharField(max_length=10, choices=PayrollLineStatus.choices)
+    note = models.CharField(max_length=255, null=True, blank=True)
+    transaction = models.OneToOneField("Transaction", on_delete=models.PROTECT, null=True,
+                                       blank=True, related_name="payroll_line")
+
+    class Meta:
+        db_table = "payroll_run_lines"
+        ordering = ["run", "status", "id"]
+
+    @property
+    def shortfall(self) -> Decimal:
+        return max(self.expected - self.deducted, ZERO)
+
+
+# ---------------------------------------------------------------- e-signatures
+class SignatureStatus(models.TextChoices):
+    PENDING = "pending", "Code sent"
+    SIGNED = "signed", "Signed"
+    EXPIRED = "expired", "Expired or used up"
+    SUPERSEDED = "superseded", "Replaced by a later code"
+
+
+class LoanSignature(models.Model):
+    """The borrower's agreement to a loan's terms, given by entering a one-time
+    code sent to their phone. What they agreed to is pinned by `fingerprint`, a
+    hash of the terms: if the terms change afterwards the signature no longer
+    matches them, and a loan that must be signed has to be signed again."""
+    loan = models.ForeignKey("Loan", on_delete=models.CASCADE, related_name="signatures")
+    phone = models.CharField(max_length=30)
+    code_hash = models.CharField(max_length=64)
+    status = models.CharField(max_length=12, choices=SignatureStatus.choices,
+                              default=SignatureStatus.PENDING, db_index=True)
+    fingerprint = models.CharField(max_length=64, help_text="SHA-256 of the terms signed")
+    attempts = models.IntegerField(default=0)
+    sent_at = models.DateTimeField(default=timezone.now)
+    expires_at = models.DateTimeField()
+    signed_at = models.DateTimeField(null=True, blank=True)
+    channel = models.CharField(max_length=10, default="counter",
+                               help_text="counter: entered with staff; portal: by the borrower")
+    ip_address = models.CharField(max_length=64, null=True, blank=True)
+    user_agent = models.CharField(max_length=255, null=True, blank=True)
+    requested_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                                     related_name="+")
+    witnessed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                                     related_name="+", help_text="Staff present at the counter")
+
+    class Meta:
+        db_table = "loan_signatures"
+        ordering = ["-sent_at", "-id"]
+
+    def __str__(self):
+        return f"{self.loan_id} {self.status}"
+
+
+# ---------------------------------------------------------------- borrower portal
+class PortalCode(models.Model):
+    """A one-time code a borrower asked for to sign in to the portal."""
+    borrower = models.ForeignKey("Borrower", on_delete=models.CASCADE, related_name="portal_codes")
+    code_hash = models.CharField(max_length=64)
+    sent_at = models.DateTimeField(default=timezone.now, db_index=True)
+    expires_at = models.DateTimeField()
+    attempts = models.IntegerField(default=0)
+    used_at = models.DateTimeField(null=True, blank=True)
+    ip_address = models.CharField(max_length=64, null=True, blank=True)
+
+    class Meta:
+        db_table = "portal_codes"
+        ordering = ["-sent_at", "-id"]
+
+
+class PortalSession(models.Model):
+    """One signed-in borrower. The token names this row; signing out or the row's
+    expiry ends it, and nothing a borrower holds opens the staff API."""
+    borrower = models.ForeignKey("Borrower", on_delete=models.CASCADE,
+                                 related_name="portal_sessions")
+    created_at = models.DateTimeField(default=timezone.now)
+    last_seen_at = models.DateTimeField(default=timezone.now)
+    expires_at = models.DateTimeField()
+    ended_at = models.DateTimeField(null=True, blank=True)
+    ip_address = models.CharField(max_length=64, null=True, blank=True)
+    user_agent = models.CharField(max_length=255, null=True, blank=True)
+
+    class Meta:
+        db_table = "portal_sessions"
+        ordering = ["-created_at"]
+
+
+class PortalRequestKind(models.TextChoices):
+    TOP_UP = "top_up", "Top-up"
+    CALL_BACK = "call_back", "Call me back"
+
+
+class PortalRequestStatus(models.TextChoices):
+    OPEN = "open", "Open"
+    DONE = "done", "Dealt with"
+
+
+class PortalRequest(models.Model):
+    """Something a borrower asked for in the portal, for staff to act on."""
+    borrower = models.ForeignKey("Borrower", on_delete=models.CASCADE,
+                                 related_name="portal_requests")
+    loan = models.ForeignKey("Loan", on_delete=models.SET_NULL, null=True, blank=True,
+                             related_name="portal_requests")
+    kind = models.CharField(max_length=12, choices=PortalRequestKind.choices)
+    amount = models.DecimalField(null=True, blank=True, **MONEY)
+    message = models.TextField(blank=True, default="")
+    status = models.CharField(max_length=8, choices=PortalRequestStatus.choices,
+                              default=PortalRequestStatus.OPEN, db_index=True)
+    outcome = models.CharField(max_length=255, null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    handled_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="+")
+    handled_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "portal_requests"
+        ordering = ["status", "-created_at"]
+
+
+# ---------------------------------------------------------------- bulk messages
+class Campaign(models.Model):
+    """A message sent to many borrowers at once (services/campaigns.py). The
+    messages themselves are ordinary outbox rows pointing back here."""
+    name = models.CharField(max_length=120)
+    audience = models.JSONField(default=dict)     # {"who": ..., "branch_id": ..., "product_id": ...}
+    channel = models.CharField(max_length=10, default="preferred")  # preferred | sms | whatsapp | email
+    subject = models.CharField(max_length=200, blank=True, default="")
+    text = models.TextField()
+    scheduled_for = models.DateField()
+    queued = models.IntegerField(default=0)
+    skipped = models.IntegerField(default=0)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="+")
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "campaigns"
+        ordering = ["-created_at"]
+
+
+# ---------------------------------------------------------------- payouts
+class PayoutStatus(models.TextChoices):
+    PENDING = "pending", "To pay"
+    SENT = "sent", "Sent"
+    PAID = "paid", "Paid"
+    FAILED = "failed", "Failed"
+
+
+class Payout(models.Model):
+    """The money a disbursed loan sends the borrower, by bank or mobile money.
+
+    The disbursement is posted to the ledger when the loan is disbursed; this
+    records the transfer itself - handed to the mobile-money provider, or put in a
+    bank file and uploaded - and whether it arrived. A failed payout is fixed by
+    paying again another way, never by quietly re-sending.
+    """
+    loan = models.ForeignKey("Loan", on_delete=models.PROTECT, related_name="payouts")
+    amount = models.DecimalField(**MONEY)
+    currency = models.CharField(max_length=8, blank=True, default="")
+    method = models.CharField(max_length=20, choices=PaymentMethod.choices)
+    payee_name = models.CharField(max_length=160)
+    account = models.CharField(max_length=60)            # wallet number or account number
+    bank_name = models.CharField(max_length=80, blank=True, default="")
+    bank_branch = models.CharField(max_length=80, blank=True, default="")
+    status = models.CharField(max_length=10, choices=PayoutStatus.choices,
+                              default=PayoutStatus.PENDING, db_index=True)
+    batch = models.CharField(max_length=40, blank=True, default="")   # the bank file it went in
+    provider_reference = models.CharField(max_length=120, blank=True, default="")
+    error = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(default=timezone.now)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    paid_at = models.DateTimeField(null=True, blank=True)
+    updated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="+")
+
+    class Meta:
+        db_table = "payouts"
+        ordering = ["status", "-created_at"]
+
+
+# ---------------------------------------------------------------- AML screening
+class WatchlistEntry(models.Model):
+    """One name on a sanctions or watch list, as uploaded (services/screening.py).
+
+    `source` names the list ("UN", or whatever a CSV upload is called), so a
+    re-upload of one list replaces that list's entries and leaves the others.
+    """
+    source = models.CharField(max_length=40, db_index=True)
+    name = models.CharField(max_length=255)
+    aliases = models.TextField(blank=True, default="")      # one per line
+    date_of_birth = models.CharField(max_length=40, blank=True, default="")  # "1964" or "1964-03-02"
+    id_number = models.CharField(max_length=80, blank=True, default="")
+    reference = models.CharField(max_length=80, blank=True, default="")
+    notes = models.TextField(blank=True, default="")
+    # Every name and alias, normalised and joined, for matching without re-parsing.
+    keys = models.TextField(blank=True, default="")
+    loaded_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "watchlist_entries"
+
+
+class ScreeningStatus(models.TextChoices):
+    OPEN = "open", "To review"
+    CLEARED = "cleared", "Not the same person"
+    CONFIRMED = "confirmed", "Confirmed match"
+
+
+class ScreeningHit(models.Model):
+    """A borrower whose name (or ID) resembles a watch-list entry. Until someone
+    reviews it, and for good if it is confirmed, the borrower's loans cannot be
+    approved or paid out."""
+    borrower = models.ForeignKey("Borrower", on_delete=models.CASCADE, related_name="screening_hits")
+    entry = models.ForeignKey(WatchlistEntry, on_delete=models.SET_NULL, null=True,
+                              related_name="hits")
+    # Kept on the hit, so a re-uploaded list does not erase what was reviewed.
+    listed_name = models.CharField(max_length=255)
+    source = models.CharField(max_length=40)
+    reference = models.CharField(max_length=80, blank=True, default="")
+    score = models.IntegerField()
+    reason = models.CharField(max_length=255, blank=True, default="")
+    status = models.CharField(max_length=10, choices=ScreeningStatus.choices,
+                              default=ScreeningStatus.OPEN, db_index=True)
+    review_note = models.TextField(blank=True, default="")
+    reviewed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                                    related_name="+")
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "screening_hits"
+        ordering = ["status", "-score"]
+        constraints = [models.UniqueConstraint(fields=["borrower", "source", "listed_name"],
+                                               name="uq_hit_borrower_listing")]
+
+
+# ---------------------------------------------------------------- online applications
+class ApplicationStatus(models.TextChoices):
+    NEW = "new", "New"
+    ACCEPTED = "accepted", "Accepted"
+    DECLINED = "declined", "Declined"
+
+
+class OnlineApplication(models.Model):
+    """A loan asked for online: by a new client on the public Apply page, or by an
+    existing borrower in the portal (then `borrower` is set from the start).
+
+    It is not a loan. Staff review it; accepting it creates the borrower if they
+    are new and opens the ordinary loan application with these figures, so the
+    affordability check, the scorecard and maker-checker approval apply exactly as
+    they do to any other loan.
+    """
+    borrower = models.ForeignKey("Borrower", on_delete=models.SET_NULL, null=True, blank=True,
+                                 related_name="online_applications")
+    first_name = models.CharField(max_length=80)
+    last_name = models.CharField(max_length=80)
+    national_id = models.CharField(max_length=40)
+    phone = models.CharField(max_length=30)
+    email = models.CharField(max_length=120, blank=True, default="")
+    address = models.TextField(blank=True, default="")
+    employer = models.CharField(max_length=120, blank=True, default="")
+    net_salary = models.DecimalField(null=True, blank=True, **MONEY)
+    payday = models.IntegerField(null=True, blank=True)
+    product = models.ForeignKey("LoanProduct", on_delete=models.PROTECT, related_name="+")
+    amount = models.DecimalField(**MONEY)
+    term_months = models.IntegerField()
+    purpose = models.CharField(max_length=200, blank=True, default="")
+    # The applicant agreed to be checked (credit bureau, employer) and contacted.
+    consent = models.BooleanField(default=False)
+    status = models.CharField(max_length=10, choices=ApplicationStatus.choices,
+                              default=ApplicationStatus.NEW, db_index=True)
+    outcome = models.CharField(max_length=255, blank=True, default="")
+    loan = models.ForeignKey("Loan", on_delete=models.SET_NULL, null=True, blank=True,
+                             related_name="+")
+    source = models.CharField(max_length=10, default="public")  # public | portal
+    client_address = models.CharField(max_length=64, blank=True, default="")
+    created_at = models.DateTimeField(default=timezone.now, db_index=True)
+    handled_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="+")
+    handled_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "online_applications"
+        ordering = ["status", "-created_at"]
+
+    @property
+    def full_name(self) -> str:
+        return f"{self.first_name} {self.last_name}"
+
+
+# ---------------------------------------------------------------- scheduled jobs
+class JobStatus(models.TextChoices):
+    RUNNING = "running", "Running"
+    OK = "ok", "Succeeded"
+    FAILED = "failed", "Failed"
+
+
+class JobRun(models.Model):
+    """One run of one scheduled job (services/jobs.py): when, for what date, by whom
+    (nobody, when the scheduler ran it), and what it said or how it failed."""
+    job = models.CharField(max_length=40, db_index=True)
+    as_of = models.DateField()
+    status = models.CharField(max_length=10, choices=JobStatus.choices,
+                              default=JobStatus.RUNNING)
+    started_at = models.DateTimeField(default=timezone.now, db_index=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    output = models.TextField(blank=True, default="")
+    error = models.TextField(blank=True, default="")
+    triggered_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                                     related_name="+")
+
+    class Meta:
+        db_table = "job_runs"
+        ordering = ["-started_at", "-id"]
+
+    def __str__(self):
+        return f"{self.job} {self.as_of} {self.status}"
+
+
+# ---------------------------------------------------------------- saved list filters
+class SavedView(models.Model):
+    """A user's named set of filters on a list page, kept so it follows them from
+    one computer to the next."""
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="saved_views")
+    page = models.CharField(max_length=30)
+    name = models.CharField(max_length=60)
+    params = models.JSONField(default=dict)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "saved_views"
+        ordering = ["page", "name"]
+        constraints = [
+            models.UniqueConstraint(fields=["user", "page", "name"], name="uq_saved_view_name"),
+        ]

@@ -11,6 +11,7 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 
 from core.models import (
+    RIGHT_PRESETS,
     BureauEnquiry,
     ExchangeRate,
     RevaluationLine,
@@ -99,12 +100,14 @@ BRANCHES = [
     dict(code="MUT", name="Mutare Branch", address="8 Herbert Chitepo St, Mutare", phone="0202160300"),
 ]
 
+# Everyone but the administrator holds the rights ticked for them: here, the sets
+# the old loan officer, teller and viewer roles carried.
 USERS = [
-    ("admin", "System Administrator", "admin123", Role.ADMIN),
-    ("officer", "Tendai Moyo", "officer123", Role.LOAN_OFFICER),
-    ("officer2", "Rudo Chikwanha", "officer123", Role.LOAN_OFFICER),
-    ("teller", "Blessing Ncube", "teller123", Role.TELLER),
-    ("viewer", "Board Viewer", "viewer123", Role.VIEWER),
+    ("admin", "Administrator", "admin123", Role.ADMIN, []),
+    ("officer", "Tendai Moyo", "officer123", Role.USER, RIGHT_PRESETS["loan_officer"]),
+    ("officer2", "Rudo Chikwanha", "officer123", Role.USER, RIGHT_PRESETS["loan_officer"]),
+    ("teller", "Blessing Ncube", "teller123", Role.USER, RIGHT_PRESETS["teller"]),
+    ("viewer", "Board Viewer", "viewer123", Role.USER, RIGHT_PRESETS["viewer"]),
 ]
 
 PRODUCTS = [
@@ -231,9 +234,10 @@ class Command(BaseCommand):
         branches = [Branch.objects.create(**b) for b in BRANCHES]
 
         users = {}
-        for index, (username, name, password, role) in enumerate(USERS):
+        for index, (username, name, password, role, rights) in enumerate(USERS):
             users[username] = User.objects.create_user(
                 username=username, password=password, full_name=name, role=role,
+                rights=[r.value for r in rights],
                 branch=branches[index % len(branches)],
                 is_staff=(role == Role.ADMIN), is_superuser=(role == Role.ADMIN))
         # The ZWG has been easing against the dollar for two years; one rate a

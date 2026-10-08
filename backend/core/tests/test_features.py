@@ -11,6 +11,7 @@ from django.test import SimpleTestCase, override_settings
 from rest_framework.test import APIClient, APITestCase
 
 from core.models import (
+    RIGHT_PRESETS,
     Branch,
     LoanStatus,
     Notification,
@@ -59,8 +60,9 @@ class FeatureTestBase(APITestCase):
         cls.branch = Branch.objects.create(code="HQ", name="Head Office")
         User.objects.create_user("admin", "admin123", full_name="Admin", role=Role.ADMIN)
         User.objects.create_user("officer", "officer123", full_name="Officer",
-                                 role=Role.LOAN_OFFICER)
-        User.objects.create_user("teller", "teller123", full_name="Teller", role=Role.TELLER)
+                                 rights=RIGHT_PRESETS["loan_officer"])
+        User.objects.create_user("teller", "teller123", full_name="Teller",
+                                 rights=RIGHT_PRESETS["teller"])
 
     def client_for(self, username, password):
         client = APIClient()
@@ -250,7 +252,7 @@ class BulkImportTests(FeatureTestBase):
         self.assertIn("Missing column", response.json()["detail"])
 
     def test_a_viewer_cannot_import(self):
-        User.objects.create_user("viewer", "viewer123", full_name="Viewer", role=Role.VIEWER)
+        User.objects.create_user("viewer", "viewer123", full_name="Viewer", role=Role.USER)
         viewer = self.client_for("viewer", "viewer123")
         response = viewer.post("/api/imports/repayments", {
             "file": SimpleUploadedFile("b.csv", b"loan_no,amount\nLN-1,1\n",
@@ -537,7 +539,7 @@ class PasswordAndLockoutTests(FeatureTestBase):
 
     def test_an_admin_cannot_change_their_own_role(self):
         admin_user = User.objects.get(username="admin")
-        response = self.admin.patch(f"/api/users/{admin_user.id}", {"role": "viewer"},
+        response = self.admin.patch(f"/api/users/{admin_user.id}", {"role": "user"},
                                     format="json")
         self.assertEqual(response.status_code, 400)
 
@@ -591,7 +593,7 @@ class PasswordAndLockoutTests(FeatureTestBase):
     def test_the_policy_applies_when_an_admin_creates_a_user(self):
         response = self.admin.post("/api/users", {
             "username": "newofficer", "full_name": "New Officer",
-            "password": "password", "role": "loan_officer",
+            "password": "password", "role": "user",
         }, format="json")
         self.assertEqual(response.status_code, 400, response.content)
         self.assertFalse(User.objects.filter(username="newofficer").exists())
@@ -605,7 +607,7 @@ class PasswordAndLockoutTests(FeatureTestBase):
     def test_a_password_that_meets_the_policy_is_accepted(self):
         response = self.admin.post("/api/users", {
             "username": "newofficer", "full_name": "New Officer",
-            "password": "Zvakanaka-2026", "role": "loan_officer",
+            "password": "Zvakanaka-2026", "role": "user",
         }, format="json")
         self.assertEqual(response.status_code, 201, response.content)
         self.client_for("newofficer", "Zvakanaka-2026")
@@ -698,7 +700,7 @@ class LoanNoteTests(FeatureTestBase):
             self.teller.delete(f"/api/loans/{lid}/notes/{note['id']}").status_code, 204)
 
     def test_a_viewer_cannot_add_notes(self):
-        User.objects.create_user("viewer", "viewer123", full_name="Viewer", role=Role.VIEWER)
+        User.objects.create_user("viewer", "viewer123", full_name="Viewer", role=Role.USER)
         viewer = self.client_for("viewer", "viewer123")
         response = viewer.post(f"/api/loans/{self.loan['id']}/notes", {"body": "x"},
                                format="json")

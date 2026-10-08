@@ -9,7 +9,7 @@ from rest_framework.response import Response
 from ..audit import audit
 from ..exceptions import BusinessRuleError, NotFound
 from ..models import BankStatement, StatementLine
-from ..permissions import IsAdmin
+from ..permissions import CanAccounting
 from ..serializers import (
     BankStatementDetailSerializer,
     BankStatementSerializer,
@@ -54,8 +54,8 @@ def _detail(statement_id: int, code=status.HTTP_200_OK) -> Response:
 @parser_classes([MultiPartParser, FormParser, JSONParser])
 def statements(request):
     if request.method == "POST":
-        if not IsAdmin().has_permission(request, None):
-            return Response({"detail": IsAdmin.message}, status=status.HTTP_403_FORBIDDEN)
+        if not CanAccounting().has_permission(request, None):
+            return Response({"detail": CanAccounting.message}, status=status.HTTP_403_FORBIDDEN)
         body = StatementUploadSerializer(data=request.data)
         body.is_valid(raise_exception=True)
         data = body.validated_data
@@ -81,8 +81,8 @@ def statements(request):
 @api_view(["GET", "DELETE"])
 def statement_detail(request, statement_id: int):
     if request.method == "DELETE":
-        if not IsAdmin().has_permission(request, None):
-            return Response({"detail": IsAdmin.message}, status=status.HTTP_403_FORBIDDEN)
+        if not CanAccounting().has_permission(request, None):
+            return Response({"detail": CanAccounting.message}, status=status.HTTP_403_FORBIDDEN)
         statement = _statement_or_404(statement_id)
         with transaction.atomic():
             number = statement.statement_no
@@ -93,7 +93,7 @@ def statement_detail(request, statement_id: int):
 
 
 @api_view(["POST"])
-@permission_classes([IsAdmin])
+@permission_classes([CanAccounting])
 def auto_match(request, statement_id: int):
     statement = _statement_or_404(statement_id)
     result = svc.auto_match(statement, request.user)
@@ -119,7 +119,7 @@ def line_candidates(request, line_id: int):
 
 
 @api_view(["POST"])
-@permission_classes([IsAdmin])
+@permission_classes([CanAccounting])
 def line_match(request, line_id: int):
     body = StatementMatchSerializer(data=request.data)
     body.is_valid(raise_exception=True)
@@ -132,7 +132,7 @@ def line_match(request, line_id: int):
 
 
 @api_view(["POST"])
-@permission_classes([IsAdmin])
+@permission_classes([CanAccounting])
 def line_unmatch(request, line_id: int):
     with transaction.atomic():
         line = _line_or_404(line_id, for_update=True)
@@ -143,7 +143,7 @@ def line_unmatch(request, line_id: int):
 
 
 @api_view(["POST"])
-@permission_classes([IsAdmin])
+@permission_classes([CanAccounting])
 def line_ignore(request, line_id: int):
     body = ReasonSerializer(data=request.data)
     body.is_valid(raise_exception=True)
@@ -156,7 +156,7 @@ def line_ignore(request, line_id: int):
 
 
 @api_view(["POST"])
-@permission_classes([IsAdmin])
+@permission_classes([CanAccounting])
 def line_journal(request, line_id: int):
     """Prepare the journal for a line the books do not know about, e.g. a bank charge."""
     body = StatementJournalSerializer(data=request.data)

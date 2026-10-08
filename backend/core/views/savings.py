@@ -14,7 +14,7 @@ from ..models import (
     SavingsStatus,
     SavingsTransaction,
 )
-from ..permissions import IsAdmin, IsTeller
+from ..permissions import CanAccounting, CanCash, CanSetup
 from ..serializers import (
     NarrationSerializer,
     OpenSavingsSerializer,
@@ -25,6 +25,7 @@ from ..serializers import (
     SavingsProductSerializer,
     SavingsTransactionSerializer,
 )
+from ..services import fx
 from ..services import savings as svc
 from .helpers import table_response, wants_table, paginate, parse_date, parse_int
 
@@ -58,8 +59,8 @@ def products(request):
             qs = qs.filter(is_active=True)
         return Response(SavingsProductSerializer(qs, many=True).data)
 
-    if not IsAdmin().has_permission(request, None):
-        return Response({"detail": IsAdmin.message}, status=status.HTTP_403_FORBIDDEN)
+    if not CanSetup().has_permission(request, None):
+        return Response({"detail": CanSetup.message}, status=status.HTTP_403_FORBIDDEN)
     if SavingsProduct.objects.filter(code=request.data.get("code")).exists():
         raise BusinessRuleError("A savings product with this code already exists")
     body = SavingsProductSerializer(data=request.data)
@@ -71,7 +72,7 @@ def products(request):
 
 
 @api_view(["PATCH"])
-@permission_classes([IsAdmin])
+@permission_classes([CanSetup])
 def product_detail(request, product_id: int):
     product = SavingsProduct.objects.filter(pk=product_id).first()
     if product is None:
@@ -108,17 +109,19 @@ def accounts(request):
             qs = qs.filter(borrower_id=borrower_id)
 
         if wants_table(request):
+            base = fx.base_currency()   # each balance is in its account's currency
             rows = [{
                 "account_no": a.account_no, "borrower": a.borrower.full_name,
                 "borrower_no": a.borrower.borrower_no, "product": a.product.name,
                 "branch": a.branch.name if a.branch_id else "", "status": a.status,
+                "currency": a.currency or base,
                 "balance": a.balance, "opened_on": a.opened_on,
             } for a in qs[:5000]]
             return table_response(request, rows, "savings_accounts")
         return Response(paginate(request, qs.order_by("-id"), SavingsAccountSerializer))
 
-    if not IsTeller().has_permission(request, None):
-        return Response({"detail": IsTeller.message}, status=status.HTTP_403_FORBIDDEN)
+    if not CanCash().has_permission(request, None):
+        return Response({"detail": CanCash.message}, status=status.HTTP_403_FORBIDDEN)
     data = _validated(OpenSavingsSerializer, request)
     borrower = Borrower.objects.filter(pk=data["borrower_id"]).first()
     product = SavingsProduct.objects.filter(pk=data["product_id"]).first()
@@ -156,7 +159,7 @@ def statement(request, account_id: int):
 
 
 @api_view(["POST"])
-@permission_classes([IsTeller])
+@permission_classes([CanCash])
 def deposit(request, account_id: int):
     data = _validated(SavingsMovementSerializer, request)
     with transaction.atomic():
@@ -169,7 +172,7 @@ def deposit(request, account_id: int):
 
 
 @api_view(["POST"])
-@permission_classes([IsTeller])
+@permission_classes([CanCash])
 def withdraw(request, account_id: int):
     data = _validated(SavingsMovementSerializer, request)
     with transaction.atomic():
@@ -182,7 +185,7 @@ def withdraw(request, account_id: int):
 
 
 @api_view(["POST"])
-@permission_classes([IsTeller])
+@permission_classes([CanCash])
 def reverse(request, account_id: int, txn_id: int):
     data = _validated(NarrationSerializer, request)
     with transaction.atomic():
@@ -197,7 +200,7 @@ def reverse(request, account_id: int, txn_id: int):
 
 
 @api_view(["POST"])
-@permission_classes([IsAdmin])
+@permission_classes([CanAccounting])
 def close(request, account_id: int):
     body = NarrationSerializer(data=request.data, partial=True)
     body.is_valid(raise_exception=False)
@@ -210,7 +213,7 @@ def close(request, account_id: int):
 
 # ---------------------------------------------------------------- jobs / reports
 @api_view(["POST"])
-@permission_classes([IsAdmin])
+@permission_classes([CanAccounting])
 def run_interest(request):
     """Credit a month of interest and take the monthly fee across the savings book."""
     as_of = parse_date(request, "as_of")

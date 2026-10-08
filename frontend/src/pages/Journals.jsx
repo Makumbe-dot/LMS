@@ -421,8 +421,8 @@ export default function Journals() {
   const list = useApi(path)
   const accounts = useJournalAccounts()
 
-  const canPrepare = can('admin', 'loan_officer', 'teller')
-  const isAdmin = can('admin')
+  const canPrepare = can('cash')
+  const canAccount = can('accounting')
 
   async function prepare(body) {
     setBusy(true)
@@ -488,7 +488,7 @@ export default function Journals() {
         <ExportButtons path={`/api/journals${qs({ status: tab })}`} name={'journals'} />
       </PageHeader>
 
-      {isAdmin && waiting > 0 ? (
+      {canAccount && waiting > 0 ? (
         <div className="banner" role="status">
           <strong>{waiting} awaiting approval. </strong>
           Nothing reaches the ledger until an administrator posts it.
@@ -575,8 +575,8 @@ export default function Journals() {
       {open ? (
         <JournalDetail
           journal={open}
-          canPost={isAdmin}
-          canWithdraw={isAdmin || open.prepared_by_id === user?.id}
+          canPost={canAccount}
+          canWithdraw={canAccount || open.prepared_by_id === user?.id}
           busy={busy}
           onClose={() => setOpen(null)}
           onAction={act}

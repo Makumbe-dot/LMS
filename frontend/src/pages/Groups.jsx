@@ -51,7 +51,7 @@ export default function Groups() {
   const performance = useApi(tab === 'performance' ? perfPath : null)
   const borrowers = useApi(action?.kind === 'member' ? '/api/borrowers?page_size=1000' : null)
 
-  const mayEdit = can('admin', 'loan_officer')
+  const mayEdit = can('borrowers')
 
   async function run(promise, message) {
     setBusy(true)

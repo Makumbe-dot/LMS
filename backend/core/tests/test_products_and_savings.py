@@ -6,6 +6,7 @@ from decimal import Decimal
 from rest_framework.test import APIClient, APITestCase
 
 from core.models import (
+    RIGHT_PRESETS,
     BorrowerGroup,
     Branch,
     Charge,
@@ -35,8 +36,9 @@ class Base(APITestCase):
         cls.branch = Branch.objects.create(code="HQ", name="Head Office")
         User.objects.create_user("admin", "admin123", full_name="Admin", role=Role.ADMIN)
         User.objects.create_user("officer", "officer123", full_name="Officer",
-                                 role=Role.LOAN_OFFICER)
-        User.objects.create_user("teller", "teller123", full_name="Teller", role=Role.TELLER)
+                                 rights=RIGHT_PRESETS["loan_officer"])
+        User.objects.create_user("teller", "teller123", full_name="Teller",
+                                 rights=RIGHT_PRESETS["teller"])
 
     def client_for(self, username, password):
         client = APIClient()
@@ -216,7 +218,7 @@ class SavingsTests(Base):
 
     def test_a_viewer_cannot_post_to_savings(self):
         account = self.open(opening_deposit="10.00")
-        User.objects.create_user("viewer", "viewer123", full_name="Viewer", role=Role.VIEWER)
+        User.objects.create_user("viewer", "viewer123", full_name="Viewer", role=Role.USER)
         viewer = self.client_for("viewer", "viewer123")
         response = viewer.post(f"/api/savings/accounts/{account['id']}/deposit",
                                {"amount": "5.00"}, format="json")

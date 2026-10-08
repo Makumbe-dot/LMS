@@ -23,6 +23,13 @@ const BLANK = {
   net_salary: '0',
   payday: '25',
   kyc_verified: false,
+  is_pep: false,
+  bank_name: '',
+  bank_branch: '',
+  bank_account_no: '',
+  bank_account_name: '',
+  mobile_wallet: '',
+  preferred_channel: 'sms',
   is_blacklisted: false,
   notes: '',
   branch: '',
@@ -131,8 +138,24 @@ export default function BorrowerForm() {
           </Field>
           <Field label="Phone" required value={values.phone} onChange={set('phone')} />
           <Field label="Email" type="email" value={values.email || ''} onChange={set('email')} />
+          <Field
+            as="select"
+            label="Send messages by"
+            value={values.preferred_channel || 'sms'}
+            onChange={set('preferred_channel')}
+            hint="Reminders, notices and receipts. WhatsApp and email fall back to SMS by themselves if a message cannot be delivered."
+          >
+            <option value="sms">SMS</option>
+            <option value="whatsapp">WhatsApp</option>
+            <option value="email">Email</option>
+          </Field>
           <Field label="Employer" value={values.employer || ''} onChange={set('employer')} />
           <Field label="Employee no." value={values.employee_no || ''} onChange={set('employee_no')} />
+          <Field label="Bank" value={values.bank_name || ''} onChange={set('bank_name')} hint="Where loans are paid out by bank transfer" />
+          <Field label="Bank branch" value={values.bank_branch || ''} onChange={set('bank_branch')} />
+          <Field label="Account number" value={values.bank_account_no || ''} onChange={set('bank_account_no')} />
+          <Field label="Account name" value={values.bank_account_name || ''} onChange={set('bank_account_name')} hint="If different from the borrower's name" />
+          <Field label="Mobile-money wallet" value={values.mobile_wallet || ''} onChange={set('mobile_wallet')} hint="Blank: the phone number above" />
           <Field label="Job title" value={values.job_title || ''} onChange={set('job_title')} />
           <Field
             as="select"
@@ -173,6 +196,11 @@ export default function BorrowerForm() {
 
         <div className="row">
           <Check label="KYC verified" checked={values.kyc_verified} onChange={set('kyc_verified')} />
+          <Check
+            label="Politically exposed person (or a close relative or associate of one)"
+            checked={values.is_pep}
+            onChange={set('is_pep')}
+          />
           <Check label="Blacklisted" checked={values.is_blacklisted} onChange={set('is_blacklisted')} />
         </div>
 

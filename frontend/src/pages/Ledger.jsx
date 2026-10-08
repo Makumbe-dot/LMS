@@ -141,7 +141,7 @@ export default function Ledger() {
         {tab !== 'accounts' ? (
           <ExportButtons path={paths[tab]} name={tab} />
         ) : null}
-        {can('admin') && settings?.interest_method === 'effective' ? (
+        {can('accounting') && settings?.interest_method === 'effective' ? (
           <button
             type="button"
             className="btn"
@@ -152,7 +152,7 @@ export default function Ledger() {
             {busy ? 'Working…' : 'Accrue interest'}
           </button>
         ) : null}
-        {can('admin') ? (
+        {can('accounting') ? (
           <button
             type="button"
             className="btn"

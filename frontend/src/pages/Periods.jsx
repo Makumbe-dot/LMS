@@ -60,7 +60,7 @@ export default function Periods() {
   const [busy, setBusy] = useState(false)
 
   const { data, error, loading, reload } = useApi(`/api/periods?year=${year}`)
-  const isAdmin = can('admin')
+  const canAccount = can('accounting')
 
   async function run(promise, message) {
     setBusy(true)
@@ -215,7 +215,7 @@ export default function Periods() {
                 key: 'actions',
                 header: '',
                 render: (r) => {
-                  if (!isAdmin) return null
+                  if (!canAccount) return null
                   if (r.closable) {
                     const isNext =
                       data.next_to_close &&
@@ -252,8 +252,8 @@ export default function Periods() {
             ]}
           />
 
-          {!isAdmin ? (
-            <p className="muted">An administrator closes and reopens periods.</p>
+          {!canAccount ? (
+            <p className="muted">Closing and reopening a period needs the Accounting access right.</p>
           ) : null}
         </>
       ) : null}

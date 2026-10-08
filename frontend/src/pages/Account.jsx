@@ -4,9 +4,9 @@ import { useEffect, useState } from 'react'
 import { useToast } from '../components/Toast.jsx'
 import { Field, KeyValues, PageHeader } from '../components/ui.jsx'
 import { post, setTokens } from '../lib/api.js'
-import { useAuth } from '../lib/auth.jsx'
-import { humanise } from '../lib/format.js'
+import { rightsLabel, roleLabel, useAuth } from '../lib/auth.jsx'
 import { useOrg } from '../lib/org.jsx'
+import { useApi } from '../lib/useApi.js'
 
 /** "JBSWY3DPEHPK3PXP" -> "JBSW Y3DP EHPK 3PXP", for typing into an app by hand. */
 const grouped = (secret) => secret.replace(/(.{4})/g, '$1 ').trim()
@@ -18,6 +18,7 @@ const grouped = (secret) => secret.replace(/(.{4})/g, '$1 ').trim()
  */
 function TwoFactorCard() {
   const { user, updateUser } = useAuth()
+  const catalogue = useApi('/api/users/rights').data
   const { toast, toastError } = useToast()
   const [setup, setSetup] = useState(null) // { secret, otpauth_uri }
   const [qr, setQr] = useState('')
@@ -208,7 +209,10 @@ export default function Account() {
             items={[
               ['Username', user?.username],
               ['Full name', user?.full_name],
-              ['Role', humanise(user?.role)],
+              ['Access', roleLabel(user)],
+              ...(user?.role === 'admin'
+                ? []
+                : [['Access rights', rightsLabel(user, catalogue)]]),
               ['Branch', user?.branch_name || 'Not assigned'],
               ['Phone', user?.phone || '-'],
               ['Email', user?.email || '-'],
@@ -217,7 +221,7 @@ export default function Account() {
             ]}
           />
           <p className="muted" style={{ fontSize: 12, marginBottom: 0 }}>
-            Your name, role and branch are maintained by an administrator under Users.
+            Your name, access rights and branch are maintained by an administrator under Users.
           </p>
         </div>
 

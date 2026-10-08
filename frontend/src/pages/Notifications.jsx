@@ -9,7 +9,8 @@ import { dateTime, humanise } from '../lib/format.js'
 import { useApi, useDebounced } from '../lib/useApi.js'
 
 const STATUSES = ['queued', 'sent', 'cancelled', 'failed']
-const KINDS = ['reminder', 'arrears', 'receipt', 'welcome']
+const CHANNELS = { sms: 'SMS', whatsapp: 'WhatsApp', email: 'Email' }
+const KINDS = ['reminder', 'arrears', 'receipt', 'welcome', 'bulk', 'signing_code', 'portal_code']
 
 /**
  * The borrower messaging outbox: generated here, delivered through the configured
@@ -31,8 +32,9 @@ export default function Notifications() {
   const path = `/api/notifications${qs({ status, kind, q: debounced, page, page_size: 25 })}`
   const { data, error, loading, reload } = useApi(path)
   const gateway = useApi('/api/notifications/gateway')
-  const mayAct = can('admin', 'loan_officer')
-  const delivers = gateway.data?.sms_delivers || gateway.data?.email_delivers
+  const mayAct = can('messages')
+  const delivers =
+    gateway.data?.sms_delivers || gateway.data?.email_delivers || gateway.data?.whatsapp_delivers
 
   const rows = data?.results || []
   const allSelected = rows.length > 0 && selected.length === rows.length
@@ -54,8 +56,8 @@ export default function Notifications() {
   return (
     <>
       <PageHeader
-        title="Messages"
-        meta="Reminders, arrears notices and receipts. Nothing leaves the system until it is sent."
+        title="Outbox"
+        meta="Every message to a borrower, by SMS, WhatsApp or email: waiting, sent, delivered or failed."
       >
         {mayAct ? (
           <>
@@ -89,6 +91,7 @@ export default function Notifications() {
                     const parts = [`${r.sent} sent`]
                     if (r.retrying) parts.push(`${r.retrying} will be retried`)
                     if (r.failed) parts.push(`${r.failed} failed`)
+                    if (r.fell_back_to_sms) parts.push(`${r.fell_back_to_sms} resent by SMS`)
                     return parts.join(', ')
                   },
                 )
@@ -119,17 +122,21 @@ export default function Notifications() {
           {delivers ? (
             <>
               <strong>Delivering for real. </strong>
-              SMS via <code>{gateway.data.sms_backend}</code>, email via{' '}
+              SMS via <code>{gateway.data.sms_backend}</code>, WhatsApp via{' '}
+              <code>{gateway.data.whatsapp_backend}</code>, email via{' '}
               <code>{gateway.data.email_backend}</code>. A message that fails is retried on
-              the next run, up to {gateway.data.max_attempts} attempts, then marked failed.
+              the next run, up to {gateway.data.max_attempts} attempts, then marked failed; a
+              WhatsApp message that cannot be delivered is resent by SMS.
             </>
           ) : (
             <>
               <strong>Nothing is being delivered. </strong>
               The gateway is set to <code>{gateway.data.sms_backend}</code>, which logs messages
               instead of sending them — deliberate on a development machine, so seeded data
-              cannot text real numbers. Set <code>MESSAGE_SMS_BACKEND=http</code> and{' '}
-              <code>MESSAGE_HTTP_URL</code> in <code>backend/.env</code> to deliver.
+              cannot text real numbers. To deliver, set <code>MESSAGE_SMS_BACKEND</code> (an SMS
+              provider) and <code>MESSAGE_WHATSAPP_BACKEND=meta</code> in <code>backend/.env</code>.
+              Meanwhile the <strong>WhatsApp</strong> button on each loan opens WhatsApp with the
+              message typed in.
             </>
           )}
         </div>
@@ -224,7 +231,16 @@ export default function Notifications() {
                 : []),
               { key: 'scheduled', header: 'Scheduled', render: (r) => r.scheduled_for },
               { key: 'kind', header: 'Kind', render: (r) => humanise(r.kind) },
-              { key: 'channel', header: 'Channel', render: (r) => r.channel.toUpperCase() },
+              {
+                key: 'channel',
+                header: 'Channel',
+                render: (r) => (
+                  <>
+                    {CHANNELS[r.channel] || r.channel}
+                    {r.fallback_of_id ? <span className="muted"> (in place of WhatsApp)</span> : null}
+                  </>
+                ),
+              },
               { key: 'to', header: 'To', render: (r) => r.to_address },
               { key: 'borrower', header: 'Borrower', render: (r) => r.borrower_name },
               { key: 'loan', header: 'Loan', render: (r) => r.loan_no || '-' },
@@ -261,6 +277,10 @@ export default function Notifications() {
                     <>
                       {dateTime(r.sent_at)}
                       {r.provider ? <span className="muted"> via {r.provider}</span> : null}
+                      {r.test_redirect ? <span className="muted"> · test, to {r.test_redirect}</span> : null}
+                      {r.delivery_status ? (
+                        <span className="muted"> · {humanise(r.delivery_status)}</span>
+                      ) : null}
                     </>
                   ) : (
                     '-'
@@ -284,6 +304,39 @@ export default function Notifications() {
           />
         </>
       )}
+
+      {gateway.data?.whatsapp_template_guide?.length ? (
+        <details className="card" style={{ marginTop: 16 }}>
+          <summary style={{ cursor: 'pointer', fontWeight: 600 }}>
+            WhatsApp templates: what to submit for approval
+          </summary>
+          <p className="muted" style={{ fontSize: 13 }}>
+            WhatsApp only delivers a business's message to someone who has not written in the last
+            24 hours if it is an approved template. Create one per message, category Utility, with
+            the wording below: in Meta's WhatsApp Manager (Message templates) using the suggested
+            name, then list the names in <code>META_WHATSAPP_TEMPLATES</code>; or in Twilio's Content
+            Template Builder, then list the Content SIDs (HX…) in <code>TWILIO_WHATSAPP_TEMPLATES</code>.
+            A message with no template goes as plain text and is resent by SMS if WhatsApp refuses it.
+          </p>
+          <DataTable
+            caption="WhatsApp templates"
+            rows={gateway.data.whatsapp_template_guide}
+            rowKey={(r) => r.kind}
+            columns={[
+              { key: 'label', header: 'Message', render: (r) => r.label },
+              { key: 'kind', header: 'Key', render: (r) => <code>{r.kind}</code> },
+              { key: 'name', header: 'Suggested name', render: (r) => <code>{r.suggested_name}</code> },
+              { key: 'text', header: 'Template wording', wrap: true, render: (r) => r.text },
+              {
+                key: 'sid',
+                header: 'Set up',
+                render: (r) =>
+                  r.content_sid ? <span className="tag-ok">{r.content_sid}</span> : <span className="muted">not yet</span>,
+              },
+            ]}
+          />
+        </details>
+      ) : null}
     </>
   )
 }

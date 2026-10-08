@@ -11,8 +11,8 @@ from rest_framework.response import Response
 
 from ..audit import audit
 from ..exceptions import BusinessRuleError
-from ..models import AuditLog, Notification, NotificationStatus
-from ..permissions import IsAdmin, IsOfficer, IsTeller
+from ..models import SECRET_KINDS, AuditLog, Notification, NotificationStatus
+from ..permissions import CanCash, CanMessages, CanSupervise, IsAdmin
 from ..serializers import (
     NOTIFICATION_STATUS_CHOICES,
     TXN_TYPE_CHOICES,
@@ -100,7 +100,7 @@ def transactions(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsOfficer])
+@permission_classes([CanSupervise])
 def run_penalties(request):
     """End-of-day job: accrue late-payment penalties across all active loans."""
     as_of = parse_date(request, "as_of")
@@ -204,7 +204,9 @@ def notifications(request):
         qs = qs.filter(kind=kind)
     term = request.query_params.get("q")
     if term:
-        qs = qs.filter(Q(to_address__icontains=term) | Q(body__icontains=term)
+        # A code's text is never searchable: searching digits would find it.
+        qs = qs.filter(Q(to_address__icontains=term)
+                       | (Q(body__icontains=term) & ~Q(kind__in=SECRET_KINDS))
                        | Q(borrower__first_name__icontains=term)
                        | Q(borrower__last_name__icontains=term))
 
@@ -212,13 +214,13 @@ def notifications(request):
         rows = [{"id": n.id, "scheduled_for": n.scheduled_for, "channel": n.channel,
                  "to": n.to_address, "borrower": n.borrower.full_name,
                  "loan_no": n.loan.loan_no if n.loan_id else "", "kind": n.kind,
-                 "status": n.status, "message": n.body} for n in qs[:5000]]
+                 "status": n.status, "message": n.shown_body} for n in qs[:5000]]
         return table_response(request, rows, "notifications")
     return Response(paginate(request, qs, NotificationSerializer, default_size=50))
 
 
 @api_view(["POST"])
-@permission_classes([IsOfficer])
+@permission_classes([CanMessages])
 def generate_notifications(request):
     """Queue instalment reminders and arrears notices across the active book."""
     as_of = parse_date(request, "as_of")
@@ -229,7 +231,7 @@ def generate_notifications(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsOfficer])
+@permission_classes([CanMessages])
 def send_notifications(request):
     """Deliver queued messages through the configured gateway.
 
@@ -246,7 +248,7 @@ def send_notifications(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsOfficer])
+@permission_classes([CanMessages])
 def mark_notifications_sent(request):
     """Mark messages sent WITHOUT delivering them.
 
@@ -277,7 +279,7 @@ def message_gateway(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsOfficer])
+@permission_classes([CanMessages])
 def cancel_notifications(request):
     body = NotificationActionSerializer(data=request.data)
     body.is_valid(raise_exception=True)
@@ -292,7 +294,7 @@ def cancel_notifications(request):
 
 # ---------------------------------------------------------------- bulk import
 @api_view(["POST"])
-@permission_classes([IsTeller])
+@permission_classes([CanCash])
 @parser_classes([MultiPartParser, FormParser])
 def bulk_repayments(request):
     """Validate, and optionally post, a CSV of repayments.
